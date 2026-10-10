@@ -242,6 +242,8 @@ public final class L {
         {"menu.tools.settings", "设置（音素锁定等）", "Settings (phoneme lock, ...)", "設定（音素ロックなど）"},
 {"menu.tools.update", "检查更新", "Check for updates", "更新を確認"},
 {"menu.tools.mkbank", "制作声库", "Make a voicebank", "声庫を作成"},
+{"menu.tools.tutorial", "教程", "Tutorial", "チュートリアル"},
+{"tuto.missing", "教程文件缺失", "Tutorial file missing", "チュートリアルファイルがありません"},
 {"vb.title", "制作声库（从本机声库转换）", "Make a voicebank (convert a local bank)", "声庫を作成（端末内の声庫から変換）"},
 {"vb.bank.dir", "声库文件夹路径", "Voicebank folder path", "声庫フォルダのパス"},
 {"vb.bank.name", "声库名称（留空则用文件夹名）", "Voicebank name (blank = folder name)", "声庫名（空欄ならフォルダ名）"},

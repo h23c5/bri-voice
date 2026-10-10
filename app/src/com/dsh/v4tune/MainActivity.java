@@ -1619,7 +1619,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 L.t("menu.tools.ai"),
                 L.t("menu.tools.settings"),
                 L.t("menu.tools.update"),
-                L.t("menu.tools.mkbank")
+                L.t("menu.tools.mkbank"),
+                L.t("menu.tools.tutorial")
         };
         menu(L.t("menu.tools"), null, items, -1, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, int which) {
@@ -1635,7 +1636,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 else if (which == 9) aiDialog();
                 else if (which == 10) settingsDialog();
                 else if (which == 11) checkUpdate(false);
-                else com.dsh.v4tune.voicebank.VoicebankWizard.start(MainActivity.this);
+                else if (which == 12) com.dsh.v4tune.voicebank.VoicebankWizard.start(MainActivity.this);
+                else showTutorial();
             }
         });
     }
@@ -1669,6 +1671,33 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 });
             }
         });
+    }
+
+    /** The bundled tutorials live in assets/tutorial; shown scrollable. */
+    private void showTutorial() {
+        String text;
+        try {
+            java.io.InputStream in = getAssets().open("tutorial/voicebank.zh.txt");
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
+            in.close();
+            text = new String(bo.toByteArray(), "UTF-8");
+        } catch (Throwable t) {
+            text = L.t("tuto.missing") + "\n\n" + String.valueOf(t.getMessage());
+        }
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        android.widget.TextView tv = new android.widget.TextView(this);
+        tv.setText(text);
+        tv.setTextSize(13);
+        tv.setPadding(28, 20, 28, 20);
+        sv.addView(tv);
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(L.t("menu.tools.tutorial"))
+                .setView(sv)
+                .setPositiveButton(android.R.string.ok, null)
+                .show();
     }
 
     private void updateToast(String s) {
