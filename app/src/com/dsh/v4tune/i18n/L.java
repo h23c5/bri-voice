@@ -248,6 +248,8 @@ public final class L {
 {"vb.bank.dir", "声库文件夹路径", "Voicebank folder path", "声庫フォルダのパス"},
 {"vb.bank.name", "声库名称（留空则用文件夹名）", "Voicebank name (blank = folder name)", "声庫名（空欄ならフォルダ名）"},
 {"vb.build", "开始转换", "Start", "変換を開始"},
+{"vb.browse", "浏览…", "Browse…", "参照…"},
+{"vb.pick", "选择此文件夹", "Use this folder", "このフォルダを選択"},
 {"vb.working", "正在分析声库并生成…", "Measuring the bank and building…", "声庫を解析して生成中…"},
 {"vb.bad.dir", "找不到该文件夹", "Folder not found", "フォルダが見つかりません"},
 {"vb.no.ddb", "该文件夹里没有 .ddb 文件", "No .ddb file in that folder", "そのフォルダに .ddb がありません"},

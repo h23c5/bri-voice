@@ -1,7 +1,7 @@
 {
-  "versionCode": 55,
-  "versionName": "7.3-beta1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.3-beta1/BriVoice-7.3-beta1.apk",
-  "sha256": "d3d327efdf70fe4b4ee979c5033f2709a2bc2c445afced1c2de087a9efe5f287",
-  "notes": "beta 1: voicebank wizard, trilingual tutorial, updater fixes"
+  "versionCode": 56,
+  "versionName": "7.3-beta2",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.3-beta2/BriVoice-7.3-beta2.apk",
+  "sha256": "45b43ae15b37079469969c1fd764bd48df27cfb63f08653be04c7cd7b0f94df3",
+  "notes": "beta 2: folder picker for voicebank making, full user manual"
 }

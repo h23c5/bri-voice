@@ -39,7 +39,19 @@ public final class VoicebankWizard {
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(24, 8, 24, 8);
         box.addView(label(act, L.t("vb.bank.dir")));
-        box.addView(path);
+        LinearLayout row = new LinearLayout(act);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        path.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        android.widget.Button browse = new android.widget.Button(act);
+        browse.setText(L.t("vb.browse"));
+        browse.setOnClickListener(new android.view.View.OnClickListener() {
+            public void onClick(android.view.View v) {
+                browseForFolder(act, new File(Environment.getExternalStorageDirectory(), ""), path);
+            }
+        });
+        row.addView(path);
+        row.addView(browse);
+        box.addView(row);
         box.addView(label(act, L.t("vb.bank.name")));
         box.addView(name);
         new AlertDialog.Builder(act)
@@ -49,6 +61,31 @@ public final class VoicebankWizard {
                     public void onClick(DialogInterface d, int w) {
                         run(act, path.getText().toString().trim(), name.getText().toString().trim());
                     }
+                })
+                .setNegativeButton(L.t("update.later"), null)
+                .show();
+    }
+
+    /** A plain folder browser over /sdcard - the app already holds all-files access. */
+    static void browseForFolder(final Activity act, final File dir, final EditText target) {
+        final java.util.ArrayList<String> names = new java.util.ArrayList<String>();
+        final java.util.ArrayList<File> dirs = new java.util.ArrayList<File>();
+        File[] kids = dir.listFiles();
+        if (kids != null) {
+            java.util.Arrays.sort(kids, new java.util.Comparator<File>() {
+                public int compare(File a, File b) { return a.getName().compareToIgnoreCase(b.getName()); }
+            });
+            for (File f : kids) if (f.isDirectory() && !f.getName().startsWith(".")) { dirs.add(f); names.add(f.getName() + "/"); }
+        }
+        if (dir.getParentFile() != null) { dirs.add(0, dir.getParentFile()); names.add(0, ".."); }
+        final String[] items = names.toArray(new String[0]);
+        new AlertDialog.Builder(act)
+                .setTitle(dir.getAbsolutePath())
+                .setItems(items, new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) { browseForFolder(act, dirs.get(w), target); }
+                })
+                .setPositiveButton(L.t("vb.pick"), new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) { target.setText(dir.getAbsolutePath()); }
                 })
                 .setNegativeButton(L.t("update.later"), null)
                 .show();
