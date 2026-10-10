@@ -1,0 +1,35 @@
+# -*- coding: utf-8 -*-
+"""Generates ReferenceFormants.java from the Python converter, so the table is never hand copied."""
+import importlib.util, io, os
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+spec = importlib.util.spec_from_file_location('vp', os.path.join(ROOT, 'tools', 'voicebank_pack.py'))
+vp = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(vp)
+ref = vp.REFERENCE_FORMANTS
+print('symbols: %d' % len(ref))
+print('ENV_F:     %s' % (getattr(vp, 'ENV_F', None).shape if hasattr(vp, 'ENV_F') else 'n/a'))
+print('ENV_F[0]:  %s   ENV_F[-1]: %s' % (float(vp.ENV_F[0]), float(vp.ENV_F[-1])))
+print('ENV_TILT[0]: %s  ENV_TILT[-1]: %s' % (float(vp.ENV_TILT[0]), float(vp.ENV_TILT[-1])))
+print('ENV_F_LO/HI:', [l for l in io.open(os.path.join(ROOT,'tools','voicebank_pack.py'),encoding='utf-8').read().split(chr(10)) if l.startswith('ENV_F') or l.startswith('TILT') or l.startswith('ENV_TILT')])
+out = []
+out.append('package com.dsh.v4tune.voicebank;')
+out.append('')
+out.append('import java.util.HashMap;')
+out.append('import java.util.Map;')
+out.append('')
+out.append('/** CHN phoneme reference formants (F1,F2,F3 in Hz). Generated from tools/voicebank_pack.py')
+out.append(' *  REFERENCE_FORMANTS by tools/gen_reference_formants.py - do not edit by hand. */')
+out.append('public final class ReferenceFormants {')
+out.append('    private static final Map<String, int[]> T = new HashMap<String, int[]>();')
+out.append('    public static int[] get(String symbol) { return T.get(symbol); }')
+out.append('    public static int size() { return T.size(); }')
+out.append('    public static java.util.Set<String> symbols() { return T.keySet(); }')
+out.append('    static {')
+for sym, val in sorted(ref.items()):
+    out.append('        T.put("%s", new int[]{%d, %d, %d});' % (sym.replace('\\', '\\\\').replace('"', '\\"'), int(val[0]), int(val[1]), int(val[2])))
+out.append('    }')
+out.append('    private ReferenceFormants() { }')
+out.append('}')
+dst = os.path.join(ROOT, 'app', 'src', 'com', 'dsh', 'v4tune', 'voicebank', 'ReferenceFormants.java')
+io.open(dst, 'w', encoding='utf-8', newline='\n').write('\n'.join(out) + '\n')
+print('wrote %s' % dst)

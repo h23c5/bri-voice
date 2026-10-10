@@ -1618,7 +1618,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 L.t("menu.tools.orientation"),
                 L.t("menu.tools.ai"),
                 L.t("menu.tools.settings"),
-                L.t("menu.tools.update")
+                L.t("menu.tools.update"),
+                L.t("menu.tools.mkbank")
         };
         menu(L.t("menu.tools"), null, items, -1, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, int which) {
@@ -1633,7 +1634,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 else if (which == 8) toggleOrientation();
                 else if (which == 9) aiDialog();
                 else if (which == 10) settingsDialog();
-                else checkUpdate(false);
+                else if (which == 11) checkUpdate(false);
+                else com.dsh.v4tune.voicebank.VoicebankWizard.start(MainActivity.this);
             }
         });
     }
