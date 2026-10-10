@@ -1,0 +1,65 @@
+BriVoice tutorial - making a voicebank on the phone
+==================================================
+
+[1] What this is
+Turns a VOCALOID4 voicebank you are licensed to use into a .v4voice pack for BriVoice.
+The pack holds measured spectral statistics only - harmonic envelopes, formants, consonant
+noise spectra and frame sequences. No audio samples are embedded, and nothing goes online.
+
+[2] Prepare: copy the bank to the phone
+A bank is a folder such as:
+    BK8H76TAEHXWSKDB/
+        Luotianyi_CHN_Meng.ddb      <- frame data (required)
+        Luotianyi_CHN_Meng.ddi      <- phoneme table
+        *.vvd                       <- bank identity (voice id / name)
+Copy the whole folder to the phone, e.g. /sdcard/VoiceDB/BK8H76TAEHXWSKDB/ .
+(USB cable, a chat app's file transfer, cloud storage - anything works.)
+
+[3] Build the pack
+1. Open BriVoice -> Tools menu -> 'Make a voicebank'
+2. Voicebank folder path: the folder, for example
+       /sdcard/VoiceDB/BK8H76TAEHXWSKDB
+   Point at the FOLDER, not at a .ddb file.
+3. Voicebank name: what you want to see in the app, e.g. 'Luo Tianyi BV'.
+   Leave it blank to use the folder name.
+4. Press Start and wait. It takes about 20 s on a PC and a few minutes on a phone
+   (a one-off job). Keep the app in the foreground.
+5. When it finishes the file name and size are reported; the pack lands in
+       /sdcard/BriVoice_root/voicebanks/<name>.v4voice
+   The app picks it up automatically - try it in the piano roll.
+
+[4] What is inside the pack
+  voice.json   - voice id / name, three formants, a 7 point timbre shelf, statistics
+  harmonics    - harmonic curves on a 64 point log frequency grid, split into pitch bands,
+                 each band carrying a real run of 12 consecutive frames (int8, base64)
+  noise        - measured consonant noise spectra, written only when really measured
+  LICENSE.txt  - states that this is derived data and must not be redistributed
+
+[5] Why some phonemes are missing
+The converter writes only what it actually measured; anything else is left out and the app
+falls back to its built-in table. This is deliberate - nothing is invented. Examples:
+  - a phoneme with fewer than 40 usable frames gets no curves
+  - if the bank holds few fricative-like records (one bank measured 11 of 7749),
+    only one or two consonants are named and the rest stay empty
+So 'few consonants' is usually not a fault - the bank simply has little fricative material.
+
+[6] Troubleshooting
+Q: 'Folder not found'
+A: The path is wrong. Check it in a file manager; mind the case; do not point at a .ddb file.
+Q: 'No .ddb file in that folder'
+A: Wrong level, or the copy is incomplete. The bank folder must contain a .ddb.
+Q: It runs for a long time
+A: Bigger banks take longer (multi-GB .ddb files are normal). Keep the app in front;
+   close other apps if memory is tight.
+Q: Built fine but one note sounds wrong
+A: See section 5 - that phoneme may not have been measured. Try another lyric or tweak params.
+Q: May I share the .v4voice I made?
+A: Better not. It is derived from a bank you are licensed to use; check your licence first.
+
+[7] Relation to the PC converter
+The phone converter shares its algorithms with tools/voicebank_pack.py, and every stage was
+compared against it: frame decoding, frame envelopes, formant picking, harmonic curves,
+sequence packing (the base64 is identical), the FFT and consonant noise analysis, and the
+naming decision. The one deliberate difference is the random seeding of k-means (the phone
+uses deterministic k-means++), so cluster labels may differ - the structure and algorithms
+match and the sound is equivalent.

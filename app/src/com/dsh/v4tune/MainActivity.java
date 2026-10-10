@@ -1677,7 +1677,14 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private void showTutorial() {
         String text;
         try {
-            java.io.InputStream in = getAssets().open("tutorial/voicebank.zh.txt");
+            // L.lang(): 0 = zh, 1 = en, 2 = ja (see the L class comment); fall back to zh
+            String code = L.lang() == 1 ? "en" : (L.lang() == 2 ? "ja" : "zh");
+            java.io.InputStream in;
+            try {
+                in = getAssets().open("tutorial/voicebank." + code + ".txt");
+            } catch (Throwable missing) {
+                in = getAssets().open("tutorial/voicebank.zh.txt");
+            }
             java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
             byte[] buf = new byte[8192];
             int n;
