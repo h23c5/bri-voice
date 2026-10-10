@@ -1,0 +1,12 @@
+import zipfile, hashlib, sys
+a = zipfile.ZipFile(sys.argv[1]); b = zipfile.ZipFile(sys.argv[2])
+da = hashlib.sha256(a.read('classes.dex')).hexdigest()
+db = hashlib.sha256(b.read('classes.dex')).hexdigest()
+print('classes.dex  verified-build =', da[:32])
+print('classes.dex  final-release  =', db[:32])
+print('IDENTICAL CODE:', da == db)
+na = sorted(a.namelist()); nb = sorted(b.namelist())
+print('entries equal:', na == nb, len(na), len(nb))
+res = hashlib.sha256(a.read('resources.arsc')).hexdigest() == hashlib.sha256(b.read('resources.arsc')).hexdigest()
+print('resources identical:', res)
+print('assets:', [n for n in na if n.startswith('assets')])

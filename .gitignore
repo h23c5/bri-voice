@@ -1,0 +1,22 @@
+# 构建产物与发布物（dist 里的 APK/ZIP 含内置声库，不上传）
+/build/
+/dist/
+*.apk
+*.zip
+
+# 由商业声库派生的数据：一律不上传
+*.v4voice
+/app/assets/singers/
+
+# 用户工程与素材
+*.vsqx
+*.vsq
+*.mp4
+*.mp3
+
+# 编辑器 / 系统
+.idea/
+*.iml
+local.properties
+Thumbs.db
+Desktop.ini

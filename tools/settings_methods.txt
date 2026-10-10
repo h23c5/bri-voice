@@ -1,0 +1,49 @@
+
+    // ------------------------------------------------------------------ settings
+
+    /** the settings sheet; the phoneme lock lives here and is OFF by default */
+    private void settingsDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(8), dp(18), dp(8));
+
+        final CheckBox lock = new CheckBox(this);
+        lock.setText(L.t("set.phoneme.lock"));
+        lock.setChecked(phonemeLock);
+        box.addView(lock);
+
+        TextView desc = new TextView(this);
+        desc.setText(L.t("set.phoneme.desc"));
+        desc.setTextColor(Theme.TEXT_DIM);
+        desc.setTextSize(12f);
+        desc.setPadding(dp(4), 0, 0, dp(8));
+        box.addView(desc);
+
+        TextView state = new TextView(this);
+        state.setText(L.t(phonemeLock ? "set.phoneme.state.on" : "set.phoneme.state.off"));
+        state.setTextColor(Theme.ACCENT);
+        state.setTextSize(12f);
+        state.setPadding(dp(4), 0, 0, 0);
+        box.addView(state);
+        lock.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                state.setText(L.t(on ? "set.phoneme.state.on" : "set.phoneme.state.off"));
+            }
+        });
+
+        ScrollView sc = new ScrollView(this);
+        sc.addView(box);
+        com.dsh.v4tune.ui.Dialogs.builder(this)
+                .setTitle(L.t("dlg.settings.title"))
+                .setView(sc)
+                .setPositiveButton(L.t("ai.save"), new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) {
+                        phonemeLock = lock.isChecked();
+                        getSharedPreferences("brivoice", MODE_PRIVATE).edit()
+                                .putBoolean("phonemeLock", phonemeLock).apply();
+                        status(L.t(phonemeLock ? "set.phoneme.state.on" : "set.phoneme.state.off"));
+                    }
+                })
+                .setNegativeButton(L.t("dlg.cancel"), null)
+                .show();
+    }

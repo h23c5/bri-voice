@@ -1,0 +1,10 @@
+# -*- coding: utf-8 -*-
+import io
+p = r'C:\Users\H23_C5\Documents\deepseek-harness\default-workspace\vocaloid-android\app\src\com\dsh\v4tune\MainActivity.java'
+s = io.open(p, encoding='utf-8').read()
+old = "        menu(L.t(\"dlg.clips.title\"), null, items, -1, new DialogInterface.OnClickListener() {\n                    public void onClick(DialogInterface d, final int which) {\n                        new AlertDialog.Builder(MainActivity.this)\n                                .setTitle(list.get(which).name)\n                                .setItems(new String[]{L.t(\"clip.remove\")}, new DialogInterface.OnClickListener() {\n                                    public void onClick(DialogInterface d2, int w) {\n                                        list.remove(which);\n                                        status(L.t(\"status.clip.removed\"));\n                                    }\n                                })\n                                .setNegativeButton(L.t(\"dlg.cancel\"), null);\n                    }\n                })\n                .setNegativeButton(L.t(\"dlg.close\"), null)\n                .show();"
+new = "        menu(L.t(\"dlg.clips.title\"), null, items, -1, new DialogInterface.OnClickListener() {\n            public void onClick(DialogInterface d, final int which) {\n                new AlertDialog.Builder(MainActivity.this)\n                        .setTitle(list.get(which).name)\n                        .setMessage(L.t(\"clip.remove\"))\n                        .setPositiveButton(L.t(\"clip.remove\"), new DialogInterface.OnClickListener() {\n                            public void onClick(DialogInterface d2, int w) {\n                                list.remove(which);\n                                status(L.t(\"status.clip.removed\"));\n                            }\n                        })\n                        .setNegativeButton(L.t(\"dlg.cancel\"), null)\n                        .show();\n            }\n        });"
+if old not in s: raise SystemExit('clip block not found')
+s = s.replace(old, new, 1)
+io.open(p, 'w', encoding='utf-8', newline='').write(s)
+print('clip menu fixed')

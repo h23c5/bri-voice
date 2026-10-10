@@ -1,0 +1,392 @@
+
+    // ------------------------------------------------- AI / external control (experimental)
+
+    /** runs work on the UI thread and waits for it, so an HTTP request can answer */
+    private String onUi(final java.util.concurrent.Callable<String> work, long timeoutMs) throws Exception {
+        java.util.concurrent.FutureTask<String> ft = new java.util.concurrent.FutureTask<String>(work);
+        runOnUiThread(ft);
+        return ft.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    /** the state an external script can read */
+    private String extStatus() {
+        Part p = currentPart();
+        String singer = currentVoice == null ? "" : singerName(currentVoice);
+        return com.dsh.v4tune.ai.Json.obj(
+                "ok", Boolean.TRUE,
+                "app", "BriVoice",
+                "version", "4.2",
+                "playing", Boolean.valueOf(engine.isPlaying()),
+                "playTick", Long.valueOf(engine.playTick()),
+                "startTick", Long.valueOf(startTick),
+                "tracks", Integer.valueOf(song.tracks.size()),
+                "trackIndex", Integer.valueOf(trackIndex),
+                "partPos", Long.valueOf(p == null ? 0 : p.pos),
+                "partDur", Long.valueOf(p == null ? 0 : p.dur),
+                "notes", Integer.valueOf(p == null ? 0 : p.notes.size()),
+                "singer", singer,
+                "paramIds", com.dsh.v4tune.ai.Json.raw(com.dsh.v4tune.ai.Json.arr(java.util.Arrays.asList(com.dsh.v4tune.ai.Params.IDS))),
+                "ai", com.dsh.v4tune.ai.Json.raw(com.dsh.v4tune.ai.Json.obj(
+                        "enabled", Boolean.valueOf(aiCfg.aiEnabled),
+                        "busy", Boolean.valueOf(aiBusy),
+                        "model", aiCfg.model,
+                        "lastError", aiLastError == null ? "" : aiLastError,
+                        "lastApplied", Integer.valueOf(aiLastApplied))),
+                "ext", com.dsh.v4tune.ai.Json.raw(com.dsh.v4tune.ai.Json.obj(
+                        "enabled", Boolean.valueOf(aiCfg.extEnabled),
+                        "port", Integer.valueOf(extApi != null ? extApi.port() : 0))));
+    }
+
+    /** every command an external script can send; always called on the UI thread */
+    private String extCommand(String action, java.util.Map<String, Object> args) {
+        try {
+            Part p = currentPart();
+            if (p == null) throw new IllegalStateException("no active part");
+            if ("status".equals(action)) return extStatus();
+
+            if ("setParam".equals(action) || "aiApply".equals(action)) {
+                String pid = com.dsh.v4tune.ai.Json.str(args, "param", null);
+                java.util.Map<String, double[][]> curves = new java.util.LinkedHashMap<String, double[][]>();
+                if (pid != null && args.get("points") != null) {
+                    curves.put(pid, pointsOf(args.get("points")));
+                } else if (args.get("curves") != null) {
+                    String raw = com.dsh.v4tune.ai.Json.obj("curves", com.dsh.v4tune.ai.Json.raw(String.valueOf(args.get("curves"))));
+                    curves = com.dsh.v4tune.ai.AiTuner.parseCurves(raw, p.dur + p.pos);
+                } else {
+                    throw new IllegalArgumentException("need param+points or curves");
+                }
+                boolean replace = "replace".equals(com.dsh.v4tune.ai.Json.str(args, "mode", "replace"));
+                int n = applyCurves(curves, !replace, 1.0f);
+                return com.dsh.v4tune.ai.Json.obj("ok", Boolean.TRUE, "points", Integer.valueOf(n),
+                        "params", Integer.valueOf(curves.size()));
+            }
+
+            if ("clearParam".equals(action)) {
+                int idx = com.dsh.v4tune.ai.Params.indexOf(com.dsh.v4tune.ai.Json.str(args, "param", "DYN"));
+                if (idx < 0) throw new IllegalArgumentException("unknown param");
+                beginEdit();
+                com.dsh.v4tune.model.ControlCurve c = p.ctrlOrNull(com.dsh.v4tune.ai.Params.IDS[idx]);
+                if (c != null) c.pts.clear();
+                commitEdit();
+                refreshAll();
+                return com.dsh.v4tune.ai.Json.obj("ok", Boolean.TRUE, "cleared", com.dsh.v4tune.ai.Params.IDS[idx]);
+            }
+
+            if ("addNote".equals(action)) {
+                beginEdit();
+                Note n = new Note();
+                n.pos = (long) com.dsh.v4tune.ai.Json.num(args, "pos", 0);
+                n.dur = (long) com.dsh.v4tune.ai.Json.num(args, "dur", 480);
+                if (n.dur < 60) n.dur = 60;
+                n.key = (int) Math.round(com.dsh.v4tune.ai.Json.num(args, "key", 60));
+                n.vel = (int) Math.round(com.dsh.v4tune.ai.Json.num(args, "vel", 64));
+                n.lyric = com.dsh.v4tune.ai.Json.str(args, "lyric", "la");
+                String ph = com.dsh.v4tune.ai.Json.str(args, "phoneme", null);
+                if (ph != null && ph.length() > 0) n.phoneme = ph;
+                p.notes.add(n);
+                p.sortNotes();
+                long end = p.pos + 480L;
+                for (Note x : p.notes) end = Math.max(end, x.pos + x.dur);
+                if (end - p.pos > p.dur) p.dur = end - p.pos;
+                commitEdit();
+                refreshAll();
+                return com.dsh.v4tune.ai.Json.obj("ok", Boolean.TRUE, "notes", Integer.valueOf(p.notes.size()),
+                        "pos", Long.valueOf(n.pos), "key", Integer.valueOf(n.key));
+            }
+
+            if ("deleteNote".equals(action)) {
+                long pos = (long) com.dsh.v4tune.ai.Json.num(args, "pos", -1);
+                int key = (int) Math.round(com.dsh.v4tune.ai.Json.num(args, "key", -1));
+                beginEdit();
+                int removed = 0;
+                for (int i = p.notes.size() - 1; i >= 0; i--) {
+                    Note n = p.notes.get(i);
+                    if (n.pos == pos && (key < 0 || n.key == key)) { p.notes.remove(i); removed++; }
+                }
+                commitEdit();
+                refreshAll();
+                return com.dsh.v4tune.ai.Json.obj("ok", Boolean.TRUE, "removed", Integer.valueOf(removed));
+            }
+
+            if ("setLyrics".equals(action)) {
+                String text = com.dsh.v4tune.ai.Json.str(args, "text", "");
+                java.util.List<String> parts = com.dsh.v4tune.io.LyricFill.split(text, null);
+                beginEdit();
+                p.sortNotes();
+                int n = Math.min(parts.size(), p.notes.size());
+                for (int i = 0; i < n; i++) p.notes.get(i).lyric = parts.get(i);
+                commitEdit();
+                refreshAll();
+                return com.dsh.v4tune.ai.Json.obj("ok", Boolean.TRUE, "filled", Integer.valueOf(n),
+                        "syllables", Integer.valueOf(parts.size()));
+            }
+
+            if ("play".equals(action)) {
+                double from = com.dsh.v4tune.ai.Json.num(args, "fromTick", -1);
+                if (from >= 0) {
+                    startTick = (long) from;
+                    roll.setPlayheadTick(startTick);
+                    if (paramView != null) paramView.setPlayheadTick(startTick);
+                }
+                if (!engine.isPlaying()) playSong();
+                return com.dsh.v4tune.ai.Json.obj("ok", Boolean.TRUE, "playing", Boolean.TRUE, "from", Long.valueOf(startTick));
+            }
+            if ("stop".equals(action)) {
+                if (engine.isPlaying()) stopPlay();
+                return com.dsh.v4tune.ai.Json.obj("ok", Boolean.TRUE, "playing", Boolean.FALSE);
+            }
+            if ("save".equals(action)) {
+                saveProject(false);
+                return com.dsh.v4tune.ai.Json.obj("ok", Boolean.TRUE, "saved", Boolean.TRUE);
+            }
+            if ("newProject".equals(action)) {
+                newProject();
+                return com.dsh.v4tune.ai.Json.obj("ok", Boolean.TRUE, "tracks", Integer.valueOf(song.tracks.size()));
+            }
+            if ("aiTune".equals(action)) {
+                if (!aiCfg.ready()) throw new IllegalStateException("AI is off - enable it in Tools > AI (experimental)");
+                runAiTune();
+                return com.dsh.v4tune.ai.Json.obj("ok", Boolean.TRUE, "started", Boolean.TRUE,
+                        "hint", "poll /status until ai.busy is false");
+            }
+            throw new IllegalArgumentException("unknown action: " + action);
+        } catch (Throwable t) {
+            String m = t.getMessage();
+            return com.dsh.v4tune.ai.Json.obj("ok", Boolean.FALSE, "error", m == null ? t.toString() : m);
+        }
+    }
+
+    /** [[tick,value],...] out of a parsed JSON list */
+    private double[][] pointsOf(Object o) {
+        java.util.List<Object> pts = com.dsh.v4tune.ai.Json.asList(o);
+        if (pts == null) throw new IllegalArgumentException("points must be a list");
+        java.util.ArrayList<double[]> keep = new java.util.ArrayList<double[]>();
+        for (Object it : pts) {
+            java.util.List<Object> pair = com.dsh.v4tune.ai.Json.asList(it);
+            if (pair == null || pair.size() < 2) continue;
+            keep.add(new double[]{num(pair.get(0)), num(pair.get(1))});
+        }
+        return keep.toArray(new double[keep.size()][]);
+    }
+
+    private static double num(Object o) {
+        if (o instanceof Double) return (Double) o;
+        try { return Double.parseDouble(String.valueOf(o)); } catch (Throwable t) { return 0; }
+    }
+
+    /**
+     * Writes curves into the current part.
+     *
+     * @param merge true to blend with what is already there, false to replace the points
+     * @param bias  0..1, how far to move towards the suggested value
+     * @return the number of points written
+     */
+    private int applyCurves(java.util.Map<String, double[][]> curves, boolean merge, float bias) {
+        Part p = currentPart();
+        if (p == null || curves == null || curves.isEmpty()) return 0;
+        beginEdit();
+        int written = 0;
+        for (java.util.Map.Entry<String, double[][]> e : curves.entrySet()) {
+            int idx = com.dsh.v4tune.ai.Params.indexOf(e.getKey());
+            if (idx < 0) continue;
+            com.dsh.v4tune.model.ControlCurve c = p.ctrl(com.dsh.v4tune.ai.Params.IDS[idx]);
+            if (!merge) c.pts.clear();
+            for (double[] pt : e.getValue()) {
+                double target = com.dsh.v4tune.ai.Params.clamp(idx, pt[1]);
+                double v = target;
+                if (merge && !c.pts.isEmpty()) {
+                    double old = com.dsh.v4tune.ai.Params.clamp(idx, c.valueAt((long) pt[0]));
+                    v = old + (target - old) * Math.max(0f, Math.min(1f, bias));
+                }
+                c.putRaw((long) pt[0], com.dsh.v4tune.ai.Params.clamp(idx, v));
+                written++;
+            }
+            c.sort();
+            c.compact((com.dsh.v4tune.ai.Params.MAX[idx] - com.dsh.v4tune.ai.Params.MIN[idx]) / 300.0);
+        }
+        commitEdit();
+        refreshAll();
+        return written;
+    }
+
+    /** asks the model, validates the answer, applies it on the UI thread */
+    private void runAiTune() {
+        if (!aiCfg.ready()) { status(L.t("ai.off")); return; }
+        final Part p = currentPart();
+        if (p == null) return;
+        if (aiBusy) { status(L.t("ai.busy")); return; }
+        aiBusy = true;
+        aiLastError = null;
+        status(L.t("ai.asking"));
+        final String payload = com.dsh.v4tune.ai.AiTuner.partJson(song, p, trackIndex);
+        final float bias = aiCfg.strength;
+        new Thread(new Runnable() {
+            public void run() {
+                String err = null;
+                java.util.Map<String, double[][]> curves = null;
+                try {
+                    String reply = com.dsh.v4tune.ai.AiTuner.chat(aiCfg, payload, 45000);
+                    aiLastReply = reply == null ? "" : reply;
+                    curves = com.dsh.v4tune.ai.AiTuner.parseCurves(reply, p.dur + p.pos);
+                } catch (Throwable t) {
+                    err = t.getMessage() == null ? t.toString() : t.getMessage();
+                }
+                final String fe = err;
+                final java.util.Map<String, double[][]> fc = curves;
+                ui.post(new Runnable() {
+                    public void run() {
+                        aiBusy = false;
+                        if (fe != null) {
+                            aiLastError = fe;
+                            status(L.t("ai.failed", fe));
+                            return;
+                        }
+                        int n = applyCurves(fc, true, bias);
+                        aiLastApplied = n;
+                        status(L.t("ai.applied", fc == null ? 0 : fc.size(), n));
+                    }
+                });
+            }
+        }, "brivoice-ai").start();
+    }
+
+    /** the experimental panel: switches, endpoint, key, port, manual tune button */
+    private void aiDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(6), dp(18), dp(6));
+
+        TextView warn = new TextView(this);
+        warn.setText(L.t("ai.experimental"));
+        warn.setTextColor(Theme.ACCENT2);
+        warn.setTextSize(12.5f);
+        warn.setPadding(0, 0, 0, dp(10));
+        box.addView(warn);
+
+        final CheckBox on = new CheckBox(this);
+        on.setText(L.t("ai.enable"));
+        on.setChecked(aiCfg.aiEnabled);
+        box.addView(on);
+
+        box.addView(label(L.t("ai.baseUrl")));
+        final EditText url = field(aiCfg.baseUrl, false);
+        box.addView(url);
+        box.addView(label(L.t("ai.model")));
+        final EditText model = field(aiCfg.model, false);
+        box.addView(model);
+        box.addView(label(L.t("ai.key")));
+        final EditText key = field(aiCfg.apiKey, true);
+        box.addView(key);
+
+        final TextView st = new TextView(this);
+        st.setText(L.t("ai.strength", Integer.valueOf(Math.round(aiCfg.strength * 100))));
+        st.setTextColor(Theme.TEXT_DIM);
+        st.setTextSize(12f);
+        box.addView(st);
+        final SeekBar str = new SeekBar(this);
+        str.setMax(100);
+        str.setProgress(Math.round(aiCfg.strength * 100));
+        str.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar sb, int pr, boolean u) {
+                st.setText(L.t("ai.strength", Integer.valueOf(pr)));
+            }
+            public void onStartTrackingTouch(SeekBar sb) { }
+            public void onStopTrackingTouch(SeekBar sb) { }
+        });
+        box.addView(str);
+
+        final CheckBox ext = new CheckBox(this);
+        ext.setText(L.t("ai.ext.enable"));
+        ext.setChecked(aiCfg.extEnabled);
+        box.addView(ext);
+        box.addView(label(L.t("ai.ext.port")));
+        final EditText port = field(String.valueOf(aiCfg.extPort), false);
+        box.addView(port);
+
+        final TextView state = new TextView(this);
+        state.setTextColor(Theme.TEXT_DIM);
+        state.setTextSize(12f);
+        state.setPadding(0, dp(8), 0, 0);
+        state.setText(extStateText());
+        box.addView(state);
+
+        ScrollView sc = new ScrollView(this);
+        sc.addView(box);
+        final AlertDialog d = Dialogs.builder(this).setTitle(L.t("ai.title")).setView(sc)
+                .setPositiveButton(L.t("ai.save"), null)
+                .setNeutralButton(L.t("ai.tune"), null)
+                .setNegativeButton(L.t("dlg.close"), null)
+                .create();
+        d.show();
+        d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                aiCfg.aiEnabled = on.isChecked();
+                aiCfg.baseUrl = url.getText().toString().trim();
+                aiCfg.model = model.getText().toString().trim();
+                aiCfg.apiKey = key.getText().toString().trim();
+                aiCfg.strength = str.getProgress() / 100f;
+                aiCfg.extEnabled = ext.isChecked();
+                try { aiCfg.extPort = Integer.parseInt(port.getText().toString().trim()); } catch (Throwable ignored) { }
+                aiCfg.save(MainActivity.this);
+                applyExtServer();
+                state.setText(extStateText());
+                status(L.t("ai.saved"));
+            }
+        });
+        d.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                aiCfg.aiEnabled = on.isChecked();
+                aiCfg.baseUrl = url.getText().toString().trim();
+                aiCfg.model = model.getText().toString().trim();
+                aiCfg.apiKey = key.getText().toString().trim();
+                aiCfg.strength = str.getProgress() / 100f;
+                aiCfg.save(MainActivity.this);
+                runAiTune();
+                d.dismiss();
+            }
+        });
+    }
+
+    private String extStateText() {
+        if (extApi != null && extApi.isRunning()) return L.t("ai.ext.running", Integer.valueOf(extApi.port()));
+        return L.t("ai.ext.stopped");
+    }
+
+    /** starts or stops the local control server according to the settings */
+    private void applyExtServer() {
+        if (aiCfg == null) return;
+        if (aiCfg.extEnabled) {
+            if (extApi != null && extApi.isRunning() && extApi.port() == aiCfg.extPort) return;
+            if (extApi != null) { extApi.stop(); extApi = null; }
+            try {
+                extApi = com.dsh.v4tune.ai.ExtApi.start(aiCfg.extPort, extHandler);
+                status(L.t("ai.ext.running", Integer.valueOf(extApi.port())));
+            } catch (Throwable t) {
+                extApi = null;
+                status(L.t("ai.ext.failed", String.valueOf(t.getMessage())));
+            }
+        } else if (extApi != null) {
+            extApi.stop();
+            extApi = null;
+            status(L.t("ai.ext.stopped"));
+        }
+    }
+
+    private TextView label(String s) {
+        TextView t = new TextView(this);
+        t.setText(s);
+        t.setTextColor(Theme.TEXT_DIM);
+        t.setTextSize(12f);
+        t.setPadding(0, dp(8), 0, dp(2));
+        return t;
+    }
+
+    private EditText field(String v, boolean secret) {
+        EditText e = new EditText(this);
+        e.setText(v == null ? "" : v);
+        e.setTextColor(Theme.TEXT);
+        e.setTextSize(14f);
+        e.setSingleLine(true);
+        if (secret) e.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        return e;
+    }

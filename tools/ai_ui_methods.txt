@@ -1,0 +1,183 @@
+
+    // ------------------------------------------------- AI quick tune (workspace button)
+
+    /** shows the shortcut only while the experimental AI is switched on */
+    private void updateAiButton() {
+        if (aiBtn == null) return;
+        boolean on = aiCfg != null && aiCfg.aiEnabled;
+        aiBtn.setVisibility(on ? View.VISIBLE : View.GONE);
+    }
+
+    /** the quick-tune sheet: describe what you want, the assistant edits the part */
+    private void aiAskDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(8), dp(18), dp(8));
+
+        TextView hint = new TextView(this);
+        hint.setText(L.t("ai.ask.hint"));
+        hint.setTextColor(Theme.TEXT_DIM);
+        hint.setTextSize(12f);
+        box.addView(hint);
+
+        final EditText input = new EditText(this);
+        input.setHint(L.t("ai.ask.placeholder"));
+        input.setTextColor(Theme.TEXT);
+        input.setHintTextColor(Theme.TEXT_DIM);
+        input.setTextSize(15f);
+        input.setMinLines(3);
+        input.setGravity(android.view.Gravity.TOP);
+        input.setPadding(dp(8), dp(8), dp(8), dp(8));
+        box.addView(input);
+
+        // a few one-tap starting points
+        final String[] examples = {L.t("ai.ask.ex1"), L.t("ai.ask.ex2"), L.t("ai.ask.ex3"), L.t("ai.ask.ex4")};
+        LinearLayout chips = new LinearLayout(this);
+        chips.setOrientation(LinearLayout.VERTICAL);
+        for (final String ex : examples) {
+            TextView c = new TextView(this);
+            c.setText("·  " + ex);
+            c.setTextColor(Theme.ACCENT);
+            c.setTextSize(12.5f);
+            c.setPadding(0, dp(7), 0, 0);
+            c.setOnClickListener(new View.OnClickListener() {
+                public void onClick(View v) { input.setText(ex); input.setSelection(ex.length()); }
+            });
+            chips.addView(c);
+        }
+        box.addView(chips);
+
+        TextView scope = new TextView(this);
+        scope.setText(L.t("ai.ask.scope"));
+        scope.setTextColor(Theme.TEXT_DIM);
+        scope.setTextSize(11.5f);
+        scope.setPadding(0, dp(10), 0, 0);
+        box.addView(scope);
+
+        ScrollView sc = new ScrollView(this);
+        sc.addView(box);
+        com.dsh.v4tune.ui.Dialogs.builder(this)
+                .setTitle(L.t("ai.ask.title"))
+                .setView(sc)
+                .setPositiveButton(L.t("ai.ask.go"), new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) {
+                        String req = input.getText().toString().trim();
+                        if (req.length() == 0) req = examples[0];
+                        runAiTune(req);
+                    }
+                })
+                .setNegativeButton(L.t("dlg.cancel"), null)
+                .show();
+    }
+
+    /** applies everything a model may change, as one undoable edit */
+    private int applyTuning(com.dsh.v4tune.ai.Tuning t, float bias) {
+        Part p = currentPart();
+        if (p == null || t == null || t.isEmpty()) return 0;
+        beginEdit();
+        int changed = 0;
+
+        // 1) control curves
+        for (java.util.Map.Entry<String, double[][]> e : t.curves.entrySet()) {
+            int idx = com.dsh.v4tune.ai.Params.indexOf(e.getKey());
+            if (idx < 0) continue;
+            com.dsh.v4tune.model.ControlCurve c = p.ctrl(com.dsh.v4tune.ai.Params.IDS[idx]);
+            for (double[] pt : e.getValue()) {
+                double target = com.dsh.v4tune.ai.Params.clamp(idx, pt[1]);
+                double v = target;
+                if (!c.pts.isEmpty()) {
+                    double old = com.dsh.v4tune.ai.Params.clamp(idx, c.valueAt((long) pt[0]));
+                    v = old + (target - old) * Math.max(0f, Math.min(1f, bias));
+                }
+                c.putRaw((long) pt[0], com.dsh.v4tune.ai.Params.clamp(idx, v));
+                changed++;
+            }
+            c.sort();
+            c.compact((com.dsh.v4tune.ai.Params.MAX[idx] - com.dsh.v4tune.ai.Params.MIN[idx]) / 300.0);
+        }
+
+        // 2) notes: match by pos, only touch the fields that were sent
+        for (com.dsh.v4tune.ai.Tuning.NoteEdit e : t.notes) {
+            Note hit = null;
+            for (Note n : p.notes) {
+                if (n.pos == e.pos) { hit = n; break; }
+            }
+            if (hit == null) continue;                       // never invent notes from a tuning reply
+            if (e.key != null) hit.key = e.key.intValue();
+            if (e.vel != null) hit.vel = e.vel.intValue();
+            if (e.dur != null) hit.dur = e.dur.longValue();
+            if (e.newPos != null) hit.pos = e.newPos.longValue();
+            if (e.lyric != null) hit.lyric = e.lyric;
+            if (e.phoneme != null) hit.phoneme = e.phoneme;
+            changed++;
+        }
+        if (!t.notes.isEmpty()) {
+            p.sortNotes();
+            long end = p.pos + 480L;
+            for (Note n : p.notes) end = Math.max(end, n.pos + n.dur);
+            if (end - p.pos > p.dur) p.dur = end - p.pos;
+        }
+
+        // 3) tempo
+        if (t.tempo != null) {
+            double bpm = Math.max(20.0, Math.min(400.0, t.tempo.doubleValue()));
+            song.tempos.clear();
+            song.tempos.add(new long[]{0, Math.round(bpm * 100)});
+            changed++;
+        }
+
+        // 4) the track itself
+        com.dsh.v4tune.model.Track tr = song.tracks.get(Math.max(0, Math.min(trackIndex, song.tracks.size() - 1)));
+        if (t.trackVolume != null) { tr.vol = t.trackVolume.intValue(); changed++; }
+        if (t.trackPan != null) { tr.pan = t.trackPan.intValue(); changed++; }
+
+        commitEdit();
+        refreshAll();
+        if (t.tempo != null && tempoBox != null) {
+            tempoBox.bar.setProgress(tempoProgress());
+            tempoBox.setValue(tempoText());
+        }
+        return changed;
+    }
+
+    /** asks the model with the user's own words, then applies the whole answer */
+    private void runAiTune(final String request) {
+        if (aiCfg == null || !aiCfg.ready()) { status(L.t("ai.off")); return; }
+        final Part p = currentPart();
+        if (p == null) return;
+        if (aiBusy) { status(L.t("ai.busy")); return; }
+        aiBusy = true;
+        aiLastError = null;
+        status(L.t("ai.asking"));
+        final String payload = com.dsh.v4tune.ai.AiTuner.partJson(song, p, trackIndex)
+                + (request == null || request.trim().length() == 0 ? "" : (", \"request\": " + com.dsh.v4tune.ai.Json.quote(request.trim())));
+        final float bias = aiCfg.strength;
+        new Thread(new Runnable() {
+            public void run() {
+                String err = null;
+                com.dsh.v4tune.ai.Tuning tuning = null;
+                try {
+                    String reply = com.dsh.v4tune.ai.AiTuner.chat(aiCfg, payload, 60000);
+                    aiLastReply = reply == null ? "" : reply;
+                    tuning = com.dsh.v4tune.ai.AiTuner.parseTuning(reply, p.dur + p.pos);
+                } catch (Throwable t2) {
+                    err = t2.getMessage() == null ? t2.toString() : t2.getMessage();
+                }
+                final String fe = err;
+                final com.dsh.v4tune.ai.Tuning ft = tuning;
+                ui.post(new Runnable() {
+                    public void run() {
+                        aiBusy = false;
+                        if (fe != null) {
+                            aiLastError = fe;
+                            status(L.t("ai.failed", fe));
+                            return;
+                        }
+                        int n = applyTuning(ft, bias);
+                        aiLastApplied = n;
+                        status(L.t("ai.applied.full", ft == null ? "" : ft.summary(), n));
+                    }
+                });
+            }
+        }, "brivoice-ai").start();
+    }

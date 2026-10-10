@@ -1,0 +1,69 @@
+    // ------------------------------------------------------------------ audio clip lane
+
+    /** imported audio clips of the current track, drawn as blocks in the lane at the bottom */
+    private java.util.List<com.dsh.v4tune.model.AudioClip> clips =
+            new java.util.ArrayList<com.dsh.v4tune.model.AudioClip>();
+    private float clipH;
+    private Paint clipP, clipTxtP, clipSelP;
+    private com.dsh.v4tune.model.AudioClip selClip, dragClip;
+    private long dragOrigTick, dragGrabTick;
+
+    /** the lane occupies the bottom strip of the roll */
+    public void setClips(java.util.List<com.dsh.v4tune.model.AudioClip> list) {
+        clips = (list == null) ? new java.util.ArrayList<com.dsh.v4tune.model.AudioClip>() : list;
+        invalidate();
+    }
+
+    private float clipTop() { return Math.max(rulerH + dp(20f), getHeight() - clipH); }
+
+    /** the clip under x in the lane, or null */
+    private com.dsh.v4tune.model.AudioClip clipAt(float x) {
+        int bpm = song == null || song.tempos.isEmpty() ? 12000 : (int) song.tempos.get(0)[1];
+        for (int i = clips.size() - 1; i >= 0; i--) {
+            com.dsh.v4tune.model.AudioClip c = clips.get(i);
+            if (c == null) continue;
+            float x0 = xOfTick(c.startTick);
+            float x1 = xOfTick(c.endTick(bpm));
+            if (x1 - x0 < dp(6f)) x1 = x0 + dp(6f);
+            if (x >= x0 - dp(2f) && x <= x1 + dp(2f)) return c;
+        }
+        return null;
+    }
+
+    private void drawClipLane(Canvas c, float gl, float gr, float gb) {
+        float top = clipTop();
+        if (gb - top < dp(10f)) return;
+        c.drawRect(0f, top, gr, gb, clipP == null ? Theme.paint(Theme.PANEL_DK, 0f, true) : clipBg());
+        c.drawLine(gl, top, gr, top, Theme.paint(Theme.STROKE, dp(1f), false));
+        int bpm = song == null || song.tempos.isEmpty() ? 12000 : (int) song.tempos.get(0)[1];
+        for (com.dsh.v4tune.model.AudioClip cl : clips) {
+            if (cl == null) continue;
+            float x0 = xOfTick(cl.startTick), x1 = xOfTick(cl.endTick(bpm));
+            if (x1 - x0 < dp(4f)) x1 = x0 + dp(4f);
+            if (x1 < gl || x0 > gr) continue;
+            float left = Math.max(x0, gl), right = Math.min(x1, gr);
+            boolean on = (cl == selClip);
+            Theme.rr(c, left + 1f, top + dp(3f), right - 1f, gb - dp(3f), dp(4f),
+                    Theme.paint(on ? Theme.ACCENT2 : 0xFF3A5A8C, 0f, true));
+            String label = (cl.name == null ? "audio" : cl.name);
+            if (right - left > dp(30f)) {
+                c.save();
+                c.clipRect(left + dp(4f), top, right - dp(2f), gb);
+                c.drawText(label, left + dp(5f), gb - dp(8f), clipText(on));
+                c.restore();
+            }
+        }
+    }
+
+    private Paint clipBgPaint;
+
+    private Paint clipBg() {
+        if (clipBgPaint == null) clipBgPaint = Theme.paint(Theme.PANEL_DK, 0f, true);
+        return clipBgPaint;
+    }
+
+    private Paint clipText(boolean on) {
+        if (clipTxtP == null) clipTxtP = Theme.paint(Theme.TEXT, dp(11f), true);
+        clipTxtP.setColor(on ? 0xFF06202B : Theme.TEXT);
+        return clipTxtP;
+    }

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF0B0D13</item>
+        <item name="android:colorBackground">#FF0B0D13</item>
+        <item name="android:statusBarColor">#FF080A0F</item>
+        <item name="android:navigationBarColor">#FF080A0F</item>
+        <!-- dialogs inherit the night palette instead of the stock dark grey -->
+        <item name="android:colorAccent">#FF2FBDF0</item>
+        <item name="android:colorPrimary">#FF2FBDF0</item>
+        <item name="android:colorControlActivated">#FF2FBDF0</item>
+        <item name="android:colorControlHighlight">#332FBDF0</item>
+        <item name="android:textColorPrimary">#FFE8ECF5</item>
+        <item name="android:textColorSecondary">#FF8A93A6</item>
+        <item name="android:alertDialogTheme">@style/BriDialog</item>
+    </style>
+
+    <style name="BriDialog" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">#FF2FBDF0</item>
+        <item name="android:colorControlActivated">#FF2FBDF0</item>
+        <item name="android:colorControlHighlight">#332FBDF0</item>
+        <item name="android:textColorPrimary">#FFE8ECF5</item>
+        <item name="android:textColorSecondary">#FFA9B3C6</item>
+        <item name="android:windowBackground">@drawable/dialog_bg</item>
+        <item name="android:backgroundDimAmount">0.62</item>
+    </style>
+</resources>
