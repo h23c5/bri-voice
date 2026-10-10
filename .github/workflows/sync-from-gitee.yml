@@ -1,0 +1,39 @@
+name: sync from Gitee
+
+# Gitee is the source of truth; this repository is a mirror.
+# GitHub's own runners pull from Gitee and push the result back here, so nothing on the
+# author's machine has to reach github.com.
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"      # every 6 hours
+  workflow_dispatch:              # or press Run workflow
+
+permissions:
+  contents: write                 # needed to push the mirrored refs back
+
+concurrency:
+  group: sync-from-gitee
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull from Gitee and push here
+        env:
+          SRC: https://gitee.com/h23c5/bri-voice.git
+          DST_REPO: ${{ github.repository }}
+          DST_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config --global user.name  "gitee-mirror-bot"
+          git config --global user.email "gitee-mirror-bot@users.noreply.github.com"
+          git clone --mirror "$SRC" mirror.git
+          cd mirror.git
+          echo 'refs in the Gitee repository:'
+          git for-each-ref --format='  %(refname)  %(objectname:short)'
+          # force-update branches and tags; do not delete unrelated refs on the target
+          git push --force "https://x-access-token:${DST_TOKEN}@github.com/${DST_REPO}.git" \
+            "refs/heads/*:refs/heads/*" "refs/tags/*:refs/tags/*"
+          echo 'mirror complete'
