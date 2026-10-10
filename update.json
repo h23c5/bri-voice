@@ -1,7 +1,7 @@
 {
-  "versionCode": 54,
+  "versionCode": 55,
   "versionName": "7.3-beta1",
   "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.3-beta1/BriVoice-7.3-beta1.apk",
-  "sha256": "7e25cd0ed41a256f93e7c278d3fd6eb2cf6ab0e6b0f3abb3e70f014d2865f2a2",
-  "notes": "beta 1: voicebank wizard, tutorial in three languages, updater fixes"
+  "sha256": "d3d327efdf70fe4b4ee979c5033f2709a2bc2c445afced1c2de087a9efe5f287",
+  "notes": "beta 1: voicebank wizard, trilingual tutorial, updater fixes"
 }
