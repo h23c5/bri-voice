@@ -221,6 +221,10 @@ public final class L {
         {"about.line.dir", "声库目录：%s", "Voicebank folder: %s", "声庫フォルダ: %s"},
         {"about.line.tip1", "提示：内置声库为参数化统计数据（谐波包络与频段增益），不含任何第三方录音采样。", "Note: the bundled voicebank is parametric statistics (harmonic envelopes and band gains); it contains no third-party recordings.", "ヒント：内蔵声庫はパラメータ統計（倍音包絡と帯域ゲイン）で、第三者の録音サンプルは含みません。"},
         {"about.line.tip2", "如需其它音色，请导入你自己合法持有的声库文件。", "For other voices, import a voicebank you legally own.", "他の音色が必要な場合は、ご自身が適法に保有する声庫を読み込んでください。"},
+        {"about.line.net.title", "网络功能", "Network features", "ネットワーク機能"},
+        {"about.line.net.update", "· 检查更新：启动时与手动检查会读取 gitee.com 上的更新清单", "· Update check: reads the update manifest on gitee.com at start-up and on demand", "· 更新確認：起動時と任意のタイミングで gitee.com の更新情報を読みます"},
+        {"about.line.net.ai", "· AI 助手 / 外部接口（实验，默认关闭）：只有你自己开启后才会联网", "· AI helper / external API (experimental, off by default): connects only after you turn it on", "· AI アシスタント／外部インターフェース（実験的・既定でオフ）：有効にした場合のみ通信します"},
+        {"about.line.net.offline", "· 除此之外本应用不联网、不上传任何数据；工程与声库均保存在本机", "· Otherwise the app never connects or uploads anything; projects and voicebanks stay on this device", "· それ以外の通信は行わず、データを送信しません。プロジェクトと声庫は端末内に保存されます"},
 
         // -------------------------------------------------- menu entries
         {"dlg.singer.sub", "已安装 %d 个声库 · 点击切换", "%d voicebanks installed · tap to switch", "%d 個の声庫 · タップで切り替え"},

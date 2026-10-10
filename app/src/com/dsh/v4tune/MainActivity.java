@@ -3472,6 +3472,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         sb.append("\n").append(L.t("about.line.dir", Storage.voicebanks(this).getAbsolutePath())).append("\n");
         sb.append("\n").append(L.t("about.line.tip1")).append("\n");
         sb.append(L.t("about.line.tip2")).append("\n");
+        sb.append("\n").append(L.t("about.line.net.title")).append("\n");
+        sb.append(L.t("about.line.net.update")).append("\n");
+        sb.append(L.t("about.line.net.ai")).append("\n");
+        sb.append(L.t("about.line.net.offline")).append("\n");
         sb.append("\n").append(L.t("about.line.author")).append("\n");
         sb.append("\n").append(L.t("about.line.disclaimer")).append("\n");
         new AlertDialog.Builder(this)
