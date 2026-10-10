@@ -37,6 +37,8 @@ public final class Updater {
     /** Manifest in the repository; the raw endpoint of gitee.com is reachable from the app. */
     public static final String MANIFEST_URL =
             "https://gitee.com/h23c5/bri-voice/raw/main/update.json";
+    /** the raw host caches aggressively, so every check carries a fresh query */
+    private static String manifestUrl() { return MANIFEST_URL + "?t=" + System.currentTimeMillis(); }
     /** Fallback when the raw endpoint is blocked: the public contents API returns it base64 coded. */
     public static final String MANIFEST_API =
             "https://gitee.com/api/v5/repos/h23c5/bri-voice/contents/update.json?ref=main";
@@ -92,8 +94,12 @@ public final class Updater {
         new Thread(new Runnable() {
             public void run() {
                 try {
-                    String body = fetch(MANIFEST_URL);
-                    Entry e = parse(body);
+                    Entry e = null;
+                    try {
+                        e = parse(fetch(manifestUrl()));
+                    } catch (Throwable raw) {
+                        e = null;   // a 404 or a blocked raw host must not stop the fallback
+                    }
                     if (e == null) e = parse(fromApi());
                     if (e == null || e.apkUrl.length() == 0) { cb.done(null, "manifest unreadable"); return; }
                     if (e.versionCode <= installedVersionCode(ctx)) { cb.done(null, null); return; }
@@ -108,7 +114,7 @@ public final class Updater {
     /** The same manifest through the contents API, which returns it base64 encoded. */
     private static String fromApi() {
         try {
-            JSONObject o = new JSONObject(fetch(MANIFEST_API));
+            JSONObject o = new JSONObject(fetch(MANIFEST_API + "&t=" + System.currentTimeMillis()));
             String b64 = o.optString("content", "").replaceAll("\\s", "");
             if (b64.length() == 0) return null;
             byte[] raw = android.util.Base64.decode(b64, android.util.Base64.DEFAULT);
@@ -224,8 +230,11 @@ public final class Updater {
         c.setConnectTimeout(CONNECT_TIMEOUT);
         c.setReadTimeout(READ_TIMEOUT);
         c.setInstanceFollowRedirects(true);
+        c.setUseCaches(false);
         c.setRequestProperty("User-Agent", "BriVoice-updater");
         c.setRequestProperty("Accept", "application/json, text/plain, */*");
+        c.setRequestProperty("Cache-Control", "no-cache");
+        c.setRequestProperty("Pragma", "no-cache");
         int code = c.getResponseCode();
         if (code != 200) throw new java.io.IOException("HTTP " + code);
         InputStream in = c.getInputStream();
