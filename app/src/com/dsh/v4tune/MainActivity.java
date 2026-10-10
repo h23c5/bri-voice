@@ -134,6 +134,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        // probe for a newer build a moment after start-up, off the cold-start path
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(new Runnable() {
+            public void run() {
+                if (!isFinishing()) checkUpdate(true);
+            }
+        }, 2500);
         loadDictionary();
         migrateOldPacks();
         packStore = new com.dsh.v4tune.io.PackStore(com.dsh.v4tune.io.PackStore.defaultDir(this));
@@ -1611,7 +1617,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 L.t("menu.tools.clips"),
                 L.t("menu.tools.orientation"),
                 L.t("menu.tools.ai"),
-                L.t("menu.tools.settings")
+                L.t("menu.tools.settings"),
+                L.t("menu.tools.update")
         };
         menu(L.t("menu.tools"), null, items, -1, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, int which) {
@@ -1625,7 +1632,88 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 else if (which == 7) clipMenu();
                 else if (which == 8) toggleOrientation();
                 else if (which == 9) aiDialog();
-                else settingsDialog();
+                else if (which == 10) settingsDialog();
+                else checkUpdate(false);
+            }
+        });
+    }
+
+    /** The start-up probe passes silent = true: only a newer build speaks up. */
+    private void checkUpdate(final boolean silent) {
+        final android.app.ProgressDialog wait;
+        if (silent) {
+            wait = null;
+        } else {
+            wait = new android.app.ProgressDialog(this);
+            wait.setMessage(L.t("update.checking"));
+            wait.setCancelable(false);
+            wait.show();
+        }
+        com.dsh.v4tune.update.Updater.check(this, new com.dsh.v4tune.update.Updater.CheckCb() {
+            public void done(final com.dsh.v4tune.update.Updater.Entry e, final String error) {
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        if (wait != null) { try { wait.dismiss(); } catch (Throwable ignored) { } }
+                        if (error != null) {
+                            if (!silent) updateToast(L.t("update.no.network") + "  (" + error + ")");
+                            return;
+                        }
+                        if (e == null) {
+                            if (!silent) updateToast(L.t("update.current") + "  " + com.dsh.v4tune.update.Updater.installedVersionName(MainActivity.this));
+                            return;
+                        }
+                        updateDialog(e);
+                    }
+                });
+            }
+        });
+    }
+
+    private void updateToast(String s) {
+        android.widget.Toast.makeText(this, s, android.widget.Toast.LENGTH_LONG).show();
+    }
+
+    private void updateDialog(final com.dsh.v4tune.update.Updater.Entry e) {
+        StringBuilder m = new StringBuilder();
+        m.append(L.t("update.available"));
+        m.append("\n\n").append(com.dsh.v4tune.update.Updater.installedVersionName(this)).append("  ->  ").append(e.versionName);
+        if (e.notes != null && e.notes.length() > 0) {
+            m.append("\n\n").append(L.t("update.notes")).append(":\n").append(e.notes);
+        }
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(L.t("update.title"))
+                .setMessage(m.toString())
+                .setPositiveButton(L.t("update.install"), new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) { downloadUpdate(e); }
+                })
+                .setNegativeButton(L.t("update.later"), null)
+                .show();
+    }
+
+    private void downloadUpdate(final com.dsh.v4tune.update.Updater.Entry e) {
+        final android.app.ProgressDialog pd = new android.app.ProgressDialog(this);
+        pd.setMessage(L.t("update.downloading"));
+        pd.setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL);
+        pd.setMax(1000);
+        pd.setCancelable(false);
+        pd.show();
+        com.dsh.v4tune.update.Updater.download(e, new com.dsh.v4tune.update.Updater.DownloadCb() {
+            public void progress(final int permille) {
+                runOnUiThread(new Runnable() { public void run() { pd.setProgress(permille); } });
+            }
+            public void done(final java.io.File apk, final String error) {
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        try { pd.dismiss(); } catch (Throwable ignored) { }
+                        if (error != null || apk == null) {
+                            updateToast(L.t("update.failed") + ": " + error);
+                            return;
+                        }
+                        updateToast(L.t("update.downloaded"));
+                        try { com.dsh.v4tune.update.Updater.install(MainActivity.this, apk); }
+                        catch (Throwable t) { updateToast(L.t("update.unknown.sources")); }
+                    }
+                });
             }
         });
     }
