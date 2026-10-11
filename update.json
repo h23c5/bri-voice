@@ -2,6 +2,6 @@
   "versionCode": 60,
   "versionName": "7.4",
   "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.4/BriVoice-7.4.apk",
-  "sha256": "aaba922ba93c26cc047685bdf675e47dda0d3dea050240d11bbf9236aa08ccef",
-  "notes": "release 7.4: lookahead throttle plus per-round render diagnostics"
+  "sha256": "fb68d8e6481c67735b195253b952b343cd0e65be6fe24f062f4452256de08381",
+  "notes": "release 7.4: long songs render fully before playback so the tail is never lost"
 }

@@ -294,6 +294,9 @@ public class AudioEngine {
     // ------------------------------------------------------- streaming playback
 
     /** a song that keeps being rendered while it is already playing */
+    /** Songs past this many frames are rendered to the end before the track starts. */
+    public static final int FULL_RENDER_FRAMES = 44100 * 60;
+
     public interface StreamSource {
         /** frames rendered and post-processed so far (grows) */
         int ready();
