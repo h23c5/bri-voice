@@ -297,6 +297,14 @@ public class AudioEngine {
     /** Songs past this many frames are rendered to the end before the track starts. */
     public static final int FULL_RENDER_FRAMES = 44100 * 60;
 
+    /**
+     * Render progress, reported separately from onProgress: onProgress means "the playhead is here"
+     * and must only ever be called while the track is actually playing. Feeding render counts into it
+     * made the playhead jump around during the pre-render and let the end-of-song check fire early,
+     * which cut even more of the tail off.
+     */
+    public interface RenderListener { void onRender(int ready, int total); }
+
     public interface StreamSource {
         /** frames rendered and post-processed so far (grows) */
         int ready();
@@ -322,6 +330,11 @@ public class AudioEngine {
      * instead of after the whole song.
      */
     public void playStream(final StreamSource src, final long startFrame, final Callback cb) {
+        playStream(src, startFrame, cb, null);
+    }
+
+    public void playStream(final StreamSource src, final long startFrame, final Callback cb,
+                           final RenderListener rl) {
         stop();
         final int total = src.total();
         if (total <= 0) { if (cb != null) cb.onDone(); return; }
@@ -363,8 +376,8 @@ public class AudioEngine {
                     if (total > FULL_RENDER_FRAMES) {
                         long shown = -1;
                         while (playing && !src.finished()) {
-                            long r = src.ready();
-                            if (cb != null && r != shown) { shown = r; cb.onProgress(r); }
+                            int r = src.ready();
+                            if (rl != null && r != shown) { shown = r; rl.onRender(r, total); }
                             try { Thread.sleep(50); } catch (InterruptedException ignored) { }
                         }
                         if (!playing) { try { at.release(); } catch (Throwable ignored) { } return; }

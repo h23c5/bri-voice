@@ -718,6 +718,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     // diagnostics: one line per render round; the last one shows where the tail went
                     android.util.Log.i("V4Tune", "render round: limit=" + limit + " total=" + total
                             + " elapsed=" + (System.currentTimeMillis() - startedMs) + "ms");
+                    if (total > com.dsh.v4tune.audio.AudioEngine.FULL_RENDER_FRAMES) {
+                        final int pct = (int) (100L * limit / Math.max(1, total));
+                        final int secs = (int) (limit / (double) cfg.sampleRate);
+                        ui.post(new Runnable() { public void run() { status(L.t("status.rendering",
+                                String.valueOf(pct) + "  " + secs + "s / " + (total / cfg.sampleRate) + "s")); } });
+                    }
                     if (limit >= total) { finished = true; return; }
                     // grow in long arithmetic: limit * 2 used to overflow to a negative int on
                     // long songs (5+ minutes), which stalled this loop, tripped the catch below
