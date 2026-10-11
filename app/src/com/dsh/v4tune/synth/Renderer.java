@@ -90,10 +90,20 @@ public class Renderer {
         // The stored duration is only a hint: a part created in the editor (or written by another
         // program) can hold notes past its own dur, and sizing the buffer from dur alone made every
         // write past the end throw ArrayIndexOutOfBoundsException. Cover the notes too.
-        long endTick = part.end();
-        for (Note nt : part.notes) endTick = Math.max(endTick, nt.pos + nt.dur);
+        long endTick = part.end();                       // already absolute: pos + dur
+        // Note positions are relative to the part, so part.pos has to be added back. Without it the
+        // end was under-reported by exactly part.pos - measured on HUG, where the notes really end
+        // at 150.3 s but p.end() only says 142.3 s (pos = 7680 ticks = 8 s), the last eight seconds
+        // of every part were never rendered and both playback and WAV export went silent there.
+        for (Note nt : part.notes) endTick = Math.max(endTick, part.pos + nt.pos + nt.dur);
         final double partEndSec = TimeUtil.tickToSec(song, endTick);
-        int n = (int) Math.ceil((partEndSec - partStartSec + cfg.tailSec) * fs);
+        // The buffer must cover the absolute end of the part. Note times in a vsqx are absolute
+        // ticks (a part's notes can start well after its own pos and the synthesis writes them at
+        // that absolute position), so subtracting partStartSec here made every part render exactly
+        // part.pos seconds too little. On a project whose parts begin late that cut the tail off
+        // completely: measured on HUG (pos = 7680 ticks = 8 s) part 0 rendered 134.5 s of a 142.3 s
+        // part, so everything past ~134 s was silent in both playback and WAV export.
+        int n = (int) Math.ceil((partEndSec + cfg.tailSec) * fs);
         if (limitFrames > 0 && n > limitFrames) n = limitFrames;
         if (n < 1) n = 1;
         float[] out = new float[n];
