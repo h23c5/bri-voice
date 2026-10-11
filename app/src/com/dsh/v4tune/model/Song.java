@@ -49,7 +49,16 @@ public class Song {
 
     public long maxTick() {
         long m = 0;
-        for (Track t : tracks) for (Part p : t.parts) m = Math.max(m, p.end());
+        for (Track t : tracks) {
+            for (Part p : t.parts) {
+                m = Math.max(m, p.end());
+                // A vsPart declares its own dur, and real files often declare less than the notes
+                // inside it actually occupy. Taking only p.end() therefore under-reported the end of
+                // the song, and everything past it was never rendered - the last few notes of a long
+                // song simply never sounded. The notes are the truth; keep the declared end too.
+                for (Note n : p.notes) m = Math.max(m, p.pos + n.end());
+            }
+        }
         return m;
     }
 

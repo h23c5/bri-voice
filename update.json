@@ -1,7 +1,7 @@
 {
-  "versionCode": 57,
-  "versionName": "7.3-beta3",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.3-beta3/BriVoice-7.3-beta3.apk",
-  "sha256": "fa0a98c580f5a58d11d4d9c9edebf518e00639195768927c043cd0aa07d2ee4f",
-  "notes": "beta 3: fixes the last notes being cut off in long songs"
+  "versionCode": 58,
+  "versionName": "7.3-beta4",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.3-beta4/BriVoice-7.3-beta4.apk",
+  "sha256": "9cf9af1935a4fdbca14f78642ec22935a8947e61a84315aebaef3d7954546c86",
+  "notes": "beta 4: last notes of long songs are no longer cut off"
 }
