@@ -2,6 +2,6 @@
   "versionCode": 60,
   "versionName": "7.4",
   "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.4/BriVoice-7.4.apk",
-  "sha256": "b8f03db468350c0a1022857d5027b89269780e668be2df5f77d1bc3210a3bd7e",
-  "notes": "release 7.4: renderer no longer cuts the tail of parts that start late (fixes the last notes going silent)"
+  "sha256": "6db6e4e78df86c391d3c373852e8b63eef5b692c4cdbe71b12eea5e33e4edca5",
+  "notes": "release 7.4: render length fix, render progress string, render length regression test"
 }

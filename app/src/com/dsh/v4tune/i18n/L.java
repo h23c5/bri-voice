@@ -89,6 +89,7 @@ public final class L {
 
         // ------------------------------------------------------- status
         {"status.dict.loaded", "拼音词典已载入", "Pinyin dictionary loaded", "ピンイン辞書を読み込みました"},
+        {"status.rendering", "正在渲染 {0}（完成后自动播放）", "Rendering {0} (plays when done)", "レンダリング中 {0}（完了後に再生）"},
         {"status.no.voice", "BriVoice · 尚未安装声库 —— 点「声库 → 导入声库文件」载入你自己的 .v4voice 声库", "BriVoice · No voicebank installed — tap \"Voicebanks → Import Voicebank File\" to load your own .v4voice voicebank", "BriVoice · 声庫が未インストールです —— 「声庫 → 声庫ファイルを読み込む」から .v4voice 声庫を読み込んでください"},
         {"status.packs.ready", "BriVoice · 已安装 %d 个声库：%s", "BriVoice · %d voicebanks installed: %s", "BriVoice · 声庫 %d 個をインストール済み：%s"},
         {"status.need.voice", "请先安装声库", "Install a voicebank first", "先に声庫をインストールしてください"},

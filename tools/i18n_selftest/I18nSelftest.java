@@ -46,7 +46,7 @@ import java.util.regex.Pattern;
 public class I18nSelftest {
 
   /** Catalog size this build is expected to ship. */
-  private static final int EXPECTED_KEYS = 332;
+  private static final int EXPECTED_KEYS = 333;
 
   /** Markers that cannot occur in any translation, used to prove formatting ran. */
   private static final String S_MARK = "@@S@@";
@@ -185,7 +185,7 @@ want.put("set", Integer.valueOf(11));
     want.put("toolbar", Integer.valueOf(10));
     want.put("transport", Integer.valueOf(14));
     want.put("param", Integer.valueOf(15));
-    want.put("status", Integer.valueOf(88));
+    want.put("status", Integer.valueOf(89));
     want.put("dlg", Integer.valueOf(62));
     want.put("about.line", Integer.valueOf(19));
     want.put("menu", Integer.valueOf(25));
