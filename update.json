@@ -1,7 +1,7 @@
 {
-  "versionCode": 56,
-  "versionName": "7.3-beta2",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.3-beta2/BriVoice-7.3-beta2.apk",
-  "sha256": "45b43ae15b37079469969c1fd764bd48df27cfb63f08653be04c7cd7b0f94df3",
-  "notes": "beta 2: folder picker for voicebank making, full user manual"
+  "versionCode": 57,
+  "versionName": "7.3-beta3",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.3-beta3/BriVoice-7.3-beta3.apk",
+  "sha256": "fa0a98c580f5a58d11d4d9c9edebf518e00639195768927c043cd0aa07d2ee4f",
+  "notes": "beta 3: fixes the last notes being cut off in long songs"
 }

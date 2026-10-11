@@ -1,0 +1,46 @@
+import sys
+from PIL import Image, ImageDraw, ImageFont
+P = r'C:\Users\H23_C5\Documents\deepseek-harness\default-workspace\vocaloid-android\build\promo2'
+OUT = r'C:\Users\H23_C5\Documents\deepseek-harness\default-workspace\vocaloid-android\dist'
+FONT = 'C:/Windows/Fonts/msyh.ttc'
+def cover(W, H):
+    bg = Image.open(P + r'\shots\s2.png').convert('RGB')
+    s = max(W / bg.width, H / bg.height)
+    bg = bg.resize((int(bg.width * s), int(bg.height * s)), Image.LANCZOS)
+    bg = bg.crop(((bg.width - W) // 2, (bg.height - H) // 2, (bg.width - W) // 2 + W, (bg.height - H) // 2 + H))
+    img = bg.convert('RGBA')
+    ov = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(ov)
+    for x in range(W):
+        a = int(235 - 150 * (x / W))
+        d.line([(x, 0), (x, H)], fill=(6, 12, 18, max(60, a)))
+    img = Image.alpha_composite(img, ov)
+    dr = ImageDraw.Draw(img)
+    fT = ImageFont.truetype(FONT, int(H * 0.150))
+    fS = ImageFont.truetype(FONT, int(H * 0.042))
+    fV = ImageFont.truetype(FONT, int(H * 0.055))
+    fM = ImageFont.truetype(FONT, int(H * 0.034))
+    x = int(W * 0.055); y = int(H * 0.14)
+    dr.text((x + 5, y + 5), 'BriVoice', font=fT, fill=(0, 0, 0, 170))
+    dr.text((x, y), 'BriVoice', font=fT, fill=(255, 255, 255, 255))
+    y += int(H * 0.185)
+    dr.text((x, y), '手机上的歌声合成与调音 · Android', font=fS, fill=(120, 210, 255, 255))
+    y += int(H * 0.075)
+    dr.line([(x, y), (x + int(W * 0.28), y)], fill=(79, 195, 247, 255), width=max(2, int(H * 0.005)))
+    y += int(H * 0.050)
+    dr.text((x, y), 'v7.3', font=fV, fill=(255, 255, 255, 255))
+    y += int(H * 0.080)
+    dr.text((x, y), '制作 · AI · 教程 · 声库制作 · 工具库', font=fM, fill=(225, 235, 245, 255))
+    ins = Image.open(P + r'\shots\s8.png').convert('RGB')
+    iw = int(W * 0.44); ih = int(iw * ins.height / ins.width)
+    ins = ins.resize((iw, ih), Image.LANCZOS)
+    ix = W - iw - int(W * 0.045); iy = (H - ih) // 2
+    img.paste(ins, (ix, iy))
+    dr.rectangle([ix - 2, iy - 2, ix + iw + 2, iy + ih + 2], outline=(79, 195, 247, 255), width=max(2, int(H * 0.004)))
+    return img.convert('RGB')
+a = cover(1920, 1080)
+a.save(OUT + r'\BriVoice_7.3_cover.png')
+a.save(OUT + r'\BriVoice_7.3_cover.jpg', quality=92)
+b = cover(1280, 720)
+b.save(OUT + r'\BriVoice_7.3_cover_720p.jpg', quality=92)
+print('cover ok 1920x1080 + 1280x720')

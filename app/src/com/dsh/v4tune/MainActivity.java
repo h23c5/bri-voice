@@ -697,7 +697,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     applyPostDspRange(rr, Math.max(0, ready), limit);
                     ready = limit;
                     if (limit >= total) { finished = true; return; }
-                    limit = Math.min(total, limit * 2);
+                    // grow in long arithmetic: limit * 2 used to overflow to a negative int on
+                    // long songs (5+ minutes), which stalled this loop, tripped the catch below
+                    // and reported 'finished' early - the player then stopped before the last
+                    // notes. Doubling in a long and clamping to total always reaches the end.
+                    long nextLimit = (long) limit * 2L;
+                    limit = (int) Math.min((long) total, nextLimit);
                 }
             } catch (Throwable t) {
                 final String m = String.valueOf(t);
