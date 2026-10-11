@@ -394,8 +394,19 @@ public class AudioEngine {
                     final long startMs = wallStart;
                     while (playing) {
                         long elapsed = System.currentTimeMillis() - startMs;
-                        long heard = (long) (elapsed * sr / 1000.0) - (long) (cursorOffsetMs * sr / 1000.0);
+                        // Playback must end when the audio track has actually played the song, not when
+                        // the wall clock says so. Rendering takes real time and the writer sleeps while it
+                        // waits for data, so the clock runs ahead of the sound; on a long song the doubling
+                        // renderer falls several seconds behind and the clock-based check cut the tail off -
+                        // the last notes simply never sounded. Prefer the track's own head position and keep
+                        // the clock only as a fallback plus a hard ceiling so this can never hang.
+                        long head = 0;
+                        try { head = at.getPlaybackHeadPosition(); } catch (Throwable ignored) { }
+                        long byClock = (long) (elapsed * sr / 1000.0);
+                        long heard = (head > 0) ? (start + head) : byClock;
+                        heard -= (long) (cursorOffsetMs * sr / 1000.0);
                         if (heard >= total - start) break;
+                        if (elapsed > (long) ((total - start) * 1000.0 / sr) + 8000L) break;;
                         if (cb != null) {
                             long now = System.currentTimeMillis();
                             if (now - lastCb > 100) {
