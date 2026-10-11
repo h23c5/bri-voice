@@ -1,7 +1,7 @@
 {
-  "versionCode": 59,
-  "versionName": "7.3-beta5",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.3-beta5/BriVoice-7.3-beta5.apk",
-  "sha256": "f2eaaccadf3da6eb9e2840ea38e74be2a9969119b493adcd528b9699f3bee05e",
-  "notes": "beta 5: playback now waits for the audio actually played, so long songs keep their last notes"
+  "versionCode": 60,
+  "versionName": "7.4",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.4/BriVoice-7.4.apk",
+  "sha256": "e8649d505d3462d7be25f981d1c837a982663c895ccd9c8a39b621353eb57e19",
+  "notes": "release 7.4: song end now covers notes past the part dur; playback ends on the frames actually played"
 }
