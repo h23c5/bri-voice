@@ -353,6 +353,22 @@ public class AudioEngine {
             public void run() {
                 long wallStart = 0;
                 try {
+                    // A long or dense song is rendered to the end before the track starts. The synth always
+                    // restarts at frame 0 because the filters need their history, so with the doubling window
+                    // every round costs more than the audio it adds (measured on a 2:47 song: 16 s of audio
+                    // took 19.7 s to render). Streaming from the first second therefore fell further behind the
+                    // longer the song ran and the tail was never rendered - the last notes never sounded.
+                    // Waiting here costs exactly one render pass and keeps playback smooth; short songs are
+                    // unaffected and still start after about a second.
+                    if (total > FULL_RENDER_FRAMES) {
+                        long shown = -1;
+                        while (playing && !src.finished()) {
+                            long r = src.ready();
+                            if (cb != null && r != shown) { shown = r; cb.onProgress(r); }
+                            try { Thread.sleep(50); } catch (InterruptedException ignored) { }
+                        }
+                        if (!playing) { try { at.release(); } catch (Throwable ignored) { } return; }
+                    }
                     at.play();
                     final long start = Math.max(0L, Math.min(startFrame, total - 1));
                     wallStart = System.currentTimeMillis();
