@@ -665,9 +665,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     // crawled from the middle on and the tail was never produced in time, which is
                     // why long songs lost their last notes. Throttling the producer so it only ever
                     // stays a few seconds ahead keeps the first-sound latency and removes the burst.
-                    // full-render songs must not be throttled: the player waits for the whole render
+                    // Full-render songs must not be throttled at all: -1 makes aheadMs negative so the
+                    // wait loop below is skipped. (Using Long.MAX_VALUE here made aheadMs enormous and the
+                    // producer slept for ever, which stalled the whole playback.)
                     long readyMs = total > com.dsh.v4tune.audio.AudioEngine.FULL_RENDER_FRAMES
-                            ? Long.MAX_VALUE
+                            ? -1L
                             : (long) ((double) limit * 1000.0 / cfg.sampleRate);
                     long aheadMs = readyMs - lookaheadMs - (System.currentTimeMillis() - startedMs);
                     while (aheadMs > 0 && !cancelled) {
