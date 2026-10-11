@@ -656,7 +656,21 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         private void produce() {
             try {
                 int limit = Math.min(total, Math.max(1024, cfg.sampleRate));
+                final long startedMs = System.currentTimeMillis();
+                final long lookaheadMs = 4000L;   // stay at most ~4 s ahead of the audio clock
                 while (!cancelled) {
+                    // Rendering always restarts at frame 0 (the synth needs its filter history), so
+                    // every growth step costs a full render of an ever longer prefix. Running those
+                    // steps back to back saturated the CPU while the user was listening: playback
+                    // crawled from the middle on and the tail was never produced in time, which is
+                    // why long songs lost their last notes. Throttling the producer so it only ever
+                    // stays a few seconds ahead keeps the first-sound latency and removes the burst.
+                    long readyMs = (long) ((double) limit * 1000.0 / cfg.sampleRate);
+                    long aheadMs = readyMs - lookaheadMs - (System.currentTimeMillis() - startedMs);
+                    while (aheadMs > 0 && !cancelled) {
+                        try { Thread.sleep(Math.min(aheadMs, 100L)); } catch (InterruptedException ignored) { }
+                        aheadMs = readyMs - lookaheadMs - (System.currentTimeMillis() - startedMs);
+                    }
                     float[] mixL = new float[limit];
                     float[] mixR = new float[limit];
                     boolean anySolo = false;
