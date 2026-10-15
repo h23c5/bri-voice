@@ -622,6 +622,43 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     }
     // --------------------------------------------------- streaming (render while playing)
 
+    /**
+     * Last fully rendered song, reused while nothing that affects the sound has changed. The synth
+     * always starts at frame 0, so any edit costs a full re-render; caching makes replay free.
+     */
+    private static long cacheKey = 0L;
+    private static int cacheTotal = -1;
+    private static float[] cacheL, cacheR;
+
+    /** FNV-1a over everything the renderer reads: notes, parts, tempos, voices and the flags. */
+    private static long songFingerprint(com.dsh.v4tune.model.Song s, int sampleRate) {
+        long h = 0xcbf29ce484222325L;
+        h = (h ^ sampleRate) * 0x100000001b3L;
+        h = (h ^ (Renderer.measuredNoise ? 1 : 0)) * 0x100000001b3L;
+        h = (h ^ Float.floatToIntBits(Renderer.noiseGain)) * 0x100000001b3L;
+        for (com.dsh.v4tune.model.Voice v : s.voices) { h = (h ^ v.bs) * 0x100000001b3L; h = (h ^ v.pc) * 0x100000001b3L; h = (h ^ String.valueOf(v.id).hashCode()) * 0x100000001b3L; }
+        for (long[] tm : s.tempos) { for (long x : tm) h = (h ^ x) * 0x100000001b3L; }
+        for (com.dsh.v4tune.model.Track t : s.tracks) {
+            h = (h ^ (t.mute ? 1 : 0)) * 0x100000001b3L;
+            h = (h ^ (t.solo ? 2 : 0)) * 0x100000001b3L;
+            h = (h ^ t.vol) * 0x100000001b3L; h = (h ^ t.pan) * 0x100000001b3L;
+            for (com.dsh.v4tune.model.Part p : t.parts) {
+                h = (h ^ p.pos) * 0x100000001b3L; h = (h ^ p.dur) * 0x100000001b3L; h = (h ^ p.bs) * 0x100000001b3L; h = (h ^ p.pc) * 0x100000001b3L;
+                for (com.dsh.v4tune.model.Note n : p.notes) {
+                    h = (h ^ n.pos) * 0x100000001b3L; h = (h ^ n.dur) * 0x100000001b3L;
+                    h = (h ^ n.key) * 0x100000001b3L; h = (h ^ n.vel) * 0x100000001b3L;
+                    h = (h ^ String.valueOf(n.lyric).hashCode()) * 0x100000001b3L;
+                    h = (h ^ String.valueOf(n.phoneme).hashCode()) * 0x100000001b3L;
+                }
+                for (java.util.Map.Entry<String, com.dsh.v4tune.model.ControlCurve> e : p.ctrls.entrySet()) {
+                    h = (h ^ e.getKey().hashCode()) * 0x100000001b3L;
+                    h = (h ^ (long) e.getValue().size()) * 0x100000001b3L;
+                }
+            }
+        }
+        return h;
+    }
+
     /** the producer of the current streaming playback, or null */
     private StreamProducer streamProducer;
 
@@ -645,6 +682,16 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         }
 
         void start() {
+            // cache hit: nothing that affects the sound changed, so replay the stored render
+            final long key = songFingerprint(sng, cfg.sampleRate);
+            if (key == cacheKey && cacheTotal == total && cacheL != null && cacheR != null) {
+                System.arraycopy(cacheL, 0, bufL, 0, total);
+                System.arraycopy(cacheR, 0, bufR, 0, total);
+                ready = total;
+                finished = true;
+                android.util.Log.i("V4Tune", "render cache HIT: " + total + " frames reused");
+                return;
+            }
             Thread t = new Thread(new Runnable() { public void run() { produce(); } }, "brivoice-render");
             t.setDaemon(true);
             t.start();
@@ -737,7 +784,15 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         ui.post(new Runnable() { public void run() { status(L.t("status.rendering",
                                 String.valueOf(pct) + "  " + secs + "s / " + (total / cfg.sampleRate) + "s")); } });
                     }
-                    if (limit >= total) { finished = true; return; }
+                    if (limit >= total) {
+                        cacheKey = songFingerprint(sng, cfg.sampleRate);
+                        cacheTotal = total;
+                        cacheL = bufL.clone();
+                        cacheR = bufR.clone();
+                        android.util.Log.i("V4Tune", "render cache STORE: " + total + " frames");
+                        finished = true;
+                        return;
+                    }
                     // grow in long arithmetic: limit * 2 used to overflow to a negative int on
                     // long songs (5+ minutes), which stalled this loop, tripped the catch below
                     // and reported 'finished' early - the player then stopped before the last
