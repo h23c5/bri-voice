@@ -2,6 +2,6 @@
   "versionCode": 61,
   "versionName": "7.5",
   "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.5/BriVoice-7.5.apk",
-  "sha256": "6482519b1bee41338f5a407555115d26d2661b6a9443caa217df5a31f9951235",
-  "notes": "release 7.5: rendered songs are cached and replayed instantly when nothing changed"
+  "sha256": "4001cb350fab530dc2c7f3426895b24113d580a051399e4cb76a2e52576907e8",
+  "notes": "release 7.5: rendered songs are cached; replaying an unchanged song is instant"
 }

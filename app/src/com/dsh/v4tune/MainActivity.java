@@ -636,7 +636,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         h = (h ^ sampleRate) * 0x100000001b3L;
         h = (h ^ (Renderer.measuredNoise ? 1 : 0)) * 0x100000001b3L;
         h = (h ^ Float.floatToIntBits(Renderer.noiseGain)) * 0x100000001b3L;
-        for (com.dsh.v4tune.model.Voice v : s.voices) { h = (h ^ v.bs) * 0x100000001b3L; h = (h ^ v.pc) * 0x100000001b3L; h = (h ^ String.valueOf(v.id).hashCode()) * 0x100000001b3L; }
+        for (com.dsh.v4tune.model.Voice v : s.voices) { h = (h ^ v.bs) * 0x100000001b3L; h = (h ^ v.pc) * 0x100000001b3L; }
         for (long[] tm : s.tempos) { for (long x : tm) h = (h ^ x) * 0x100000001b3L; }
         for (com.dsh.v4tune.model.Track t : s.tracks) {
             h = (h ^ (t.mute ? 1 : 0)) * 0x100000001b3L;
@@ -652,7 +652,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 }
                 for (java.util.Map.Entry<String, com.dsh.v4tune.model.ControlCurve> e : p.ctrls.entrySet()) {
                     h = (h ^ e.getKey().hashCode()) * 0x100000001b3L;
-                    h = (h ^ (long) e.getValue().size()) * 0x100000001b3L;
+                    h = (h ^ (long) e.getValue().pts.size()) * 0x100000001b3L;
                 }
             }
         }
