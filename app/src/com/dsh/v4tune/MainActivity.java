@@ -265,7 +265,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
             @Override
             public void onViewChanged(float px, float tick, float leftInset) {
-                paramView.followHorizontal(px, tick, leftInset);
+                // read the gutter fresh: it is 0 until the roll has been laid out, and a stale 0
+                // left the whole tuning lane drawn 110 px to the left of the note grid
+                paramView.followHorizontal(px, tick, roll.keyWidth());
             }
         });
 

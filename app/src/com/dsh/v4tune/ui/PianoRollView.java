@@ -23,6 +23,16 @@ public class PianoRollView extends View {
         default void onViewChanged(float pxPerTick, float scrollTick, float leftInset) { }
     }
 
+    /** width of the keyboard gutter: the note grid starts here, not at x = 0 */
+    public float keyWidth() { return keyW; }
+
+    /** keys and ruler sizes are only known after layout, so re-announce the window there */
+    @Override
+    protected void onLayout(boolean changed, int l, int t, int r, int b) {
+        super.onLayout(changed, l, t, r, b);
+        notifyView();
+    }
+
     /** keeps the parameter lane aligned with this roll, whatever moved it */
     private void notifyView() {
         if (zoomListener != null) zoomListener.onViewChanged(pxPerTick, scrollTick, keyW);
