@@ -2,6 +2,6 @@
   "versionCode": 61,
   "versionName": "7.5",
   "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.5/BriVoice-7.5.apk",
-  "sha256": "84629a3eb7fb325fb22293db4d2dcd4b4651b20367de8541285e28e34bb30b56",
-  "notes": "release 7.5: tuning lane aligned with the note grid (gutter read at layout time)"
+  "sha256": "6482519b1bee41338f5a407555115d26d2661b6a9443caa217df5a31f9951235",
+  "notes": "release 7.5: long songs render in one pass, roughly twice as fast"
 }

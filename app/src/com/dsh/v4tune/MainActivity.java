@@ -662,7 +662,13 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         /** one second first, then double: the total work stays about twice a single render */
         private void produce() {
             try {
-                int limit = Math.min(total, Math.max(1024, cfg.sampleRate));
+                // A song that is going to be pre-rendered anyway is rendered in ONE pass. The synth always
+                // restarts at frame 0 (the filters need their history), so the doubling schedule re-rendered
+                // the whole prefix on every round and the total work came to about twice the final pass:
+                // measured on a 167 s song, 94 s of rendering of which roughly 47 s was redundant. One pass
+                // halves it with identical output. Short songs keep the 1 s first-chunk behaviour.
+                final boolean fullRender = total > com.dsh.v4tune.audio.AudioEngine.FULL_RENDER_FRAMES;
+                int limit = fullRender ? total : Math.min(total, Math.max(1024, cfg.sampleRate));
                 final long startedMs = System.currentTimeMillis();
                 final long lookaheadMs = 4000L;   // stay at most ~4 s ahead of the audio clock
                 while (!cancelled) {
