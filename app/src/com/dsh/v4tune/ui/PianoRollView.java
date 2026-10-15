@@ -445,6 +445,11 @@ public class PianoRollView extends View {
         if (minTop > maxTop) { topKey = minTop;
         } else { if (topKey < minTop) topKey = minTop; if (topKey > maxTop) topKey = maxTop; }
         if (Float.isNaN(topKey) || Float.isInfinite(topKey)) topKey = 84f;
+        // Everything that moves the horizontal window - dragging, pinching, the slider, a new
+        // project, a resize - ends up here, so this is the one place that keeps the tuning lane
+        // aligned with the note grid. (onScrollChanged never fires: panning only changes scrollTick,
+        // it does not call scrollTo.)
+        notifyView();
     }
 
     private void zoomAt(float fx, float fy, float sx, float sy) { float tAt = tickAtX(fx), kAt = keyAtY(fy);
