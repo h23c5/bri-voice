@@ -192,6 +192,18 @@ public class ParamView extends View {
 
     public long getTickStart() { return (long) Math.floor(tickStart); }
 
+    /**
+     * Align this lane with the piano roll: same pixels per tick, same tick at the left edge. The roll
+     * calls it for pinches, the zoom slider, the buttons and any scroll, so the tuning lane always
+     * shows exactly the time window the note grid shows.
+     */
+    public void followHorizontal(float px, float start) {
+        if (px > 0f) pxPerTick = clampPx(px);
+        tickStart = start;
+        clampRange();
+        invalidate();
+    }
+
     public long getTickEnd() { return (long) Math.ceil(tickStart + visibleTicks()); }
 
     // ------------------------------------------------------------------ helpers

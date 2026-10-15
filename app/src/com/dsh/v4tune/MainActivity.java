@@ -257,6 +257,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         if (zoomBox != null) zoomBox.bar.setProgress(zoomIndex());
         roll.setZoomListener(new PianoRollView.ZoomListener() {
             public void onZoomChanged(float pxPerTick) {
+                @Override
+                public void onViewChanged(float px, float tick) {
+                    param.followHorizontal(px, tick);
+                }
                 // pinch / double-tap zoom keeps the slider and its readout in step
                 if (zoomBox == null) return;
                 zoomBox.bar.setProgress(zoomIndex());

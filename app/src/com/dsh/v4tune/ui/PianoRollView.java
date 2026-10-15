@@ -19,6 +19,19 @@ public class PianoRollView extends View {
     /** notified whenever the zoom level changes (pinch, buttons, slider, resize) */
     public interface ZoomListener {
         void onZoomChanged(float pxPerTick);
+        /** the horizontal window moved or resized: pxPerTick plus the tick at the left edge */
+        default void onViewChanged(float pxPerTick, float scrollTick) { }
+    }
+
+    /** keeps the parameter lane aligned with this roll, whatever moved it */
+    private void notifyView() {
+        if (zoomListener != null) zoomListener.onViewChanged(pxPerTick, scrollTick);
+    }
+
+    @Override
+    protected void onScrollChanged(int l, int t, int ol, int ot) {
+        super.onScrollChanged(l, t, ol, ot);
+        notifyView();
     }
 
     public interface Listener { void onSelectionChanged(Note n); void onNoteEdited(Note n, String what);
@@ -232,6 +245,7 @@ public class PianoRollView extends View {
         if (zoomListener != null) {
             try {
                 zoomListener.onZoomChanged(pxPerTick);
+            zoomListener.onViewChanged(pxPerTick, scrollTick);
             } catch (Throwable ignored) {
             }
         }
