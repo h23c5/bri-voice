@@ -2,6 +2,6 @@
   "versionCode": 61,
   "versionName": "7.5",
   "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.5/BriVoice-7.5.apk",
-  "sha256": "ac44fea622bc24b6c33a457ba02274ee34864e7b8a44251bee9745c69a026ffd",
-  "notes": "release 7.5: the tuning lane follows the note grid while it is dragged, zoomed or scrolled"
+  "sha256": "935ea1f6357e154546f5b0bd97ce55a83860fbc4338ea269923c3d7d84a2166d",
+  "notes": "release 7.5: tuning lane aligned with the note grid (keyboard gutter accounted for)"
 }

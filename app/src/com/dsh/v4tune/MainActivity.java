@@ -264,8 +264,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             }
 
             @Override
-            public void onViewChanged(float px, float tick) {
-                paramView.followHorizontal(px, tick);
+            public void onViewChanged(float px, float tick, float leftInset) {
+                paramView.followHorizontal(px, tick, leftInset);
             }
         });
 

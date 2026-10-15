@@ -197,7 +197,10 @@ public class ParamView extends View {
      * calls it for pinches, the zoom slider, the buttons and any scroll, so the tuning lane always
      * shows exactly the time window the note grid shows.
      */
-    public void followHorizontal(float px, float start) {
+    /** left gutter of the piano roll (its keyboard); 0 when the lane stands alone */
+    private float leftInset = 0f;
+
+    public void followHorizontal(float px, float start, float inset) {
         if (px > 0f) pxPerTick = clampPx(px);
         tickStart = start;
         clampRange();
@@ -224,11 +227,11 @@ public class ParamView extends View {
         return v;
     }
 
-    private float visibleTicks() { float v = getWidth() / pxPerTick; return v < 1f ? 1f : v; }
+    private float visibleTicks() { float w = getWidth() - leftInset; float v = (w > 1f ? w : getWidth()) / pxPerTick; return v < 1f ? 1f : v; }
 
-    private float xOfTick(long t) { return (t - tickStart) * pxPerTick; }
+    private float xOfTick(long t) { return leftInset + (t - tickStart) * pxPerTick; }
 
-    private float tickAtX(float x) { return tickStart + x / pxPerTick; }
+    private float tickAtX(float x) { return tickStart + (x - leftInset) / pxPerTick; }
 
     private float clampPx(float v) { if (Float.isNaN(v) || Float.isInfinite(v) || v <= 0f) return 0.25f;
         if (v < 0.0008f) return 0.0008f;
