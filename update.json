@@ -1,7 +1,7 @@
 {
-  "versionCode": 60,
-  "versionName": "7.4",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.4/BriVoice-7.4.apk",
-  "sha256": "6db6e4e78df86c391d3c373852e8b63eef5b692c4cdbe71b12eea5e33e4edca5",
-  "notes": "release 7.4: render length fix, render progress string, render length regression test"
+  "versionCode": 61,
+  "versionName": "7.5",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.5/BriVoice-7.5.apk",
+  "sha256": "22fc32ff62c2ae0351b8b77e5d7e66cfea4b167f5d1b185f3da9b80f3a146021",
+  "notes": "release 7.5: tuning lane follows the piano roll zoom and scroll; renderer tail fix; render progress display"
 }
