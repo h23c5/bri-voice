@@ -1,7 +1,7 @@
 {
-  "versionCode": 61,
-  "versionName": "7.5",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.5/BriVoice-7.5.apk",
-  "sha256": "71aaa770034556be6b2042fcf0a78f02ba721ae6a96e052e5c9628f0ebeea6bd",
-  "notes": "release 7.5: settings toggle for rendering acceleration"
+  "versionCode": 62,
+  "versionName": "7.6",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.6/BriVoice-7.6.apk",
+  "sha256": "5fd4f85d3e58ccb491203df23c23d5ac29add2c3ee3d330c7778581be7cf9346",
+  "notes": "release 7.6: each track can use its own singer"
 }

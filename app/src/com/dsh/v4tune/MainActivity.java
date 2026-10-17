@@ -1125,8 +1125,19 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             v.lang = vm.lang;
             song.voices.add(v);
         }
-        p.bs = v.bs;
-        p.pc = v.pc;
+        // A singer belongs to a TRACK here, not just to one part: every part of the track the
+        // selection came from is switched together, so a multi-part track never mixes two voices.
+        // (In the vsqx format the singer lives on each vsPart, which is why this writes through
+        // to all of them rather than to a track level field.)
+        boolean done = false;
+        for (com.dsh.v4tune.model.Track t : song.tracks) {
+            if (t.parts.contains(p)) {
+                for (Part q : t.parts) { q.bs = v.bs; q.pc = v.pc; }
+                done = true;
+                break;
+            }
+        }
+        if (!done) { p.bs = v.bs; p.pc = v.pc; }
     }
 
     // ------------------------------------------------------------- voice packs
