@@ -2,6 +2,6 @@
   "versionCode": 61,
   "versionName": "7.5",
   "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.5/BriVoice-7.5.apk",
-  "sha256": "11725940c1875763b8103f532526008fb00b8e72f998c4977519a2a76400e3ee",
-  "notes": "release 7.5: rendering acceleration is now a settings option"
+  "sha256": "d57396f71ee7b59839da1652f830b587aff8653f7f68414fe8e62c098fefc3f5",
+  "notes": "release 7.5: settings toggle for rendering acceleration"
 }
