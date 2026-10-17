@@ -184,6 +184,8 @@ public final class L {
         {"dlg.share", "分享", "Share", "共有"},
         {"dlg.lang.title", "语言 / Language / 言語", "语言 / Language / 言語", "语言 / Language / 言語"},
         {"dlg.lyric.title", "歌词（拼音 / 汉字 / 假名）", "Lyric (pinyin / Hanzi / kana)", "歌詞（ピンイン / 漢字 / かな）"},
+        {"set.accel", "渲染加速（长曲先渲完再播，未改动时直接复用）", "Faster rendering (pre-render long songs, reuse while unchanged)", "高速レンダリング"},
+        {"set.accel.desc", "关闭后恢复旧行为：从第 1 秒起边渲边播，每次都重新渲染", "Off restores the old behaviour: stream from the first second and re-render every time", "オフで旧動作に戻ります"}
         {"dlg.lyric.clear.lock", "清空音素锁定", "Clear phoneme lock", "音素ロックを解除"},
         {"dlg.no.voice.title", "还没有声库", "No voicebank yet", "声庫がありません"},
         {"dlg.no.voice.msg", "BriVoice 需要一个声库才能唱歌。\n\n应用已内置「洛天依 BV」；你也可以点「声库 → 导入声库文件（.v4voice）」导入其它 .v4voice 参数包。\n声库里是谐波包络、共振峰与频段增益等参数化统计数据，不含录音采样。请只导入你自己合法持有的声库数据。", "BriVoice needs a voicebank to sing.\n\nThe app bundles 'Luo Tianyi BV'; you can also import another .v4voice parameter pack via Voicebanks -> Import Voicebank File.\nA pack holds parametric statistics such as harmonic envelopes, formants and band gains - no recorded samples. Please only import voicebank data you legally hold.", "BriVoice で歌うには声庫が必要です。\n\nアプリには「洛天依 BV」が同梱されています。「声庫 → 声庫ファイルを読み込む（.v4voice）」から他の .v4voice パラメータパックも読み込めます。\nパックには倍音包絡・フォルマント・帯域ゲインなどのパラメータ統計が入っており、録音サンプルは含みません。適法に保有する声庫データのみを読み込んでください。"},
