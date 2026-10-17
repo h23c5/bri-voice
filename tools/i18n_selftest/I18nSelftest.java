@@ -46,7 +46,7 @@ import java.util.regex.Pattern;
 public class I18nSelftest {
 
   /** Catalog size this build is expected to ship. */
-  private static final int EXPECTED_KEYS = 333;
+  private static final int EXPECTED_KEYS = 335;
 
   /** Markers that cannot occur in any translation, used to prove formatting ran. */
   private static final String S_MARK = "@@S@@";
@@ -180,7 +180,7 @@ public class I18nSelftest {
     begin("(5) per-group key counts");
     Map<String, Integer> want = new LinkedHashMap<String, Integer>();
 want.put("ai", Integer.valueOf(30));
-want.put("set", Integer.valueOf(11));
+want.put("set", Integer.valueOf(13));
     want.put("app", Integer.valueOf(2));
     want.put("toolbar", Integer.valueOf(10));
     want.put("transport", Integer.valueOf(14));
