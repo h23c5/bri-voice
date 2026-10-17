@@ -149,6 +149,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         Renderer.measuredNoise = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("mnoise", false);
         Renderer.noiseGain = getSharedPreferences("brivoice", MODE_PRIVATE).getInt("mnoiseGain", 100) / 100f;
         Renderer.frameSequence = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("frameseq", false);
+        renderAccel = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("renderaccel", true);
         engine.cursorOffsetMs = cursorOffsetMs;
         reloadPacksAsync(false);
         applyExtServer();          // only starts anything when the user has enabled it
@@ -659,6 +660,13 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         return h;
     }
 
+    /**
+     * Rendering acceleration, switchable in settings: renders a long song in one pass instead of
+     * doubling, and replays a fully rendered song from cache while nothing has changed. Turning it
+     * off restores the old behaviour (stream from the first second, always re-render).
+     */
+    private boolean renderAccel = true;
+
     /** the producer of the current streaming playback, or null */
     private StreamProducer streamProducer;
 
@@ -683,8 +691,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
         void start() {
             // cache hit: nothing that affects the sound changed, so replay the stored render
-            final long key = songFingerprint(sng, cfg.sampleRate);
-            if (key == cacheKey && cacheTotal == total && cacheL != null && cacheR != null) {
+            final long key = renderAccel ? songFingerprint(sng, cfg.sampleRate) : 0L;
+            if (renderAccel && key != 0L && key == cacheKey && cacheTotal == total && cacheL != null && cacheR != null) {
                 System.arraycopy(cacheL, 0, bufL, 0, total);
                 System.arraycopy(cacheR, 0, bufR, 0, total);
                 ready = total;
@@ -714,7 +722,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 // the whole prefix on every round and the total work came to about twice the final pass:
                 // measured on a 167 s song, 94 s of rendering of which roughly 47 s was redundant. One pass
                 // halves it with identical output. Short songs keep the 1 s first-chunk behaviour.
-                final boolean fullRender = total > com.dsh.v4tune.audio.AudioEngine.FULL_RENDER_FRAMES;
+                final boolean fullRender = renderAccel && total > com.dsh.v4tune.audio.AudioEngine.FULL_RENDER_FRAMES;
                 int limit = fullRender ? total : Math.min(total, Math.max(1024, cfg.sampleRate));
                 final long startedMs = System.currentTimeMillis();
                 final long lookaheadMs = 4000L;   // stay at most ~4 s ahead of the audio clock
@@ -785,6 +793,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                                 String.valueOf(pct) + "  " + secs + "s / " + (total / cfg.sampleRate) + "s")); } });
                     }
                     if (limit >= total) {
+                        if (!renderAccel) { finished = true; return; }
                         cacheKey = songFingerprint(sng, cfg.sampleRate);
                         cacheTotal = total;
                         cacheL = bufL.clone();
@@ -3362,6 +3371,24 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             public void onStopTrackingTouch(SeekBar sb) { }
         });
         box.addView(mnGain);
+
+        final CheckBox accel = new CheckBox(this);
+        accel.setText(L.t("set.accel"));
+        accel.setChecked(renderAccel);
+        accel.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                renderAccel = on;
+                cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
+                getSharedPreferences("brivoice", MODE_PRIVATE).edit().putBoolean("renderaccel", on).apply();
+            }
+        });
+        box.addView(accel);
+        TextView accelDesc = new TextView(this);
+        accelDesc.setText(L.t("set.accel.desc"));
+        accelDesc.setTextColor(Theme.TEXT_DIM);
+        accelDesc.setTextSize(12f);
+        accelDesc.setPadding(dp(4), 0, 0, dp(6));
+        box.addView(accelDesc);
 
         final CheckBox frameSeqChk = new CheckBox(this);
         frameSeqChk.setText(L.t("set.frameseq"));
