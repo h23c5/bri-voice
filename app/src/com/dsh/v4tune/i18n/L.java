@@ -278,7 +278,7 @@ public final class L {
         {"set.offset.desc", "听到的声音比画面慢时，把指针往后拉。模拟器和蓝牙耳机延迟较大，真机通常 0–100 ms。", "Pull the cursor back when the sound lags the picture. Emulators and Bluetooth headsets need more; a phone usually 0-100 ms.", "音が画面より遅れる場合にカーソルを後ろにずらします。エミュレータや Bluetooth では大きめに。"},
         {"set.phoneme.lock", "音素锁定（默认关闭）", "Phoneme lock (off by default)", "音素ロック（既定はオフ）"},
     {"set.accel", "渲染加速（长曲先渲完再播，未改动时直接复用）", "Faster rendering (pre-render long songs, reuse while unchanged)", "高速レンダリング"},
-    {"set.accel.desc", "关闭后恢复旧行为：从第 1 秒起边渲边播，每次都重新渲染", "Off restores the old behaviour: stream from the first second and re-render every time", "オフで旧動作に戻ります"}
+    {"set.accel.desc", "关闭后恢复旧行为：从第 1 秒起边渲边播，每次都重新渲染", "Off restores the old behaviour: stream from the first second and re-render every time", "オフで旧動作に戻ります"},
         {"set.phoneme.desc", "关闭时：修改歌词会重新按歌词生成音素。开启后：修改歌词会保留这个音符已有的音素，并把它标记为锁定（写进 .vsqx 的 lock 属性）。", "Off: editing a lyric regenerates the phonemes from the new lyric. On: editing a lyric keeps the note's existing phonemes and marks them locked (written to the .vsqx lock attribute).", "オフ：歌詞を変更すると音素は歌詞から再生成されます。オン：歌詞を変更しても既存の音素を保持し、ロックとして .vsqx の lock 属性に書き出します。"},
         {"set.phoneme.state.on", "音素锁定：已开启", "Phoneme lock: on", "音素ロック：オン"},
         {"set.phoneme.state.off", "音素锁定：已关闭（默认）", "Phoneme lock: off (default)", "音素ロック：オフ（既定）"},
