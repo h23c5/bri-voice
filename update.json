@@ -1,7 +1,7 @@
 {
-  "versionCode": 62,
-  "versionName": "7.6",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.6/BriVoice-7.6.apk",
-  "sha256": "5fd4f85d3e58ccb491203df23c23d5ac29add2c3ee3d330c7778581be7cf9346",
-  "notes": "release 7.6: each track can use its own singer"
+  "versionCode": 63,
+  "versionName": "7.7",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.7/BriVoice-7.7.apk",
+  "sha256": "0705696bdf41a0b151852c077106eb9d28e8748231472c5d000d0e9ddcf59eed",
+  "notes": "release 7.7: UTAU voicebank import, UST/USTX, singer switch"
 }
