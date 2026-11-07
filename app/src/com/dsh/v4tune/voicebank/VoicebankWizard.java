@@ -109,26 +109,48 @@ public final class VoicebankWizard {
         new Thread(new Runnable() {
             public void run() {
                 String err = null;
+                String info = null;
                 File out = null;
                 try {
-                    File ddb = findDdb(dir);
-                    if (ddb == null) throw new IllegalStateException(L.t("vb.no.ddb"));
-                    VoicebankBuilder.Options o = new VoicebankBuilder.Options();
-                    VoicebankWriter w = VoicebankBuilder.build(ddb, bank, bank.toUpperCase(java.util.Locale.US), o);
+                    VoicebankWriter w;
+                    File oto = new File(dir, "oto.ini");
+                    if (oto.isFile()) {
+                        w = UtauBankBuilder.build(dir, bank);
+                    } else {
+                        File ddb = findDdb(dir);
+                        if (ddb == null) throw new IllegalStateException(L.t("vb.no.ddb") + " / oto.ini");
+                        VoicebankBuilder.Options o = new VoicebankBuilder.Options();
+                        w = VoicebankBuilder.build(ddb, bank, bank.toUpperCase(java.util.Locale.US), o);
+                    }
                     File vdir = new File(Environment.getExternalStorageDirectory(), "BriVoice_root/voicebanks");
                     if (!vdir.exists()) vdir.mkdirs();
                     out = new File(vdir, w.id + ".v4voice");
                     w.writeZip(out, null);
+                    int bandCount = 0;
+                    for (ArrayList<VoicebankPack.Band> bl : w.phonemes.values()) bandCount += bl.size();
+                    info = "声库：" + w.name + "\n元音：" + w.phonemes.size() + " 个\n频段：" + bandCount
+                            + " 条\n辅音谱：" + w.noise.size() + " 个\n文件：" + out.getName()
+                            + "（" + (out.length() / 1024) + " KB）";
                 } catch (Throwable t) {
                     err = String.valueOf(t.getMessage());
+                    try {
+                        java.io.FileOutputStream fo = new java.io.FileOutputStream(new File(Environment.getExternalStorageDirectory(), "BriVoice_root/last_utau_error.txt"));
+                        java.io.PrintWriter pw = new java.io.PrintWriter(new java.io.OutputStreamWriter(fo, "UTF-8"));
+                        t.printStackTrace(pw); pw.flush(); pw.close();
+                    } catch (Throwable ignored) { }
                 }
                 final String e = err;
+                final String inf = info;
                 final File f = out;
                 new Handler(Looper.getMainLooper()).post(new Runnable() {
                     public void run() {
                         try { pd.dismiss(); } catch (Throwable ignored) { }
                         if (e != null || f == null) { toast(act, L.t("vb.failed") + ": " + e); return; }
-                        toast(act, L.t("vb.done") + ": " + f.getName() + " (" + (f.length() / 1024) + " KB)");
+                        new AlertDialog.Builder(act)
+                                .setTitle("声库已生成")
+                                .setMessage(inf)
+                                .setPositiveButton("好", null)
+                                .show();
                     }
                 });
             }

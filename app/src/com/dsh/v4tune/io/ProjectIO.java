@@ -60,6 +60,12 @@ public class ProjectIO {
             in.close();
             byte[] data = all.toByteArray();
             String txt = new String(data, 0, Math.min(data.length, 400), "UTF-8");
+            if (txt.contains("[#SETTING]") || txt.contains("[#0000]") || txt.trim().startsWith("[#")) {
+                return com.dsh.v4tune.format.UstReader.read(new java.io.ByteArrayInputStream(data));
+            }
+            if (txt.contains("ustx_version:") || (txt.contains("tracks:") && txt.contains("notes:"))) {
+                return com.dsh.v4tune.format.UstxReader.parse(new String(data, "UTF-8"));
+            }
             if (txt.contains("<vsq4") || txt.contains("<vsq3") || txt.trim().startsWith("<?xml")) {
                 return VsqxReader.read(new java.io.ByteArrayInputStream(data));
             }
@@ -69,7 +75,7 @@ public class ProjectIO {
             if (data.length > 14 && data[0] == 'M' && data[1] == 'T' && data[2] == 'h' && data[3] == 'd') {
                 return com.dsh.v4tune.format.MidiReader.read(new java.io.ByteArrayInputStream(data));
             }
-            throw new Exception("不支持的文件格式（支持 .vsqx / .vsq / .mid）");
+            throw new Exception("不支持的文件格式（支持 .vsqx / .vsq / .mid / .ust / .ustx）");
         } finally {
             try { in.close(); } catch (Exception ignored) {}
         }
@@ -90,17 +96,28 @@ public class ProjectIO {
         OutputStream out = ctx.getContentResolver().openOutputStream(uri, "wt");
         if (out == null) throw new Exception("无法写入文件");
         try {
-            VsqxWriter.write(s, out);
+            writeByExt(name(uri), s, out);
             out.flush();
         } finally {
             try { out.close(); } catch (Exception ignored) {}
         }
     }
 
+    private static String name(Uri uri) {
+        String n = uri == null ? null : uri.getLastPathSegment();
+        return n == null ? "" : n.toLowerCase(java.util.Locale.US);
+    }
+
+    private static void writeByExt(String name, Song s, OutputStream out) throws Exception {
+        if (name.endsWith(".ustx")) com.dsh.v4tune.format.UstxWriter.write(s, out);
+        else if (name.endsWith(".ust")) com.dsh.v4tune.format.UstWriter.write(s, out);
+        else VsqxWriter.write(s, out);
+    }
+
     public static void savePath(File f, Song s) throws Exception {
         FileOutputStream out = new FileOutputStream(f);
         try {
-            VsqxWriter.write(s, out);
+            writeByExt(f == null ? "" : f.getName().toLowerCase(java.util.Locale.US), s, out);
             out.flush();
         } finally { out.close(); }
     }

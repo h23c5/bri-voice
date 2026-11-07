@@ -1892,7 +1892,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 "从文件夹批量导入（推荐，真机更稳）",
                 "打开 " + Storage.ROOT_NAME + " 文件夹说明",
                 "删除已导入的声库（" + SingerLibrary.userPackCount() + "）",
-                "声库说明"
+                "声库说明",
+                "导入 UTAU 声库（oto.ini）",
+                "切换歌姬（选择声库）"
         };
         menu(L.t("menu.pack.title"), L.t("menu.pack.sub", SingerLibrary.userPackCount()), items, -1,
                 new DialogInterface.OnClickListener() {
@@ -1901,7 +1903,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         else if (which == 1) importPackFolder();
                         else if (which == 2) showRootHelp();
                         else if (which == 3) deletePack();
-                        else packHelp();
+                        else if (which == 4) packHelp();
+                        else if (which == 5) com.dsh.v4tune.voicebank.VoicebankWizard.start(MainActivity.this);
+                        else pickSinger();
                     }
                 });
     }
