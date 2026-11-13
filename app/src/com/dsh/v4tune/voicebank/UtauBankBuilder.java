@@ -23,6 +23,12 @@ public final class UtauBankBuilder {
         File oto = new File(bankDir, "oto.ini");
         if (!oto.isFile()) throw new FileNotFoundException("oto.ini not found in " + bankDir);
         List<Entry> entries = parseOto(oto);
+        Map<String, File> fileIndex = new HashMap<String, File>();
+        File[] kids = bankDir.listFiles();
+        if (kids != null) for (File k : kids) if (k.isFile()) {
+            fileIndex.put(normName(k.getName()), k);
+        }
+        int missingFiles = 0;
         Map<String, List<double[]>> formantSamples = new HashMap<String, List<double[]>>();
         Map<String, List<BandData>> bandSamples = new HashMap<String, List<BandData>>();
         Map<String, List<double[]>> noiseSamples = new HashMap<String, List<double[]>>();
@@ -30,9 +36,8 @@ public final class UtauBankBuilder {
         for (Entry e : entries) {
             String sym = vowelOf(e.alias);
             if (sym == null) continue;
-            File wav = new File(bankDir, e.file);
-            if (!wav.isFile() && e.fileAlt != null) wav = new File(bankDir, e.fileAlt);
-            if (!wav.isFile()) continue;
+            File wav = resolveWav(bankDir, fileIndex, e);
+            if (wav == null) { missingFiles++; continue; }
             float[] x; int sr;
             try { Object[] r = readWav(wav); x = (float[]) r[0]; sr = (Integer) r[1]; }
             catch (Throwable t) { continue; }
@@ -135,7 +140,14 @@ public final class UtauBankBuilder {
             bandSamples.put(sym, keepB);
             formantSamples.put(sym, keepF);
         }
-        if (formantSamples.isEmpty()) throw new IllegalStateException("no measurable vowel samples found");
+        if (formantSamples.isEmpty()) {
+            StringBuilder diag = new StringBuilder();
+            diag.append("找不到可用的人声采样（oto.ini 条目 ").append(entries.size())
+                .append(" 个，缺失/无法解析的 wav ").append(missingFiles).append(" 个");
+            if (!entries.isEmpty()) diag.append("，例如：").append(entries.get(0).file);
+            diag.append("）");
+            throw new IllegalStateException(diag.toString());
+        }
 
         String charName = null;
         try {
@@ -219,7 +231,31 @@ public final class UtauBankBuilder {
         return w;
     }
 
-    private static final class Entry { String file, fileAlt, alias; double offset; }
+    /** normalize a file name for matching: Unicode form + case + separators */
+    private static String normName(String n) {
+        if (n == null) return "";
+        try { n = java.text.Normalizer.normalize(n, java.text.Normalizer.Form.NFKC); } catch (Throwable ignored) { }
+        return n.trim().replace('\u3000', ' ').toLowerCase(java.util.Locale.US).replace('\\', '/');
+    }
+
+    private static File resolveWav(File bankDir, Map<String, File> index, Entry e) {
+        String[] names = {e.file, e.fileAlt, e.fileUtf8};
+        for (String n : names) {
+            if (n == null || n.length() == 0) continue;
+            File f = new File(bankDir, n);
+            if (f.isFile()) return f;
+            File hit = index.get(normName(n));
+            if (hit != null) return hit;
+            int slash = Math.max(n.lastIndexOf('/'), n.lastIndexOf('\\'));
+            if (slash >= 0) {
+                File h2 = index.get(normName(n.substring(slash + 1)));
+                if (h2 != null) return h2;
+            }
+        }
+        return null;
+    }
+
+    private static final class Entry { String file, fileAlt, fileUtf8, alias; double offset; }
     private static final class BandData { final double f0; final double[] db; BandData(double f0,double[] db){this.f0=f0;this.db=db;} }
 
     private static List<Entry> parseOto(File f) throws IOException {
@@ -234,9 +270,12 @@ public final class UtauBankBuilder {
         }
         if (s.startsWith("\uFEFF")) s = s.substring(1);
         String gbk = new String(b, Charset.forName("GBK"));
+        String utf8 = new String(b, Charset.forName("UTF-8"));
+        if (utf8.startsWith("\uFEFF")) utf8 = utf8.substring(1);
         if (gbk.startsWith("\uFEFF")) gbk = gbk.substring(1);
         String[] lines = s.split("\r?\n");
         String[] alt = gbk.split("\r?\n");
+        String[] u8 = utf8.split("\r?\n");
         List<Entry> out = new ArrayList<Entry>();
         for (int li = 0; li < lines.length; li++) {
             String line = lines[li];
@@ -249,6 +288,10 @@ public final class UtauBankBuilder {
             if (li < alt.length) {
                 int aeq = alt[li].indexOf('=');
                 if (aeq > 0) e.fileAlt = alt[li].substring(0, aeq).trim();
+            }
+            if (li < u8.length) {
+                int ueq = u8[li].indexOf('=');
+                if (ueq > 0) e.fileUtf8 = u8[li].substring(0, ueq).trim();
             }
             e.alias = p[0].trim();
             try { e.offset = Double.parseDouble(p[1].trim()); } catch (Exception ex) { e.offset = 0; }
@@ -338,7 +381,7 @@ public final class UtauBankBuilder {
                 }
             }
             if (data == null) throw new IOException("no data chunk");
-            int bytes = bits/8;
+            int bytes = (fmt == 3) ? 4 : bits/8;
             int n = data.length / (bytes*ch);
             float[] out = new float[n];
             if (bits == 16) {
@@ -355,7 +398,28 @@ public final class UtauBankBuilder {
                     int s=0; for (int c=0;c<ch;c++) s += (data[i*ch+c]&0xFF)-128;
                     out[i] = (float)(s/(128.0*ch));
                 }
-            } else throw new IOException("unsupported wav bits " + bits);
+            } else if (fmt == 3 && bits == 32) {
+                for (int i=0;i<n;i++) {
+                    float s = 0;
+                    for (int c=0;c<ch;c++) {
+                        int idx = (i*ch+c)*4;
+                        int v = (data[idx]&0xFF) | ((data[idx+1]&0xFF)<<8) | ((data[idx+2]&0xFF)<<16) | ((data[idx+3]&0xFF)<<24);
+                        s += Float.intBitsToFloat(v);
+                    }
+                    out[i] = s/ch;
+                }
+            } else if (bits == 24) {
+                for (int i=0;i<n;i++) {
+                    int s=0;
+                    for (int c=0;c<ch;c++) {
+                        int idx=(i*ch+c)*3;
+                        int v=(data[idx]&0xFF)|((data[idx+1]&0xFF)<<8)|((data[idx+2]&0xFF)<<16);
+                        if ((v & 0x800000) != 0) v |= 0xFF000000;
+                        s += v;
+                    }
+                    out[i] = (float)(s/(8388608.0*ch));
+                }
+            } else throw new IOException("unsupported wav format " + fmt + ", bits " + bits);
             return new Object[]{out, sr};
         } finally { in.close(); }
     }

@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.ProgressDialog;
 import android.content.DialogInterface;
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
@@ -16,6 +18,10 @@ import android.widget.Toast;
 import com.dsh.v4tune.i18n.L;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 import java.util.ArrayList;
 
 /**
@@ -27,6 +33,9 @@ import java.util.ArrayList;
  * holds MANAGE_EXTERNAL_STORAGE, so a plain path is the shortest reliable route.
  */
 public final class VoicebankWizard {
+
+    /** request code for the UTAU zip picker (handled in MainActivity.onActivityResult) */
+    public static final int REQ_ZIP = 1006;
 
     private VoicebankWizard() { }
 
@@ -52,6 +61,12 @@ public final class VoicebankWizard {
         row.addView(path);
         row.addView(browse);
         box.addView(row);
+        android.widget.Button zipBtn = new android.widget.Button(act);
+        zipBtn.setText("选 UTAU 压缩包（.zip）");
+        zipBtn.setOnClickListener(new android.view.View.OnClickListener() {
+            public void onClick(android.view.View v) { pickZip(act); }
+        });
+        box.addView(zipBtn);
         box.addView(label(act, L.t("vb.bank.name")));
         box.addView(name);
         new AlertDialog.Builder(act)
@@ -101,7 +116,9 @@ public final class VoicebankWizard {
     private static void run(final Activity act, final String dirText, final String nameText) {
         final File dir = new File(dirText);
         if (!dir.isDirectory()) { toast(act, L.t("vb.bad.dir")); return; }
-        final String bank = nameText.length() > 0 ? nameText : dir.getName();
+        File oto = findOto(dir, 0);
+        final File bankDir = oto != null ? oto.getParentFile() : dir;
+        final String bank = nameText.length() > 0 ? nameText : bankDir.getName();
         final ProgressDialog pd = new ProgressDialog(act);
         pd.setMessage(L.t("vb.working"));
         pd.setCancelable(false);
@@ -113,9 +130,9 @@ public final class VoicebankWizard {
                 File out = null;
                 try {
                     VoicebankWriter w;
-                    File oto = new File(dir, "oto.ini");
-                    if (oto.isFile()) {
-                        w = UtauBankBuilder.build(dir, bank);
+                    File otoNow = findOto(dir, 0);
+                    if (otoNow != null) {
+                        w = UtauBankBuilder.build(otoNow.getParentFile(), bank);
                     } else {
                         File ddb = findDdb(dir);
                         if (ddb == null) throw new IllegalStateException(L.t("vb.no.ddb") + " / oto.ini");
@@ -173,6 +190,107 @@ public final class VoicebankWizard {
         }
         for (File d : dirs) {
             File hit = findDdb(d, depth + 1);
+            if (hit != null) return hit;
+        }
+        return null;
+    }
+
+    /** pick a UTAU bank distributed as a zip; the result comes back through MainActivity */
+    static void pickZip(Activity act) {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/zip", "application/x-zip-compressed", "application/octet-stream"});
+        try { act.startActivityForResult(i, REQ_ZIP); }
+        catch (Throwable t) { toast(act, "无法打开文件选择器: " + t.getMessage()); }
+    }
+
+    /** Called from MainActivity when the zip picker returns. Extracts into cache, then builds. */
+    public static void importZip(final Activity act, final Uri uri) {
+        final ProgressDialog pd = new ProgressDialog(act);
+        pd.setMessage("正在解压 UTAU 声库...");
+        pd.setCancelable(false);
+        pd.show();
+        new Thread(new Runnable() {
+            public void run() {
+                File base = null;
+                String err = null;
+                try {
+                    String[] encs = {"UTF-8", "Shift_JIS", "GBK"};
+                    long ts = System.currentTimeMillis();
+                    for (int i = 0; i < encs.length; i++) {
+                        File d = new File(act.getCacheDir(), "utau_zip_" + ts + "_" + i);
+                        try {
+                            int n = extractZip(act, uri, d, encs[i]);
+                            if (n > 0 && findOto(d, 0) != null) { base = d; break; }
+                        } catch (Throwable t) {
+                            err = String.valueOf(t.getMessage());
+                        }
+                        deleteTree(d);
+                    }
+                    if (base == null) throw new IllegalStateException(err != null ? err : "压缩包里没有 oto.ini");
+                } catch (Throwable t) {
+                    err = String.valueOf(t.getMessage());
+                }
+                final File b = base;
+                final String e = err;
+                new Handler(Looper.getMainLooper()).post(new Runnable() {
+                    public void run() {
+                        try { pd.dismiss(); } catch (Throwable ignored) { }
+                        if (e != null || b == null) { toast(act, "导入失败: " + e); return; }
+                        VoicebankWizard.run(act, b.getAbsolutePath(), "");
+                    }
+                });
+            }
+        }, "utau-unzip").start();
+    }
+
+    /** extract with a chosen filename charset; returns the number of files written */
+    private static int extractZip(Activity act, Uri uri, File base, String charset) throws Exception {
+        if (!base.exists()) base.mkdirs();
+        InputStream in = act.getContentResolver().openInputStream(uri);
+        if (in == null) throw new IllegalStateException("无法读取压缩包");
+        ZipInputStream zis = new ZipInputStream(new java.io.BufferedInputStream(in), java.nio.charset.Charset.forName(charset));
+        byte[] buf = new byte[8192];
+        ZipEntry ze;
+        int n = 0;
+        while ((ze = zis.getNextEntry()) != null) {
+            String name = ze.getName();
+            if (name == null || name.length() == 0) continue;
+            File out = new File(base, name);
+            String canon = out.getCanonicalPath();
+            if (!canon.startsWith(base.getCanonicalPath())) continue;
+            if (ze.isDirectory()) { out.mkdirs(); continue; }
+            File parent = out.getParentFile();
+            if (parent != null && !parent.exists()) parent.mkdirs();
+            FileOutputStream fo = new FileOutputStream(out);
+            int r;
+            while ((r = zis.read(buf)) > 0) fo.write(buf, 0, r);
+            fo.close();
+            n++;
+        }
+        zis.close();
+        return n;
+    }
+
+    private static void deleteTree(File f) {
+        if (f == null || !f.exists()) return;
+        File[] kids = f.listFiles();
+        if (kids != null) for (File k : kids) deleteTree(k);
+        f.delete();
+    }
+
+    /** find oto.ini, looking a few folders deep (banks are often .../voice/<name>/oto.ini) */
+    static File findOto(File dir, int depth) {
+        if (dir == null || depth > 4) return null;
+        File direct = new File(dir, "oto.ini");
+        if (direct.isFile()) return direct;
+        File[] kids = dir.listFiles();
+        if (kids == null) return null;
+        java.util.Arrays.sort(kids);
+        for (File k : kids) {
+            if (!k.isDirectory() || k.getName().startsWith(".")) continue;
+            File hit = findOto(k, depth + 1);
             if (hit != null) return hit;
         }
         return null;

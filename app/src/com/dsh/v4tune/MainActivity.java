@@ -131,6 +131,14 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private long startTick = 0L;
     private long lastAuditionAt = 0L;
 
+    // ---------------------------------------------------------------- autosave
+    private boolean autoSaveEnabled = true;
+    private int autoSaveSec = 60;
+    private boolean dirty = false;
+    private boolean autoSaving = false;
+    private android.os.Handler autoSaveHandler;
+    private Runnable autoSaveTick;
+
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -149,6 +157,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         Renderer.measuredNoise = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("mnoise", false);
         Renderer.noiseGain = getSharedPreferences("brivoice", MODE_PRIVATE).getInt("mnoiseGain", 100) / 100f;
         Renderer.frameSequence = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("frameseq", false);
+        autoSaveEnabled = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("autosave", true);
+        autoSaveSec = getSharedPreferences("brivoice", MODE_PRIVATE).getInt("autosaveSec", 60);
         renderAccel = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("renderaccel", true);
         engine.cursorOffsetMs = cursorOffsetMs;
         reloadPacksAsync(false);
@@ -159,6 +169,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         refreshAll();
         scrollToContent();
         updateAiButton();          // the workspace shortcut only exists once the UI is built
+        scheduleAutoSave();
         if (SingerLibrary.isEmpty()) {
             status("BriVoice · 尚未安装声库 —— 点「声库 → 导入声库文件」载入你自己的 .v4voice 声库");
         } else {
@@ -903,12 +914,84 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
      */
     private void commitEdit() {
         if (song == null) return;
+        dirty = true;
         if (baseline != null) {
             undo.push(baseline);
             while (undo.size() > 24) undo.removeLast();
             redo.clear();
         }
         baseline = song.copy();
+    }
+
+    /** (re)arm the autosave timer; called on start, resume and after settings change */
+    private void scheduleAutoSave() {
+        if (autoSaveHandler == null) autoSaveHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        if (autoSaveTick == null) {
+            autoSaveTick = new Runnable() {
+                public void run() {
+                    autoSaveNow();
+                    if (autoSaveEnabled && autoSaveHandler != null) {
+                        autoSaveHandler.postDelayed(this, Math.max(10, autoSaveSec) * 1000L);
+                    }
+                }
+            };
+        }
+        autoSaveHandler.removeCallbacks(autoSaveTick);
+        if (autoSaveEnabled) autoSaveHandler.postDelayed(autoSaveTick, Math.max(10, autoSaveSec) * 1000L);
+    }
+
+    /** write a recovery copy / the current file when something changed since the last save */
+    private void autoSaveNow() {
+        if (!autoSaveEnabled || song == null || !dirty || autoSaving || isFinishing()) return;
+        final Song snapshot = song.copy();
+        final Uri uri = currentUri;
+        final String name = projectName;
+        autoSaving = true;
+        new Thread(new Runnable() {
+            public void run() {
+                String err = null;
+                try {
+                    if (uri != null) {
+                        ProjectIO.save(MainActivity.this, uri, snapshot);
+                    } else {
+                        File dir = Storage.projects(MainActivity.this);
+                        if (!dir.exists()) dir.mkdirs();
+                        ProjectIO.savePath(new File(dir, ProjectIO.sanitize(name) + ".vsqx"), snapshot);
+                    }
+                } catch (Throwable t) {
+                    err = String.valueOf(t.getMessage());
+                }
+                final String e = err;
+                autoSaving = false;
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        if (e == null) {
+                            dirty = false;
+                            String hhmm;
+                            try {
+                                hhmm = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(new java.util.Date());
+                            } catch (Throwable t) { hhmm = ""; }
+                            status("已自动保存 " + hhmm);
+                        } else {
+                            status("自动保存失败: " + e);
+                        }
+                    }
+                });
+            }
+        }, "autosave").start();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        scheduleAutoSave();
+    }
+
+    @Override
+    protected void onPause() {
+        if (autoSaveHandler != null && autoSaveTick != null) autoSaveHandler.removeCallbacks(autoSaveTick);
+        autoSaveNow();
+        super.onPause();
     }
 
     private void doUndo() {
@@ -2310,6 +2393,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             ProjectIO.savePath(f, song);
             currentUri = null;
             projectName = ProjectIO.sanitize(name);
+            dirty = false;
             status("已保存到 " + f.getAbsolutePath());
             toast("已保存到 " + Storage.ROOT_NAME + "/projects");
         } catch (Exception e) {
@@ -2566,6 +2650,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         if (!as && currentUri != null) {
             try {
                 ProjectIO.save(this, currentUri, song);
+                dirty = false;
                 status("已保存到原文件");
                 toast("已保存");
             } catch (Exception e) {
@@ -2723,6 +2808,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             } catch (Exception e) {
                 status("保存失败: " + e.getMessage());
             }
+        } else if (req == 1006) {           // VoicebankWizard.REQ_ZIP
+            com.dsh.v4tune.voicebank.VoicebankWizard.importZip(this, uri);
         } else if (req == REQ_PACK) {
             importPackFrom(uri);
         } else if (req == REQ_PACK_DIR && data != null && data.getData() != null) {
@@ -2808,6 +2895,27 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         return new String[]{String.valueOf(ok), String.valueOf(bad), errs.toString()};
     }
 
+    /** a UTAU bank zip (contains oto.ini) must go to the UTAU importer, not the .v4voice parser */
+    private boolean zipHasOto(Uri uri) {
+        java.io.InputStream in = null;
+        java.util.zip.ZipInputStream zis = null;
+        try {
+            in = ProjectIO.openAny(this, uri);
+            if (in == null) return false;
+            zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(in));
+            java.util.zip.ZipEntry e;
+            int n = 0;
+            while ((e = zis.getNextEntry()) != null && n++ < 4000) {
+                String name = e.getName();
+                if (name != null && name.toLowerCase(java.util.Locale.US).endsWith("oto.ini")) return true;
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            try { if (zis != null) zis.close(); else if (in != null) in.close(); } catch (Throwable ignored) { }
+        }
+        return false;
+    }
+
     /** import one pack, returning the parse result (null when the stream could not be opened) */
     private VoicePack.Result importPackUri(Uri uri, String name) {
         java.io.InputStream in = null;
@@ -2836,6 +2944,15 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         pd.show();
         new Thread(new Runnable() {
             public void run() {
+                if (zipHasOto(uri)) {
+                    ui.post(new Runnable() {
+                        public void run() {
+                            try { pd.dismiss(); } catch (Throwable ignored) { }
+                            com.dsh.v4tune.voicebank.VoicebankWizard.importZip(MainActivity.this, uri);
+                        }
+                    });
+                    return;
+                }
                 final VoicePack.Result r = importPackUri(uri, uri.getLastPathSegment());
                 ui.post(new Runnable() {
                     public void run() {
@@ -3422,6 +3539,34 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         mnDesc.setPadding(dp(4), 0, 0, dp(6));
         box.addView(mnDesc);
 
+        // autosave: keep a recovery copy while editing
+        final CheckBox autoChk = new CheckBox(this);
+        autoChk.setText(L.t("set.autosave"));
+        autoChk.setChecked(autoSaveEnabled);
+        box.addView(autoChk);
+        final int[] autoSteps = {15, 30, 60, 120, 300};
+        int autoIdx = 2;
+        for (int i = 0; i < autoSteps.length; i++) if (autoSteps[i] == autoSaveSec) autoIdx = i;
+        final TextView autoLabel = label(L.t("set.autosave.interval", Integer.valueOf(autoSaveSec)));
+        box.addView(autoLabel);
+        final SeekBar autoBar = new SeekBar(this);
+        autoBar.setMax(autoSteps.length - 1);
+        autoBar.setProgress(autoIdx);
+        autoBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar sb, int pr, boolean u) {
+                autoLabel.setText(L.t("set.autosave.interval", Integer.valueOf(autoSteps[Math.max(0, Math.min(autoSteps.length - 1, pr))])));
+            }
+            public void onStartTrackingTouch(SeekBar sb) { }
+            public void onStopTrackingTouch(SeekBar sb) { }
+        });
+        box.addView(autoBar);
+        TextView autoDesc = new TextView(this);
+        autoDesc.setText(L.t("set.autosave.desc"));
+        autoDesc.setTextColor(Theme.TEXT_DIM);
+        autoDesc.setTextSize(12f);
+        autoDesc.setPadding(dp(4), 0, 0, dp(6));
+        box.addView(autoDesc);
+
         // cursor delay compensation: the sound a device emits lags the picture by its output buffer
         final TextView offLabel = label(L.t("set.offset", Integer.valueOf(cursorOffsetMs)));
         box.addView(offLabel);
@@ -3482,8 +3627,14 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                                 .putBoolean("mnoise", Renderer.measuredNoise)
                                 .putInt("mnoiseGain", mnGain.getProgress()).apply();
                         phonemeLock = lock.isChecked();
+                        autoSaveEnabled = autoChk.isChecked();
+                        autoSaveSec = autoSteps[Math.max(0, Math.min(autoSteps.length - 1, autoBar.getProgress()))];
                         getSharedPreferences("brivoice", MODE_PRIVATE).edit()
-                                .putBoolean("phonemeLock", phonemeLock).apply();
+                                .putBoolean("phonemeLock", phonemeLock)
+                                .putBoolean("autosave", autoSaveEnabled)
+                                .putInt("autosaveSec", autoSaveSec).apply();
+                        scheduleAutoSave();
+                        status(autoSaveEnabled ? ("自动保存已开启，间隔 " + autoSaveSec + " 秒") : "自动保存已关闭");
                         status(L.t(phonemeLock ? "set.phoneme.state.on" : "set.phoneme.state.off"));
                     }
                 })
