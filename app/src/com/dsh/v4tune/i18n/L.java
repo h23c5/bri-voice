@@ -278,6 +278,7 @@ public final class L {
         {"set.offset.desc", "听到的声音比画面慢时，把指针往后拉。模拟器和蓝牙耳机延迟较大，真机通常 0–100 ms。", "Pull the cursor back when the sound lags the picture. Emulators and Bluetooth headsets need more; a phone usually 0-100 ms.", "音が画面より遅れる場合にカーソルを後ろにずらします。エミュレータや Bluetooth では大きめに。"},
         {"set.phoneme.lock", "音素锁定（默认关闭）", "Phoneme lock (off by default)", "音素ロック（既定はオフ）"},
     {"set.accel", "渲染加速（长曲先渲完再播，未改动时直接复用）", "Faster rendering (pre-render long songs, reuse while unchanged)", "高速レンダリング"},
+    {"menu.tools.guide", "新手引导（图标指引）", "Beginner guide (icon hints)", "初心者ガイド（アイコン案内）"},
     {"set.autosave", "自动保存", "Autosave", "自動保存"},
     {"set.autosave.interval", "自动保存间隔：%s 秒", "Autosave interval: %s s", "自動保存間隔：%s 秒"},
     {"set.autosave.desc", "只在上次保存之后有改动时写入；未另存的项目存为 BriVoice_root/projects 下的恢复文件。", "Writes only when something changed since the last save; unsaved projects go to a recovery file under BriVoice_root/projects.", "前回保存から変更がある場合のみ書き込みます。"},

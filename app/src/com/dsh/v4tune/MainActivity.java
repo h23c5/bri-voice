@@ -119,6 +119,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private ParamView paramView;
     private TextView posText, statusText;
     private Button playBtn;
+    private Button newBtn, openBtn, exportBtn, packBtn, toolsBtn;
     private final AudioEngine engine = new AudioEngine();
     private AudioEngine.Rendered rendered;
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -134,6 +135,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     // ---------------------------------------------------------------- autosave
     private boolean autoSaveEnabled = true;
     private int autoSaveSec = 60;
+    private boolean webSynth = false;
+    private int voiceColor = 0;
+    private boolean followPlayhead = true;
     private boolean dirty = false;
     private boolean autoSaving = false;
     private android.os.Handler autoSaveHandler;
@@ -159,6 +163,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         Renderer.frameSequence = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("frameseq", false);
         autoSaveEnabled = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("autosave", true);
         autoSaveSec = getSharedPreferences("brivoice", MODE_PRIVATE).getInt("autosaveSec", 60);
+        webSynth = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("websynth", false);
+        voiceColor = getSharedPreferences("brivoice", MODE_PRIVATE).getInt("voicecolor", 0);
+        followPlayhead = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("follow", true);
+        Renderer.webSynth = webSynth;
+        Renderer.voiceColor = voiceColor;
         renderAccel = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("renderaccel", true);
         engine.cursorOffsetMs = cursorOffsetMs;
         reloadPacksAsync(false);
@@ -193,6 +202,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     })
                     .setNegativeButton("以后再说", null)
                     .show();
+        }
+        if (!getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("onboarded", false)) {
+            ui.postDelayed(new Runnable() { public void run() { if (!isFinishing()) showOnboarding(); } }, 2200L);
         }
         handleViewIntent(getIntent());
     }
@@ -398,9 +410,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             public void onClick(View v) { trackMenu(); }
         });
         transport.addView(trackBtn);
-        transport.addView(smallButton(L.t("menu.tools"), new View.OnClickListener() {
+        toolsBtn = smallButton(L.t("menu.tools"), new View.OnClickListener() {
             public void onClick(View v) { toolsMenu(); }
-        }));
+        });
+        transport.addView(toolsBtn);
         posText = new TextView(this);
         posText.setTextColor(Color.parseColor("#9FB0C8"));
         posText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
@@ -456,21 +469,24 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         }
         bar.addView(title);
 
-        bar.addView(smallButton(L.t("toolbar.new"), new View.OnClickListener() {
+        newBtn = smallButton(L.t("toolbar.new"), new View.OnClickListener() {
             public void onClick(View v) { newProject(); }
-        }));
-        bar.addView(smallButton(L.t("toolbar.open"), new View.OnClickListener() {
+        });
+        bar.addView(newBtn);
+        openBtn = smallButton(L.t("toolbar.open"), new View.OnClickListener() {
             public void onClick(View v) { openProject(); }
-        }));
+        });
+        bar.addView(openBtn);
         bar.addView(smallButton(L.t("toolbar.save"), new View.OnClickListener() {
             public void onClick(View v) { saveProject(false); }
         }));
         bar.addView(smallButton(L.t("toolbar.save.as"), new View.OnClickListener() {
             public void onClick(View v) { saveProject(true); }
         }));
-        bar.addView(smallButton(L.t("toolbar.export.wav"), new View.OnClickListener() {
+        exportBtn = smallButton(L.t("toolbar.export.wav"), new View.OnClickListener() {
             public void onClick(View v) { exportWav(); }
-        }));
+        });
+        bar.addView(exportBtn);
         bar.addView(smallButton(L.t("toolbar.undo"), new View.OnClickListener() {
             public void onClick(View v) { doUndo(); }
         }));
@@ -480,9 +496,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         bar.addView(smallButton(L.t("toolbar.demo"), new View.OnClickListener() {
             public void onClick(View v) { beginEdit(); song = Demo.twinkle(); commitEdit(); refreshAll(); scrollToContent(); }
         }));
-        bar.addView(smallButton(L.t("toolbar.voicebank"), new View.OnClickListener() {
+        packBtn = smallButton(L.t("toolbar.voicebank"), new View.OnClickListener() {
             public void onClick(View v) { managePacks(); }
-        }));
+        });
+        bar.addView(packBtn);
         bar.addView(smallButton(L.t("toolbar.about"), new View.OnClickListener() {
             public void onClick(View v) { about(); }
         }));
@@ -1824,7 +1841,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 L.t("menu.tools.settings"),
                 L.t("menu.tools.update"),
                 L.t("menu.tools.mkbank"),
-                L.t("menu.tools.tutorial")
+                L.t("menu.tools.tutorial"),
+                L.t("menu.tools.guide")
         };
         menu(L.t("menu.tools"), null, items, -1, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, int which) {
@@ -1841,7 +1859,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 else if (which == 10) settingsDialog();
                 else if (which == 11) checkUpdate(false);
                 else if (which == 12) com.dsh.v4tune.voicebank.VoicebankWizard.start(MainActivity.this);
-                else showTutorial();
+                else if (which == 13) showTutorial();
+                else showOnboarding();
             }
         });
     }
@@ -1875,6 +1894,22 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 });
             }
         });
+    }
+
+    /** First-run coach marks: each step highlights the real button it is talking about. */
+    private void showOnboarding() {
+        if (newBtn == null || packBtn == null || playBtn == null || toolsBtn == null) {
+            status("请先把窗口转成横屏或竖屏再试"); return;
+        }
+        com.dsh.v4tune.ui.OnboardingOverlay.Step[] steps = new com.dsh.v4tune.ui.OnboardingOverlay.Step[]{
+                new com.dsh.v4tune.ui.OnboardingOverlay.Step(newBtn, "1. 新建工程", "点这里从空白开始；也可以点「打开」导入 .vsqx / .ustx / .ust。"),
+                new com.dsh.v4tune.ui.OnboardingOverlay.Step(openBtn, "2. 打开工程", "支持 VOCALOID4 .vsqx、OpenUtau .ustx、UTAU .ust。"),
+                new com.dsh.v4tune.ui.OnboardingOverlay.Step(packBtn, "3. 导入声库", "先装一个声库：.v4voice，或菜单里的「导入 UTAU 声库」支持 oto.ini 文件夹和 zip。"),
+                new com.dsh.v4tune.ui.OnboardingOverlay.Step(playBtn, "4. 试听", "点播放边渲边播；再点一次停止。参数和音符编辑后会自动保存。"),
+                new com.dsh.v4tune.ui.OnboardingOverlay.Step(exportBtn, "5. 导出 WAV", "满意后导出 44.1kHz WAV，文件在 BriVoice_root/export。"),
+                new com.dsh.v4tune.ui.OnboardingOverlay.Step(toolsBtn, "6. 工具与设置", "合成方式、音色、自动保存、教程都在这里；随时可以重看这个引导。")
+        };
+        com.dsh.v4tune.ui.OnboardingOverlay.show(this, steps);
     }
 
     /** The bundled tutorials live in assets/tutorial; shown scrollable. */
@@ -2287,7 +2322,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     public void run() {
                         long tick = TimeUtil.secToTick(song, frame / 44100.0);
                         roll.setPlayheadTick(tick);
-                        roll.setVisibleTickRange(tick - 1920, tick + 1920 * 3);
+                        if (followPlayhead) roll.setVisibleTickRange(tick - 1920, tick + 1920 * 3);
                         paramView.setPlayheadTick(tick);
                         posText.setText(formatTick(tick));
                     }
@@ -3485,6 +3520,32 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         lock.setChecked(phonemeLock);
         box.addView(lock);
 
+        // web-style synthesis method + colour presets
+        box.addView(label("合成方式"));
+        final android.widget.Spinner synth = new android.widget.Spinner(this);
+        android.widget.ArrayAdapter<String> synthAd = new android.widget.ArrayAdapter<String>(this,
+                android.R.layout.simple_spinner_item,
+                new String[]{"声库谐波（还原，默认）", "网页快速（共振峰，省电）"});
+        synthAd.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        synth.setAdapter(synthAd);
+        synth.setSelection(webSynth ? 1 : 0);
+        box.addView(synth);
+
+        box.addView(label("音色（网页预设）"));
+        final android.widget.Spinner color = new android.widget.Spinner(this);
+        android.widget.ArrayAdapter<String> colorAd = new android.widget.ArrayAdapter<String>(this,
+                android.R.layout.simple_spinner_item,
+                new String[]{"跟随声库", "明亮", "柔和", "低语"});
+        colorAd.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        color.setAdapter(colorAd);
+        color.setSelection(Math.max(0, Math.min(3, voiceColor)));
+        box.addView(color);
+
+        final CheckBox follow = new CheckBox(this);
+        follow.setText("播放时滚动跟随（同步）");
+        follow.setChecked(followPlayhead);
+        box.addView(follow);
+
         // experimental: sing fricatives with the spectrum the voicebank actually measured
         final CheckBox mnoise = new CheckBox(this);
         mnoise.setText(L.t("set.mnoise"));
@@ -3634,6 +3695,16 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                                 .putBoolean("autosave", autoSaveEnabled)
                                 .putInt("autosaveSec", autoSaveSec).apply();
                         scheduleAutoSave();
+                        webSynth = synth.getSelectedItemPosition() == 1;
+                        voiceColor = Math.max(0, Math.min(3, color.getSelectedItemPosition()));
+                        followPlayhead = follow.isChecked();
+                        Renderer.webSynth = webSynth;
+                        Renderer.voiceColor = voiceColor;
+                        getSharedPreferences("brivoice", MODE_PRIVATE).edit()
+                                .putBoolean("websynth", webSynth)
+                                .putInt("voicecolor", voiceColor)
+                                .putBoolean("follow", followPlayhead).apply();
+                        cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
                         status(autoSaveEnabled ? ("自动保存已开启，间隔 " + autoSaveSec + " 秒") : "自动保存已关闭");
                         status(L.t(phonemeLock ? "set.phoneme.state.on" : "set.phoneme.state.off"));
                     }

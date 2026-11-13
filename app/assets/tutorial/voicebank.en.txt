@@ -63,3 +63,10 @@ sequence packing (the base64 is identical), the FFT and consonant noise analysis
 naming decision. The one deliberate difference is the random seeding of k-means (the phone
 uses deterministic k-means++), so cluster labels may differ - the structure and algorithms
 match and the sound is equivalent.
+
+
+【Import a UTAU voicebank】
+Voicebank menu -> "Import UTAU voicebank (oto.ini)". You can pick a .zip or a folder.
+The app searches up to 4 levels for oto.ini, tries UTF-8 / Shift_JIS / GBK file names
+and accepts 8/16/24-bit PCM and 32-bit float WAV. Only measured vowel / consonant
+onset / harmonic data is stored; no original samples are kept.

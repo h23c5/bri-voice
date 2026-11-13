@@ -54,6 +54,11 @@ public class Renderer {
      * be compared on the device.
      */
     public static boolean frameSequence = false;
+
+    /** web-style fast mode: skip the measured harmonic/noise paths and sing with the formant model only */
+    public static boolean webSynth = false;
+    /** 0 = bank timbre, 1 = bright, 2 = soft, 3 = whisper (web presets) */
+    public static int voiceColor = 0;
     /** level of the frame path, matched to the harmonic table path it replaces */
     static final double FRAME_GAIN = 0.18;   // measured: matches the table path level   // measured: matches the table path level
     /**
@@ -146,7 +151,7 @@ public class Renderer {
         boolean nsWasSilent = true;                                  // seed the level match on entry
         final double nsCoef = 1.0 - Math.exp(-1.0 / (0.030 * fs));   // 30 ms
         final double nsXCoef = 1.0 - Math.exp(-1.0 / (0.005 * fs));  // 5 ms path switch
-        if (vm.harmonicFreqs != null && vm.harmonicFreqs.length > 4 && vm.harmonics.size() > 0) {
+        if (!webSynth && vm.harmonicFreqs != null && vm.harmonicFreqs.length > 4 && vm.harmonics.size() > 0) {
             hv = new HarmonicVoice();
             ns = new NoiseShape();
             fv = new FrameVoice();
@@ -318,6 +323,19 @@ public class Renderer {
             double oq = clamp(0.55 + (ope - 1.0) * 0.25 + vm.oqBias, 0.25, 0.95);
             double tilt = clamp(0.5 - pv[2] + vm.tiltBias, 0.0, 1.0);
             double breath = clamp(bre + vm.breathBias * 0.35, 0, 1);
+            // web-style colour presets: bright cuts the tilt and tightens the glottis a little,
+            // soft/whisper trade brightness for aspiration
+            if (voiceColor == 1) {
+                tilt = clamp(tilt - 0.16, 0.0, 1.0);
+                oq = clamp(oq - 0.03, 0.25, 0.95);
+            } else if (voiceColor == 2) {
+                tilt = clamp(tilt + 0.16, 0.0, 1.0);
+                breath = clamp(breath + 0.10, 0, 1);
+            } else if (voiceColor == 3) {
+                tilt = clamp(tilt + 0.30, 0.0, 1.0);
+                breath = clamp(breath + 0.26, 0, 1);
+                oq = clamp(oq + 0.06, 0.25, 0.95);
+            }
 
             float exc = src.sample(f0, oq, tilt, breath * 0.35);
             float noise = src.noiseOnly(breath * 0.5 + 0.05);
