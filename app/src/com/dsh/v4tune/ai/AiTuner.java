@@ -78,6 +78,15 @@ public final class AiTuner {
                 "notes", notes.toString(), "curves", cur.toString());
     }
 
+    /** the whole prompt a user can copy into any chat UI (system rules + this part + optional request) */
+    public static String fullPrompt(Song song, Part part, int trackIndex, String request) {
+        String payload = partJson(song, part, trackIndex);
+        if (request != null && request.trim().length() > 0) {
+            payload += ", \"request\": " + Json.quote(request.trim());
+        }
+        return systemPrompt() + "\n\nPart JSON:\n" + payload + "\n\nAnswer with the JSON object only.";
+    }
+
     /**
      * Pulls the JSON object out of a reply that may be wrapped in prose or code fences. Only an
      * object that really parses as a JSON map counts, so a stray pair of braces in the prose is

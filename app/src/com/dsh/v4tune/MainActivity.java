@@ -3838,7 +3838,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 .setNegativeButton(L.t("dlg.cancel"), null)
                 .show();
     }
-    /** the experimental panel: switches, endpoint, key, port, manual tune button */
+    /** the AI panel: endpoint + copyable prompt + reply JSON + optional user-provided cloud save */
     private void aiDialog() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -3875,9 +3875,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         str.setMax(100);
         str.setProgress(Math.round(aiCfg.strength * 100));
         str.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            public void onProgressChanged(SeekBar sb, int pr, boolean u) {
-                st.setText(L.t("ai.strength", pr + "%"));
-            }
+            public void onProgressChanged(SeekBar sb, int pr, boolean u) { st.setText(L.t("ai.strength", pr + "%")); }
             public void onStartTrackingTouch(SeekBar sb) { }
             public void onStopTrackingTouch(SeekBar sb) { }
         });
@@ -3898,6 +3896,179 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         state.setText(extStateText());
         box.addView(state);
 
+        // ---- copyable prompt (web-version workflow: use any chat UI) ----
+        box.addView(label("要求（自然语言，可选；会写进提示词）"));
+        final EditText req = field("", false);
+        box.addView(req);
+        box.addView(label("提示词（点「复制提示词」，粘贴到任意 AI 对话框）"));
+        final EditText promptBox = multi("", 6);
+        promptBox.setFocusable(false);
+        promptBox.setClickable(false);
+        box.addView(promptBox);
+        LinearLayout promptRow = row();
+        Button copyBtn = small("复制提示词");
+        copyBtn.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                try {
+                    android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("BriVoice AI prompt", promptBox.getText().toString()));
+                    status("提示词已复制，去 AI 里粘贴吧");
+                    toast("已复制提示词");
+                } catch (Throwable t) { status("复制失败: " + t.getMessage()); }
+            }
+        });
+        Button refreshBtn = small("刷新提示词");
+        promptRow.addView(copyBtn);
+        promptRow.addView(refreshBtn);
+        box.addView(promptRow);
+
+        // ---- reply JSON / file export ----
+        box.addView(label("输出 JSON（把 AI 的答复贴到这里，或直接编辑）"));
+        final EditText out = multi(aiLastReply == null ? "" : aiLastReply, 7);
+        box.addView(out);
+        LinearLayout jsonRow = row();
+        Button applyBtn = small("应用 JSON");
+        Button exportBtn = small("导出 JSON 文件");
+        jsonRow.addView(applyBtn);
+        jsonRow.addView(exportBtn);
+        box.addView(jsonRow);
+
+        // ---- cloud save against the user's own backend ----
+        box.addView(label("云端保存（你自己的后端：POST 保存 / GET 读取，Token 可选）"));
+        final EditText cloudUrl = field(aiCfg.cloudUrl, false);
+        final EditText cloudToken = field(aiCfg.cloudToken, true);
+        cloudUrl.setSelectAllOnFocus(true);
+        cloudToken.setSelectAllOnFocus(true);
+        box.addView(label("云端地址（完整 URL）"));
+        box.addView(cloudUrl);
+        box.addView(label("云端 Token（可选，Bearer）"));
+        box.addView(cloudToken);
+        LinearLayout cloudRow = row();
+        Button cloudSave = small("保存到云端");
+        Button cloudLoad = small("从云端读取");
+        cloudRow.addView(cloudSave);
+        cloudRow.addView(cloudLoad);
+        box.addView(cloudRow);
+        final TextView cloudState = new TextView(this);
+        cloudState.setTextColor(Theme.TEXT_DIM);
+        cloudState.setTextSize(12f);
+        cloudState.setPadding(0, dp(4), 0, dp(4));
+        cloudState.setText("云端未连接");
+        box.addView(cloudState);
+
+        final Runnable fillPrompt = new Runnable() {
+            public void run() {
+                Part p = currentPart();
+                if (p == null) { promptBox.setText("（当前没有可调音的片段）"); return; }
+                promptBox.setText(com.dsh.v4tune.ai.AiTuner.fullPrompt(song, p, trackIndex, req.getText().toString()));
+            }
+        };
+        fillPrompt.run();
+        refreshBtn.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { fillPrompt.run(); toast("提示词已刷新"); }
+        });
+
+        copyBtn.setTag(Boolean.TRUE);
+        applyBtn.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                try {
+                    Part p = currentPart();
+                    if (p == null) throw new IllegalArgumentException("没有可调音的片段");
+                    com.dsh.v4tune.ai.Tuning t = com.dsh.v4tune.ai.AiTuner.parseTuning(out.getText().toString(), p.dur + p.pos);
+                    int n = applyTuning(t, str.getProgress() / 100f);
+                    aiLastReply = out.getText().toString();
+                    status(L.t("ai.applied.full", t.summary(), n));
+                    toast("已应用 JSON：" + n + " 处调整");
+                } catch (Throwable t) {
+                    status("应用 JSON 失败: " + t.getMessage());
+                    toast("JSON 不可用: " + t.getMessage());
+                }
+            }
+        });
+        exportBtn.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                try {
+                    File dir = new File(Storage.exports(MainActivity.this), "ai");
+                    if (!dir.exists()) dir.mkdirs();
+                    String stamp = new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(new java.util.Date());
+                    File f = new File(dir, "ai-" + stamp + ".json");
+                    java.io.FileOutputStream fo = new java.io.FileOutputStream(f);
+                    fo.write(out.getText().toString().getBytes("UTF-8"));
+                    fo.flush(); fo.close();
+                    status("已导出 " + f.getAbsolutePath());
+                    toast("已导出 JSON 文件");
+                } catch (Throwable t) { status("导出失败: " + t.getMessage()); }
+            }
+        });
+
+        cloudSave.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                final String cu = cloudUrl.getText().toString().trim();
+                final String ct = cloudToken.getText().toString().trim();
+                aiCfg.cloudUrl = cu; aiCfg.cloudToken = ct; aiCfg.save(MainActivity.this);
+                status("正在保存到云端...");
+                cloudState.setText("正在保存...");
+                new Thread(new Runnable() {
+                    public void run() {
+                        String err = null;
+                        try { com.dsh.v4tune.ai.AiCloud.save(cu, ct, projectName, song); }
+                        catch (Throwable t) { err = String.valueOf(t.getMessage()); }
+                        final String fe = err;
+                        ui.post(new Runnable() {
+                            public void run() {
+                                if (fe != null) { status("云端保存失败: " + fe); cloudState.setText("保存失败: " + fe); }
+                                else { status("已保存到云端：" + projectName); cloudState.setText("已保存：" + projectName); toast("云端保存成功"); }
+                            }
+                        });
+                    }
+                }, "brivoice-cloud").start();
+            }
+        });
+        cloudLoad.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                final String cu = cloudUrl.getText().toString().trim();
+                final String ct = cloudToken.getText().toString().trim();
+                aiCfg.cloudUrl = cu; aiCfg.cloudToken = ct; aiCfg.save(MainActivity.this);
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle("从云端读取")
+                        .setMessage("会替换当前工程（可以先撤销）。继续？")
+                        .setPositiveButton("读取", new DialogInterface.OnClickListener() {
+                            public void onClick(DialogInterface d, int w) {
+                                status("正在从云端读取...");
+                                new Thread(new Runnable() {
+                                    public void run() {
+                                        String err = null;
+                                        Song loaded = null;
+                                        try { loaded = com.dsh.v4tune.ai.AiCloud.load(cu, ct); }
+                                        catch (Throwable t) { err = String.valueOf(t.getMessage()); }
+                                        final String fe = err;
+                                        final Song fs = loaded;
+                                        ui.post(new Runnable() {
+                                            public void run() {
+                                                if (fe != null) { status("云端读取失败: " + fe); cloudState.setText("读取失败: " + fe); return; }
+                                                beginEdit();
+                                                song = fs;
+                                                commitEdit();
+                                                currentUri = null;
+                                                projectName = "云端工程";
+                                                trackIndex = 0;
+                                                chooseInitialVoice();
+                                                refreshAll();
+                                                scrollToContent();
+                                                status("已从云端读取 " + countNotes() + " 音符");
+                                                cloudState.setText("已读取：" + countNotes() + " 音符");
+                                                toast("云端工程已载入");
+                                            }
+                                        });
+                                    }
+                                }, "brivoice-cloud").start();
+                            }
+                        })
+                        .setNegativeButton(L.t("dlg.cancel"), null)
+                        .show();
+            }
+        });
+
         ScrollView sc = new ScrollView(this);
         sc.addView(box);
         final AlertDialog d = com.dsh.v4tune.ui.Dialogs.builder(this).setTitle(L.t("ai.title")).setView(sc)
@@ -3913,6 +4084,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 aiCfg.model = model.getText().toString().trim();
                 aiCfg.apiKey = key.getText().toString().trim();
                 aiCfg.strength = str.getProgress() / 100f;
+                aiCfg.cloudUrl = cloudUrl.getText().toString().trim();
+                aiCfg.cloudToken = cloudToken.getText().toString().trim();
                 aiCfg.extEnabled = ext.isChecked();
                 try { aiCfg.extPort = Integer.parseInt(port.getText().toString().trim()); } catch (Throwable ignored) { }
                 aiCfg.save(MainActivity.this);
@@ -3928,8 +4101,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 aiCfg.model = model.getText().toString().trim();
                 aiCfg.apiKey = key.getText().toString().trim();
                 aiCfg.strength = str.getProgress() / 100f;
+                aiCfg.cloudUrl = cloudUrl.getText().toString().trim();
+                aiCfg.cloudToken = cloudToken.getText().toString().trim();
                 aiCfg.save(MainActivity.this);
-                runAiTune(null);
+                runAiTune(req.getText().toString());
                 d.dismiss();
             }
         });
@@ -3968,6 +4143,36 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         t.setTextSize(12f);
         t.setPadding(0, dp(8), 0, dp(2));
         return t;
+    }
+
+    private EditText multi(String v, int lines) {
+        EditText e = new EditText(this);
+        e.setText(v == null ? "" : v);
+        e.setTextColor(Theme.TEXT);
+        e.setTextSize(12.5f);
+        e.setSingleLine(false);
+        e.setMinLines(lines);
+        e.setGravity(Gravity.TOP | Gravity.START);
+        e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        return e;
+    }
+
+    private LinearLayout row() {
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setPadding(0, dp(4), 0, dp(2));
+        return r;
+    }
+
+    private Button small(String text) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setTextSize(12f);
+        b.setAllCaps(false);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        lp.setMargins(dp(2), 0, dp(2), 0);
+        b.setLayoutParams(lp);
+        return b;
     }
 
     private EditText field(String v, boolean secret) {

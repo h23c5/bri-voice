@@ -21,6 +21,10 @@ public final class AiConfig {
     /** how strongly the assistant is allowed to move existing curves (0..1) */
     public float strength = 0.6f;
 
+    /** user-provided backend for cloud save (full URL); empty = disabled */
+    public String cloudUrl = "";
+    public String cloudToken = "";
+
     /** master switch for the local HTTP control interface */
     public boolean extEnabled = false;
     public int extPort = 8765;
@@ -33,6 +37,8 @@ public final class AiConfig {
         a.model = p.getString("model", a.model);
         a.apiKey = p.getString("apiKey", "");
         a.strength = p.getFloat("strength", a.strength);
+        a.cloudUrl = p.getString("cloudUrl", "");
+        a.cloudToken = p.getString("cloudToken", "");
         a.extEnabled = p.getBoolean("extEnabled", false);
         a.extPort = p.getInt("extPort", a.extPort);
         return a;
@@ -45,6 +51,8 @@ public final class AiConfig {
                 .putString("model", model)
                 .putString("apiKey", apiKey)
                 .putFloat("strength", strength)
+                .putString("cloudUrl", cloudUrl)
+                .putString("cloudToken", cloudToken)
                 .putBoolean("extEnabled", extEnabled)
                 .putInt("extPort", extPort)
                 .apply();
