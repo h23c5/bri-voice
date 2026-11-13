@@ -1,7 +1,7 @@
 {
-  "versionCode": 64,
-  "versionName": "7.8",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.8/BriVoice-7.8.apk",
-  "sha256": "473e9562b23017f967f3de9bd2ea9a06a5becc178ea03188541015e575ee84be",
-  "notes": "release 7.8: autosave (interval + toggle), UTAU bank import fixes (zip/nested/encodings)"
+  "versionCode": 67,
+  "versionName": "7.9",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.9/BriVoice-7.9.apk",
+  "sha256": "52faec841c517ad6a0a4d9d2db0c5dafd3a9ab0a4a0d7a79b953fdee5bc505f7",
+  "notes": "release 7.9: direct V4/UTAU voicebank use, icon-guided onboarding, web-style synth, tutorial refresh"
 }

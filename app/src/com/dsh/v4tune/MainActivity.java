@@ -138,6 +138,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private boolean webSynth = false;
     private int voiceColor = 0;
     private boolean followPlayhead = true;
+    private String pendingDirectId = null;
     private boolean dirty = false;
     private boolean autoSaving = false;
     private android.os.Handler autoSaveHandler;
@@ -1356,6 +1357,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     if (!extraDir.equals(packStore.directory())) {
                         rs.addAll(new com.dsh.v4tune.io.PackStore(extraDir).loadAll());
                     }
+                    // "direct use" caches (V4/UTAU source folders) live in app-private storage
+                    File directDir = com.dsh.v4tune.voicebank.DirectVoicebank.cacheDir(MainActivity.this);
+                    rs.addAll(new com.dsh.v4tune.io.PackStore(directDir).loadAll());
                 } catch (Throwable t) {          // OutOfMemoryError included: never lose the thread
                     err = String.valueOf(t);
                 }
@@ -1396,8 +1400,19 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             if (seenId.add(key)) ms.add(r.model);
         }
         SingerLibrary.setUserPacks(ms);
+        if (pendingDirectId != null) {
+            VoiceModel direct = SingerLibrary.byId(pendingDirectId);
+            if (direct != null) {
+                currentVoice = direct;
+                Part dp = currentPart();
+                if (dp != null) applyVoiceToPart(direct);
+                cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
+                status("已直接使用声库：" + singerName(direct));
+            }
+            pendingDirectId = null;
+        }
         packsLoading = false;
-        chooseInitialVoice();
+        if (currentVoice == null) chooseInitialVoice();
         refreshAll();
         if (pendingPlay && currentVoice != null) {     // the user was waiting for this
             pendingPlay = false;
@@ -2004,6 +2019,27 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         status(land ? "切换为竖屏" : "切换为横屏");
     }
 
+    /** V4 / UTAU source folder -> a usable singer in one step (no .v4voice file dialog) */
+    private void directVoicebank() {
+        com.dsh.v4tune.voicebank.DirectVoicebank.start(this,
+                new com.dsh.v4tune.voicebank.DirectVoicebank.LoadCb() {
+                    public void done(VoiceModel model, String error) {
+                        if (error != null || model == null) {
+                            status("直接载入失败: " + error);
+                            new AlertDialog.Builder(MainActivity.this)
+                                    .setTitle("直接载入失败")
+                                    .setMessage(String.valueOf(error))
+                                    .setPositiveButton("好", null)
+                                    .show();
+                            return;
+                        }
+                        pendingDirectId = model.id;
+                        toast("已直接载入：" + model.name);
+                        reloadPacksAsync(false);
+                    }
+                });
+    }
+
     private void managePacks() {
         final String[] items = {
                 "导入声库文件（.v4voice）",
@@ -2012,6 +2048,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 "删除已导入的声库（" + SingerLibrary.userPackCount() + "）",
                 "声库说明",
                 "导入 UTAU 声库（oto.ini）",
+                "直接使用声库（V4/UTAU 源文件）",
                 "切换歌姬（选择声库）"
         };
         menu(L.t("menu.pack.title"), L.t("menu.pack.sub", SingerLibrary.userPackCount()), items, -1,
@@ -2023,6 +2060,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         else if (which == 3) deletePack();
                         else if (which == 4) packHelp();
                         else if (which == 5) com.dsh.v4tune.voicebank.VoicebankWizard.start(MainActivity.this);
+                        else if (which == 6) directVoicebank();
                         else pickSinger();
                     }
                 });

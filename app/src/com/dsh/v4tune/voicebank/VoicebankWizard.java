@@ -82,7 +82,7 @@ public final class VoicebankWizard {
     }
 
     /** A plain folder browser over /sdcard - the app already holds all-files access. */
-    static void browseForFolder(final Activity act, final File dir, final EditText target) {
+    public static void browseForFolder(final Activity act, final File dir, final EditText target) {
         final java.util.ArrayList<String> names = new java.util.ArrayList<String>();
         final java.util.ArrayList<File> dirs = new java.util.ArrayList<File>();
         File[] kids = dir.listFiles();
