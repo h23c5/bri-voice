@@ -1953,40 +1953,99 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         com.dsh.v4tune.ui.OnboardingOverlay.show(this, steps);
     }
 
-    /** The bundled tutorials live in assets/tutorial; shown scrollable. */
+    /** tutorial text + chapter offsets, loaded once from assets/tutorial */
+    private String tutorialText;
+    private String[] tutorialTitles;
+    private int[] tutorialStarts;
+
     private void showTutorial() {
-        String text;
-        try {
-            // L.lang(): 0 = zh, 1 = en, 2 = ja (see the L class comment); fall back to zh
-            String code = L.lang() == 1 ? "en" : (L.lang() == 2 ? "ja" : "zh");
-            java.io.InputStream in = null;
-            // the full manual first, then the voicebank-only tutorial, then Chinese
-            String[] candidates = {"tutorial/manual." + code + ".txt", "tutorial/voicebank." + code + ".txt",
-                    "tutorial/manual.zh.txt", "tutorial/voicebank.zh.txt"};
-            for (int i = 0; i < candidates.length && in == null; i++) {
-                try { in = getAssets().open(candidates[i]); } catch (Throwable missing) { in = null; }
+        if (tutorialText == null) loadTutorial();
+        if (tutorialText == null || tutorialText.length() == 0) {
+            updateToast(L.t("tuto.missing"));
+            return;
+        }
+        if (tutorialTitles == null || tutorialTitles.length == 0) {
+            showTutorialPage(0);
+            return;
+        }
+        final String[] items = tutorialTitles;
+        new AlertDialog.Builder(this)
+                .setTitle("教程 · 选择章节")
+                .setItems(items, new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int which) { showTutorialPage(which); }
+                })
+                .setNegativeButton("关闭", null)
+                .show();
+    }
+
+    private void loadTutorial() {
+        StringBuilder all = new StringBuilder();
+        String code = L.lang() == 1 ? "en" : (L.lang() == 2 ? "ja" : "zh");
+        appendAsset(all, "tutorial/manual." + code + ".txt");
+        if (all.length() == 0) appendAsset(all, "tutorial/manual.zh.txt");
+        int before = all.length();
+        if (before > 0) all.append("\n\n========== 声库制作与导入 ==========\n\n");
+        appendAsset(all, "tutorial/voicebank." + code + ".txt");
+        if (all.length() == before) appendAsset(all, "tutorial/voicebank.zh.txt");
+        tutorialText = all.toString();
+        java.util.ArrayList<String> titles = new java.util.ArrayList<String>();
+        java.util.ArrayList<Integer> starts = new java.util.ArrayList<Integer>();
+        int pos = 0;
+        for (String line : tutorialText.split("\n", -1)) {
+            String t = line.trim();
+            if (t.startsWith("【") && t.indexOf("】") > 1) {
+                titles.add(t);
+                starts.add(Integer.valueOf(pos));
             }
-            if (in == null) throw new java.io.FileNotFoundException("tutorial");
+            pos += line.length() + 1;
+        }
+        tutorialTitles = titles.toArray(new String[0]);
+        tutorialStarts = new int[starts.size()];
+        for (int i = 0; i < tutorialStarts.length; i++) tutorialStarts[i] = starts.get(i).intValue();
+    }
+
+    private void appendAsset(StringBuilder out, String name) {
+        java.io.InputStream in = null;
+        try {
+            in = getAssets().open(name);
             java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
             byte[] buf = new byte[8192];
             int n;
             while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
-            in.close();
-            text = new String(bo.toByteArray(), "UTF-8");
-        } catch (Throwable t) {
-            text = L.t("tuto.missing") + "\n\n" + String.valueOf(t.getMessage());
+            out.append(new String(bo.toByteArray(), "UTF-8"));
+        } catch (Throwable ignored) {
+        } finally {
+            try { if (in != null) in.close(); } catch (Throwable ignored) { }
         }
-        android.widget.ScrollView sv = new android.widget.ScrollView(this);
-        android.widget.TextView tv = new android.widget.TextView(this);
-        tv.setText(text);
+    }
+
+    /** one chapter, scrolled to its heading, with a "目录" button back to the picker */
+    private void showTutorialPage(int index) {
+        final android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        final android.widget.TextView tv = new android.widget.TextView(this);
+        tv.setText(tutorialText);
         tv.setTextSize(13);
-        tv.setPadding(28, 20, 28, 20);
+        tv.setPadding(dp(18), dp(10), dp(18), dp(14));
         sv.addView(tv);
-        new android.app.AlertDialog.Builder(this)
-                .setTitle(L.t("menu.tools.tutorial"))
+        final AlertDialog dlg = new AlertDialog.Builder(this)
+                .setTitle(index >= 0 && index < tutorialTitles.length ? tutorialTitles[index] : "教程")
                 .setView(sv)
-                .setPositiveButton(android.R.string.ok, null)
+                .setPositiveButton("好", null)
+                .setNeutralButton("目录", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) { showTutorial(); }
+                })
                 .show();
+        if (index >= 0 && index < tutorialStarts.length) {
+            final int line = tutorialText.substring(0, tutorialStarts[index]).split("\n", -1).length - 1;
+            sv.post(new Runnable() {
+                public void run() {
+                    android.text.Layout l = tv.getLayout();
+                    if (l != null && line >= 0 && line < l.getLineCount()) {
+                        sv.scrollTo(0, Math.max(0, l.getLineTop(line) - dp(6)));
+                    }
+                }
+            });
+        }
     }
 
     private void updateToast(String s) {
