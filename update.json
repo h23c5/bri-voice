@@ -2,6 +2,6 @@
   "versionCode": 67,
   "versionName": "7.9",
   "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v7.9/BriVoice-7.9.apk",
-  "sha256": "52faec841c517ad6a0a4d9d2db0c5dafd3a9ab0a4a0d7a79b953fdee5bc505f7",
+  "sha256": "01d26128b3372b03c82f39baa65e4f946bf9ad00f9bf43be7aa775ec3a8e9c6e",
   "notes": "release 7.9: direct V4/UTAU voicebank use, icon-guided onboarding, web-style synth, tutorial refresh"
 }

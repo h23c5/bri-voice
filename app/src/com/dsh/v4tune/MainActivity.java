@@ -661,11 +661,20 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private static float[] cacheL, cacheR;
 
     /** FNV-1a over everything the renderer reads: notes, parts, tempos, voices and the flags. */
-    private static long songFingerprint(com.dsh.v4tune.model.Song s, int sampleRate) {
+    private static long songFingerprint(com.dsh.v4tune.model.Song s, int sampleRate, VoiceModel vm) {
         long h = 0xcbf29ce484222325L;
         h = (h ^ sampleRate) * 0x100000001b3L;
         h = (h ^ (Renderer.measuredNoise ? 1 : 0)) * 0x100000001b3L;
         h = (h ^ Float.floatToIntBits(Renderer.noiseGain)) * 0x100000001b3L;
+        // the singer itself and the web-mode switches are inputs too: without these a cached render
+        // was replayed after switching banks, which made every voicebank sound identical
+        h = (h ^ (vm == null ? 0 : String.valueOf(vm.id).hashCode())) * 0x100000001b3L;
+        h = (h ^ (vm == null ? 0 : String.valueOf(vm.name).hashCode())) * 0x100000001b3L;
+        h = (h ^ (vm == null ? 0 : vm.harmonics.size())) * 0x100000001b3L;
+        h = (h ^ (vm == null ? 0 : vm.overrides.size())) * 0x100000001b3L;
+        h = (h ^ (Renderer.webSynth ? 4 : 0)) * 0x100000001b3L;
+        h = (h ^ Renderer.voiceColor) * 0x100000001b3L;
+        h = (h ^ (Renderer.frameSequence ? 8 : 0)) * 0x100000001b3L;
         for (com.dsh.v4tune.model.Voice v : s.voices) { h = (h ^ v.bs) * 0x100000001b3L; h = (h ^ v.pc) * 0x100000001b3L; }
         for (long[] tm : s.tempos) { for (long x : tm) h = (h ^ x) * 0x100000001b3L; }
         for (com.dsh.v4tune.model.Track t : s.tracks) {
@@ -720,7 +729,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
         void start() {
             // cache hit: nothing that affects the sound changed, so replay the stored render
-            final long key = renderAccel ? songFingerprint(sng, cfg.sampleRate) : 0L;
+            final long key = renderAccel ? songFingerprint(sng, cfg.sampleRate, fallback) : 0L;
             if (renderAccel && key != 0L && key == cacheKey && cacheTotal == total && cacheL != null && cacheR != null) {
                 System.arraycopy(cacheL, 0, bufL, 0, total);
                 System.arraycopy(cacheR, 0, bufR, 0, total);
@@ -823,7 +832,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     }
                     if (limit >= total) {
                         if (!renderAccel) { finished = true; return; }
-                        cacheKey = songFingerprint(sng, cfg.sampleRate);
+                        cacheKey = songFingerprint(sng, cfg.sampleRate, fallback);
                         cacheTotal = total;
                         cacheL = bufL.clone();
                         cacheR = bufR.clone();
@@ -1189,9 +1198,26 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                             beginEdit();
                             currentVoice = v;
                             applyVoiceToPart(currentVoice);
+                            cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
                             commitEdit();
                             refreshAll();
                             status(L.t("status.singer", singerName(v)));
+                            if (Renderer.webSynth) {
+                                new AlertDialog.Builder(MainActivity.this)
+                                        .setTitle("当前是网页快速合成")
+                                        .setMessage("网页快速模式只用共振峰模型，不听声库实测谐波，所以不同声库的差异会很小。\n\n想听出音色区别，请切换到「声库谐波」。")
+                                        .setPositiveButton("切回声库谐波", new DialogInterface.OnClickListener() {
+                                            public void onClick(DialogInterface d, int w) {
+                                                webSynth = false;
+                                                Renderer.webSynth = false;
+                                                getSharedPreferences("brivoice", MODE_PRIVATE).edit().putBoolean("websynth", false).apply();
+                                                cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
+                                                status("已切回声库谐波，再播放即可听出音色差异");
+                                            }
+                                        })
+                                        .setNegativeButton("先这样", null)
+                                        .show();
+                            }
                         }
                     }));
         }
@@ -2035,6 +2061,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         }
                         pendingDirectId = model.id;
                         toast("已直接载入：" + model.name);
+                        if (Renderer.webSynth) {
+                            status("提示：网页快速合成会抹平声库差异，设置里可切回声库谐波");
+                        }
                         reloadPacksAsync(false);
                     }
                 });
@@ -3563,7 +3592,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         final android.widget.Spinner synth = new android.widget.Spinner(this);
         android.widget.ArrayAdapter<String> synthAd = new android.widget.ArrayAdapter<String>(this,
                 android.R.layout.simple_spinner_item,
-                new String[]{"声库谐波（还原，默认）", "网页快速（共振峰，省电）"});
+                new String[]{"声库谐波（按声库实测音色，默认）", "网页快速（所有声库音色会趋同）"});
         synthAd.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         synth.setAdapter(synthAd);
         synth.setSelection(webSynth ? 1 : 0);
@@ -3744,7 +3773,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                                 .putBoolean("follow", followPlayhead).apply();
                         cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
                         status(autoSaveEnabled ? ("自动保存已开启，间隔 " + autoSaveSec + " 秒") : "自动保存已关闭");
-                        status(L.t(phonemeLock ? "set.phoneme.state.on" : "set.phoneme.state.off"));
+                        status(webSynth ? "合成方式：网页快速（所有声库音色会趋同）" : "合成方式：声库谐波（按声库实测音色）");
                     }
                 })
                 .setNegativeButton(L.t("dlg.cancel"), null)
