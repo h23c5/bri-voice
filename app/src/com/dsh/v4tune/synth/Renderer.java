@@ -179,7 +179,8 @@ public class Renderer {
         // Applied raw it also changes the overall level and over-dips the presence band, so the
         // curve is centred on 0 dB (level preserved) and damped to 60% before it is used as colour.
         EqFilter eq = null;
-        if (hv == null && vm.shelfFreqs != null && vm.shelfGains != null && vm.shelfFreqs.length > 0) {
+        if (webSynth) eq = bankColourEq(vm, fs);
+        if (eq == null && hv == null && vm.shelfFreqs != null && vm.shelfGains != null && vm.shelfFreqs.length > 0) {
             int sn = Math.min(vm.shelfFreqs.length, vm.shelfGains.length);
             double[] g = new double[sn];
             double mean = 0;
@@ -580,6 +581,49 @@ public class Renderer {
     }
 
     // ---------------------------------------------------------------- shaping
+
+    /**
+     * Coarse bank colour for web-fast mode: the measured harmonic envelopes are averaged over the
+     * whole bank and turned into a 7-point EQ. That keeps each voicebank's tilt/peaks (so different
+     * banks still sound different) without running the full HarmonicVoice machinery.
+     */
+    private static EqFilter bankColourEq(VoiceModel vm, double sr) {
+        if (vm == null || vm.harmonicFreqs == null || vm.harmonicFreqs.length < 2
+                || vm.harmonics.isEmpty()) return null;
+        int n = vm.harmonicFreqs.length;
+        double[] avg = new double[n];
+        int count = 0;
+        for (VoiceModel.HarmonicBand[] bands : vm.harmonics.values()) {
+            if (bands == null) continue;
+            for (VoiceModel.HarmonicBand b : bands) {
+                if (b == null || b.db == null) continue;
+                int m = Math.min(n, b.db.length);
+                for (int i = 0; i < m; i++) avg[i] += b.db[i];
+                count++;
+            }
+        }
+        if (count == 0) return null;
+        for (int i = 0; i < n; i++) avg[i] /= count;
+        double[] pf = {100, 250, 500, 1000, 2000, 4000, 8000};
+        double[] pg = new double[pf.length];
+        double mean = 0;
+        for (int j = 0; j < pf.length; j++) {
+            double f = pf[j];
+            int idx = 0;
+            while (idx < n - 2 && vm.harmonicFreqs[idx + 1] < f) idx++;
+            double f0 = vm.harmonicFreqs[idx], f1 = vm.harmonicFreqs[idx + 1];
+            double w = (f1 > f0) ? (f - f0) / (f1 - f0) : 0.0;
+            w = Math.max(0, Math.min(1, w));
+            pg[j] = avg[idx] + (avg[idx + 1] - avg[idx]) * w;
+            mean += pg[j];
+        }
+        mean /= pf.length;
+        for (int j = 0; j < pg.length; j++) pg[j] = Math.max(-10.0, Math.min(10.0, pg[j] - mean));
+        EqFilter eq = new EqFilter();
+        eq.setSampleRate(sr);
+        eq.setCurve(pf, pg);
+        return eq.isBypassed() ? null : eq;
+    }
 
     static double formantOf(PhonemeDef ph, int i, VoiceModel vm) {
         double[] ov = vm.override(ph.sym);

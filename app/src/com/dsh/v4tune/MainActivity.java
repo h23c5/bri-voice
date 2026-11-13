@@ -1205,7 +1205,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                             if (Renderer.webSynth) {
                                 new AlertDialog.Builder(MainActivity.this)
                                         .setTitle("当前是网页快速合成")
-                                        .setMessage("网页快速模式只用共振峰模型，不听声库实测谐波，所以不同声库的差异会很小。\n\n想听出音色区别，请切换到「声库谐波」。")
+                                        .setMessage("网页快速模式不用逐帧实测谐波，只保留声库的平均频谱色彩；细节会比「声库谐波」少，但不同声库仍会有区别。\n\n想听完整细节，请切换到「声库谐波」。")
                                         .setPositiveButton("切回声库谐波", new DialogInterface.OnClickListener() {
                                             public void onClick(DialogInterface d, int w) {
                                                 webSynth = false;
@@ -2062,7 +2062,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         pendingDirectId = model.id;
                         toast("已直接载入：" + model.name);
                         if (Renderer.webSynth) {
-                            status("提示：网页快速合成会抹平声库差异，设置里可切回声库谐波");
+                            status("提示：网页快速保留平均频谱色彩；想听完整细节可切回声库谐波");
                         }
                         reloadPacksAsync(false);
                     }
@@ -3592,7 +3592,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         final android.widget.Spinner synth = new android.widget.Spinner(this);
         android.widget.ArrayAdapter<String> synthAd = new android.widget.ArrayAdapter<String>(this,
                 android.R.layout.simple_spinner_item,
-                new String[]{"声库谐波（按声库实测音色，默认）", "网页快速（所有声库音色会趋同）"});
+                new String[]{"声库谐波（按声库实测音色，默认）", "网页快速（保留声库频谱色彩）"});
         synthAd.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         synth.setAdapter(synthAd);
         synth.setSelection(webSynth ? 1 : 0);
@@ -3773,7 +3773,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                                 .putBoolean("follow", followPlayhead).apply();
                         cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
                         status(autoSaveEnabled ? ("自动保存已开启，间隔 " + autoSaveSec + " 秒") : "自动保存已关闭");
-                        status(webSynth ? "合成方式：网页快速（所有声库音色会趋同）" : "合成方式：声库谐波（按声库实测音色）");
+                        status(webSynth ? "合成方式：网页快速（保留声库频谱色彩）" : "合成方式：声库谐波（按声库实测音色）");
                     }
                 })
                 .setNegativeButton(L.t("dlg.cancel"), null)
