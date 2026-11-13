@@ -3459,6 +3459,88 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         aiBtn.setVisibility(aiCfg != null && aiCfg.aiEnabled ? View.VISIBLE : View.GONE);
     }
 
+    /** copies the full prompt from the shortcut sheet (works without any API key) */
+    private void quickCopyPrompt(String request) {
+        Part p = currentPart();
+        if (p == null) { toast("当前没有可调音的片段"); return; }
+        try {
+            String prompt = com.dsh.v4tune.ai.AiTuner.fullPrompt(song, p, trackIndex, request);
+            android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("BriVoice AI prompt", prompt));
+            status("提示词已复制，去 AI 里粘贴吧");
+            toast("已复制提示词");
+        } catch (Throwable t) { status("复制失败: " + t.getMessage()); }
+    }
+
+    /** saves the current project to the user's backend, straight from the shortcut sheet */
+    private void quickCloudSave() {
+        if (aiCfg == null || aiCfg.cloudUrl == null || aiCfg.cloudUrl.trim().length() == 0) {
+            toast("先到「AI 设置」里填云端地址");
+            aiDialog();
+            return;
+        }
+        status("正在保存到云端...");
+        new Thread(new Runnable() {
+            public void run() {
+                String err = null;
+                try { com.dsh.v4tune.ai.AiCloud.save(aiCfg.cloudUrl, aiCfg.cloudToken, projectName, song); }
+                catch (Throwable t) { err = String.valueOf(t.getMessage()); }
+                final String fe = err;
+                ui.post(new Runnable() {
+                    public void run() {
+                        if (fe != null) status("云端保存失败: " + fe);
+                        else { status("已保存到云端：" + projectName); toast("云端保存成功"); }
+                    }
+                });
+            }
+        }, "brivoice-cloud").start();
+    }
+
+    /** reads a project from the user's backend after confirmation */
+    private void quickCloudLoad() {
+        if (aiCfg == null || aiCfg.cloudUrl == null || aiCfg.cloudUrl.trim().length() == 0) {
+            toast("先到「AI 设置」里填云端地址");
+            aiDialog();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("从云端读取")
+                .setMessage("会替换当前工程（可以先撤销）。继续？")
+                .setPositiveButton("读取", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) {
+                        status("正在从云端读取...");
+                        new Thread(new Runnable() {
+                            public void run() {
+                                String err = null;
+                                Song loaded = null;
+                                try { loaded = com.dsh.v4tune.ai.AiCloud.load(aiCfg.cloudUrl, aiCfg.cloudToken); }
+                                catch (Throwable t) { err = String.valueOf(t.getMessage()); }
+                                final String fe = err;
+                                final Song fs = loaded;
+                                ui.post(new Runnable() {
+                                    public void run() {
+                                        if (fe != null) { status("云端读取失败: " + fe); return; }
+                                        beginEdit();
+                                        song = fs;
+                                        commitEdit();
+                                        currentUri = null;
+                                        projectName = "云端工程";
+                                        trackIndex = 0;
+                                        chooseInitialVoice();
+                                        refreshAll();
+                                        scrollToContent();
+                                        status("已从云端读取 " + countNotes() + " 音符");
+                                        toast("云端工程已载入");
+                                    }
+                                });
+                            }
+                        }, "brivoice-cloud").start();
+                    }
+                })
+                .setNegativeButton(L.t("dlg.cancel"), null)
+                .show();
+    }
+
     /** the quick-tune sheet: describe what you want, the assistant edits the part */
     private void aiAskDialog() {
         LinearLayout box = new LinearLayout(this);
@@ -3497,6 +3579,33 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             chips.addView(c);
         }
         box.addView(chips);
+
+        // services: copy the prompt / cloud save / cloud load without leaving the shortcut sheet
+        LinearLayout svc1 = row();
+        Button copyNow = small("复制提示词");
+        Button saveCloud = small("云端保存");
+        svc1.addView(copyNow);
+        svc1.addView(saveCloud);
+        box.addView(svc1);
+        LinearLayout svc2 = row();
+        Button readCloud = small("云端读取");
+        Button fullPanel = small("AI 设置");
+        svc2.addView(readCloud);
+        svc2.addView(fullPanel);
+        box.addView(svc2);
+
+        copyNow.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { quickCopyPrompt(input.getText().toString()); }
+        });
+        saveCloud.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { quickCloudSave(); }
+        });
+        readCloud.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { quickCloudLoad(); }
+        });
+        fullPanel.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { aiDialog(); }
+        });
 
         TextView scope = new TextView(this);
         scope.setText(L.t("ai.ask.scope"));
