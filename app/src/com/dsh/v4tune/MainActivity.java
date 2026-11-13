@@ -72,6 +72,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private boolean pendingPlay;
     /** the workspace shortcut, only visible while the AI is on */
     private Button aiBtn;
+    /** live result line inside the AI quick sheet (so failures are visible without closing it) */
+    private TextView quickAiResult;
+
     /** keeps a note phoneme when its lyric is edited; off unless enabled in settings */
     private boolean phonemeLock;
     /** ms the cursor is pulled back so it matches the sound the user hears */
@@ -691,7 +694,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 }
                 for (java.util.Map.Entry<String, com.dsh.v4tune.model.ControlCurve> e : p.ctrls.entrySet()) {
                     h = (h ^ e.getKey().hashCode()) * 0x100000001b3L;
-                    h = (h ^ (long) e.getValue().pts.size()) * 0x100000001b3L;
+                    // every point, not just the count: an AI/curve edit that keeps the same number of
+                    // points must still invalidate the cached render, otherwise it is silently replayed
+                    for (com.dsh.v4tune.model.ControlCurve.P pt : e.getValue().pts) {
+                        h = (h ^ pt.t) * 0x100000001b3L;
+                        h = (h ^ Double.doubleToLongBits(pt.v)) * 0x100000001b3L;
+                    }
                 }
             }
         }
@@ -3592,6 +3600,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 .show();
     }
 
+    private void setQuickAiStatus(String text) {
+        if (quickAiResult != null) quickAiResult.setText(text);
+    }
+
     /** the quick-tune sheet: describe what you want, the assistant edits the part */
     private void aiAskDialog() {
         LinearLayout box = new LinearLayout(this);
@@ -3669,6 +3681,14 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         exportJson.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { exportAiJson(aiLastReply == null ? "" : aiLastReply); }
         });
+
+        final TextView quickResult = new TextView(this);
+        quickResult.setTextColor(Theme.TEXT_DIM);
+        quickResult.setTextSize(11.5f);
+        quickResult.setPadding(0, dp(8), 0, dp(2));
+        quickResult.setText(aiLastError != null ? ("上次失败：" + aiLastError) : "就绪");
+        box.addView(quickResult);
+        quickAiResult = quickResult;
 
         TextView scope = new TextView(this);
         scope.setText(L.t("ai.ask.scope"));
@@ -3772,8 +3792,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         aiBusy = true;
         aiLastError = null;
         status(L.t("ai.asking"));
-        final String payload = com.dsh.v4tune.ai.AiTuner.partJson(song, p, trackIndex)
-                + (request == null || request.trim().length() == 0 ? "" : (", \"request\": " + com.dsh.v4tune.ai.Json.quote(request.trim())));
+        setQuickAiStatus("正在请求 AI 调参…");
+        StringBuilder pb = new StringBuilder(com.dsh.v4tune.ai.AiTuner.partText(song, p, trackIndex));
+        if (request != null && request.trim().length() > 0) pb.append("\n【用户要求】\n").append(request.trim());
+        final String payload = pb.toString();
         final float bias = aiCfg.strength;
         new Thread(new Runnable() {
             public void run() {
@@ -3794,11 +3816,18 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         if (fe != null) {
                             aiLastError = fe;
                             status(L.t("ai.failed", fe));
+                            setQuickAiStatus("失败：" + fe);
                             return;
                         }
                         int n = applyTuning(ft, bias);
                         aiLastApplied = n;
-                        status(L.t("ai.applied.full", ft == null ? "" : ft.summary(), n));
+                        if (n == 0) {
+                            status("AI 没有给出可应用的修改");
+                            setQuickAiStatus("AI 返回了 0 处可应用调整（可能只回了 {} 或数值没变）");
+                        } else {
+                            status(L.t("ai.applied.full", ft == null ? "" : ft.summary(), n));
+                            setQuickAiStatus("已应用 " + n + " 处调整：" + (ft == null ? "" : ft.summary()));
+                        }
                     }
                 });
             }
@@ -4030,6 +4059,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
         box.addView(label(L.t("ai.baseurl")));
         final EditText url = field(aiCfg.baseUrl, false);
+        url.setSelectAllOnFocus(true);
         box.addView(url);
         box.addView(label(L.t("ai.model")));
         final EditText model = field(aiCfg.model, false);
