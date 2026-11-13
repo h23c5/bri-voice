@@ -28,17 +28,66 @@ public final class AiTuner {
 
     private AiTuner() { }
 
-    /** what the model is asked to produce */
+    /** the detailed Chinese tuning prompt ported from the web build */
     public static String systemPrompt() {
-        return "You are a vocal tuning assistant inside a singing synthesizer. "
-                + "You receive a part (tempo, notes, current parameter curves) and a request in natural language, and you answer with JSON only. "
-                + "Schema (every field optional): {\"curves\":{\"DYN\":[[tick,value],...]}, \"notes\":[{\"pos\":0,\"key\":64,\"dur\":480,\"vel\":64,\"lyric\":\"la\"}], \"tempo\":128.5, \"trackVolume\":100, \"trackPan\":64}. "
-                + "Allowed parameters: " + java.util.Arrays.toString(Params.IDS) + ". "
-                + "Ranges: DYN/BRE/BRI/CLE/OPE/GEN/POR/VIB/XSY/GWL 0..127, PIT -2400..2400 cents, PBS 0..24, "
-                + "key 0..127, vel 0..127, dur in ticks (60 minimum), tempo 20..400 BPM, trackVolume 0..127, trackPan 0..127 with 64 as centre. "
-                + "In \"notes\" use the pos of an EXISTING note as the key and send only the fields you want to change. Ticks use the same unit as the note positions. "
-                + "Keep it musical: gentle dynamics on stressed syllables, small pitch movement, no values outside the ranges. Answer with the JSON object and nothing else."
-                ;
+        StringBuilder b = new StringBuilder();
+        b.append("你是 BriVoice 的虚拟歌手中文调音助手。请根据下面的工程内容提出调音修改。").append('\n');
+        b.append("所有音符的 tick 均为绝对位置；音轨参数仅作用于当前音轨。").append('\n');
+        b.append('\n');
+        b.append("【调音参数说明】（范围 / 默认值 / 作用）").append('\n');
+        b.append("- DYN 力度：0–127，默认 64，每 +1 约 +0.3 dB（约 ±19 dB）。控制整句/单字的强弱，重音、渐强渐弱都用它。").append('\n');
+        b.append("- BRE 气息：0–127，默认 0。越高气声越多、越轻；抒情句、句尾可用 60–90，快歌保持 20–50。").append('\n');
+        b.append("- BRI 明亮度：0–127，默认 64。越高高频越亮、越靠前；过低会闷。").append('\n');
+        b.append("- CLE 清晰度：0–127，默认 0。越高咬字/音头越清晰，过高会生硬。").append('\n');
+        b.append("- OPE 开口度：0–127，默认 127。控制元音张口程度，偏低更含蓄、偏高更外放。").append('\n');
+        b.append("- GEN 性别/音色：0–127，默认 64。64 为中性，偏低偏男、偏高偏女；一般 50–75，不要大幅改。").append('\n');
+        b.append("- POR 滑音时间：0–127，默认 64，映射到 0–110ms。越大音与音之间越连、越小越断。").append('\n');
+        b.append("- PIT 音高曲线：-2400–2400（音分），默认 0，受 PBS 缩放。用于滑音、转音、轻微走音修正。").append('\n');
+        b.append("- PBS 滑音敏感度：0–24（半音），默认 2。决定 PIT 的最大作用范围，一般 2–6。").append('\n');
+        b.append("- VIB 颤音：0–127，默认 64。越大颤音越深；长音可用 70–95，短音不要加。").append('\n');
+        b.append("- XSY 交叉合成：0–127，默认 64。本引擎暂未参与合成，保留字段，建议不要修改。").append('\n');
+        b.append("- GWL 嘶吼/咆哮：0–127，默认 0。增加粗糙与喉音，仅摇滚/强情绪句少量使用（10–40）。").append('\n');
+        b.append('\n');
+        b.append("【你可以使用的技能】").append('\n');
+        b.append("1. 写参数曲线：curves 里每个参数给 [[tick,value],...]，可只改局部区间，不要整首都画。").append('\n');
+        b.append("2. 修改已有音符：notes 里用 pos=已有音符的 tick，可选 key/dur/vel/lyric/phoneme，只改需要改的字段。").append('\n');
+        b.append("3. 调整速度 tempo（20–400）与当前音轨 trackVolume/trackPan（0–127，64 居中）。").append('\n');
+        b.append("4. 不能新增或删除音符、不能改音色库/插件/混音器结构、不能改工程文件名。").append('\n');
+        b.append("5. 不能输出 JSON 以外的内容；不能使用未列出的字段。").append('\n');
+        b.append('\n');
+        b.append("【调音原则】").append('\n');
+        b.append("- 先理解歌词分句与重音，再决定曲线，不要机械地给每个音加同样处理。").append('\n');
+        b.append("- 长音：轻微渐弱 + 延迟进入的颤音；短音：干净、少颤音。").append('\n');
+        b.append("- 连音：用 POR/PIT 做小滑音；跳进：提前 1–2 个 tick 起滑。").append('\n');
+        b.append("- 句首句尾：BRE 略高、DYN 略低；高音：DYN 不要顶满，避免刺耳。").append('\n');
+        b.append("- 所有改动以“自然、像真人演唱”为准，宁可少改也不要过度。").append('\n');
+        b.append('\n');
+        b.append("如果你能联网/使用搜索，请先查找这首歌（或同类中文虚拟歌手翻调）的调音视频、教程与成品，参考它们的调音标准，再给出调整：").append('\n');
+        b.append("- 音高曲线：滑音、颤音、转音的幅度与时机；").append('\n');
+        b.append("- 力度与气息：重音、连断、呼吸位置；").append('\n');
+        b.append("- 咬字与辅音：清晰但不生硬。").append('\n');
+        b.append("目标：调音后声音更自然、演唱连贯、没有违和感；避免过度修音、机械感或与原曲风格不符的处理。").append('\n');
+        b.append("如果检索不到直接可用的参考，请按中文流行演唱的通用习惯处理。").append('\n');
+        b.append('\n');
+        b.append("【输出格式：必须严格满足，否则整份回复作废】").append('\n');
+        b.append("1. 只输出 1 个 JSON 对象。第一个字符必须是 {，最后一个字符必须是 }。").append('\n');
+        b.append("2. 禁止任何其他内容：不要 Markdown、不要代码块包裹、不要注释、不要解释、不要前后缀文字、不要多段 JSON。").append('\n');
+        b.append("3. 禁止：单引号字符串、尾随逗号、NaN、Infinity、undefined、null、科学计数法、字符串形式的数字、重复键、未列出的字段。").append('\n');
+        b.append("4. 顶层只允许这 5 个键（都可省略，省略=不改）：curves、notes、tempo、trackVolume、trackPan。").append('\n');
+        b.append("5. curves：对象。键只能是 DYN/BRE/BRI/CLE/OPE/GEN/POR/PIT/PBS/VIB/XSY/GWL 之一；值必须是数组，元素只能是 [tick, value] 两个数字组成的数组。").append('\n');
+        b.append("   - tick：非负整数（可为 0）；value：有限数字；同一参数内 tick 必须严格递增、不得重复。").append('\n');
+        b.append("   - 数值范围：DYN/BRE/BRI/CLE/OPE/GEN/POR/VIB/XSY/GWL 为 0–127；PIT 为 -2400–2400；PBS 为 0–24。").append('\n');
+        b.append("   - 想清空某参数曲线可给空数组 []；不要用对象、字符串或 [tick,value,extra]。").append('\n');
+        b.append("6. notes：数组。每项必须是对象，只允许 pos、key、dur、vel、lyric、phoneme 这 6 个键，pos 必填。").append('\n');
+        b.append("   - pos：必须是上面已有音符的 tick（整数），不得新增、不得删除、不得重复。").append('\n');
+        b.append("   - key：整数 0–127；dur：整数 ≥60；vel：整数 0–127；lyric：字符串；phoneme：字符串（可为空）。").append('\n');
+        b.append("   - 不要输出 id、tick、velocity、style 等字段；不需要改的字段直接省略。").append('\n');
+        b.append("7. tempo：数字 20–400（最多 2 位小数）；trackVolume / trackPan：整数 0–127。").append('\n');
+        b.append("8. 没有任何修改时只输出 {}。").append('\n');
+        b.append("9. 输出前自检：是否为单个对象、键名大小写是否完全一致、数字是否在范围内、notes.pos 是否都来自已有音符。").append('\n');
+        b.append("示例（仅示意结构，不要照抄数值）：").append('\n');
+        b.append("{\"curves\":{\"DYN\":[[0,80],[480,95]],\"PIT\":[[960,120]]},\"notes\":[{\"pos\":480,\"key\":64,\"dur\":480,\"vel\":90,\"lyric\":\"la\",\"phoneme\":\"l a\"}],\"tempo\":126.5,\"trackVolume\":100,\"trackPan\":64}").append('\n');
+        return b.toString();
     }
 
     /** a compact description of the part, so the request stays small */
@@ -78,13 +127,56 @@ public final class AiTuner {
                 "notes", notes.toString(), "curves", cur.toString());
     }
 
-    /** the whole prompt a user can copy into any chat UI (system rules + this part + optional request) */
-    public static String fullPrompt(Song song, Part part, int trackIndex, String request) {
-        String payload = partJson(song, part, trackIndex);
-        if (request != null && request.trim().length() > 0) {
-            payload += ", \"request\": " + Json.quote(request.trim());
+    /** readable project section for a prompt a human will copy (not the compact API JSON) */
+    public static String partText(Song song, Part part, int trackIndex) {
+        StringBuilder b = new StringBuilder();
+        double bpm = song.tempos.isEmpty() ? 120.0 : song.tempos.get(0)[1] / 100.0;
+        b.append("速度：").append(bpm).append(" BPM；当前片段起点：").append(part.pos)
+                .append(" tick；长度：").append(part.dur).append(" tick；音轨序号：").append(trackIndex + 1).append('\n');
+        b.append("音符（tick,dur,key,vel,lyric,phoneme）：").append('\n');
+        List<Note> ns = new ArrayList<Note>(part.notes);
+        java.util.Collections.sort(ns, new java.util.Comparator<Note>() {
+            public int compare(Note a, Note b) { return Long.compare(a.pos, b.pos); }
+        });
+        for (int i = 0; i < ns.size() && i < 256; i++) {
+            Note n = ns.get(i);
+            b.append("  ").append(n.pos).append(',').append(n.dur).append(',').append(n.key).append(',')
+                    .append(n.vel).append(',').append(n.lyric == null ? "" : n.lyric).append(',')
+                    .append(n.phoneme == null ? "" : n.phoneme).append('\n');
         }
-        return systemPrompt() + "\n\nPart JSON:\n" + payload + "\n\nAnswer with the JSON object only.";
+        b.append("已有调音曲线（tick,value）：").append('\n');
+        boolean any = false;
+        for (String id : Params.IDS) {
+            ControlCurve c = part.ctrlOrNull(id);
+            if (c == null || c.pts.isEmpty()) continue;
+            any = true;
+            b.append("  ").append(id).append(": ");
+            for (int i = 0; i < c.pts.size() && i < 128; i++) {
+                ControlCurve.P pt = c.pts.get(i);
+                if (i > 0) b.append(' ');
+                b.append('[').append(pt.t).append(',').append(Math.round(pt.v * 100) / 100.0).append(']');
+            }
+            b.append('\n');
+        }
+        if (!any) b.append("  （当前片段没有已写曲线）").append('\n');
+        return b.toString();
+    }
+
+    /** the whole prompt a user can copy into any chat UI (detailed rules + this part + optional request) */
+    public static String fullPrompt(Song song, Part part, int trackIndex, String request) {
+        StringBuilder b = new StringBuilder();
+        b.append(systemPrompt());
+        b.append('\n');
+        b.append("【当前工程数据】").append('\n');
+        b.append(partText(song, part, trackIndex)).append('\n');
+        if (request != null && request.trim().length() > 0) {
+            b.append('\n');
+            b.append("【用户要求】").append('\n');
+            b.append(request.trim()).append('\n');
+        }
+        b.append('\n');
+        b.append("只输出一个 JSON 对象，不要任何解释。");
+        return b.toString();
     }
 
     /**
