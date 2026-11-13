@@ -3472,6 +3472,57 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         } catch (Throwable t) { status("复制失败: " + t.getMessage()); }
     }
 
+    /** paste/edit a tuning JSON straight from the shortcut sheet */
+    private void aiJsonDialog() {
+        final EditText input = multi(aiLastReply == null ? "" : aiLastReply, 7);
+        input.setHint("{\"curves\":{\"DYN\":[[0,90]]},\"tempo\":132}");
+        ScrollView sc = new ScrollView(this);
+        sc.addView(input);
+        final AlertDialog d = com.dsh.v4tune.ui.Dialogs.builder(this)
+                .setTitle("填写 JSON")
+                .setView(sc)
+                .setPositiveButton("应用 JSON", null)
+                .setNeutralButton("导出 JSON", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface dlg, int w) { exportAiJson(input.getText().toString()); }
+                })
+                .setNegativeButton(L.t("dlg.cancel"), null)
+                .create();
+        d.show();
+        d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                try {
+                    Part p = currentPart();
+                    if (p == null) throw new IllegalArgumentException("没有可调音的片段");
+                    com.dsh.v4tune.ai.Tuning t = com.dsh.v4tune.ai.AiTuner.parseTuning(input.getText().toString(), p.dur + p.pos);
+                    int n = applyTuning(t, aiCfg == null ? 0.6f : aiCfg.strength);
+                    aiLastReply = input.getText().toString();
+                    status(L.t("ai.applied.full", t.summary(), n));
+                    toast("已应用 JSON：" + n + " 处调整");
+                    d.dismiss();
+                } catch (Throwable t) {
+                    status("应用 JSON 失败: " + t.getMessage());
+                    toast("JSON 不可用: " + t.getMessage());
+                }
+            }
+        });
+    }
+
+    /** writes a tuning reply to BriVoice_root/export/ai/ */
+    private void exportAiJson(String text) {
+        try {
+            if (text == null || text.trim().length() == 0) throw new IllegalArgumentException("JSON 是空的");
+            File dir = new File(Storage.exports(this), "ai");
+            if (!dir.exists()) dir.mkdirs();
+            String stamp = new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(new java.util.Date());
+            File f = new File(dir, "ai-" + stamp + ".json");
+            java.io.FileOutputStream fo = new java.io.FileOutputStream(f);
+            fo.write(text.getBytes("UTF-8"));
+            fo.flush(); fo.close();
+            status("已导出 " + f.getAbsolutePath());
+            toast("已导出 JSON 文件");
+        } catch (Throwable t) { status("导出失败: " + t.getMessage()); }
+    }
+
     /** saves the current project to the user's backend, straight from the shortcut sheet */
     private void quickCloudSave() {
         if (aiCfg == null || aiCfg.cloudUrl == null || aiCfg.cloudUrl.trim().length() == 0) {
@@ -3593,6 +3644,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         svc2.addView(readCloud);
         svc2.addView(fullPanel);
         box.addView(svc2);
+        LinearLayout svc3 = row();
+        Button fillJson = small("填写 JSON");
+        Button exportJson = small("导出 JSON");
+        svc3.addView(fillJson);
+        svc3.addView(exportJson);
+        box.addView(svc3);
 
         copyNow.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { quickCopyPrompt(input.getText().toString()); }
@@ -3605,6 +3662,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         });
         fullPanel.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { aiDialog(); }
+        });
+        fillJson.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { aiJsonDialog(); }
+        });
+        exportJson.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { exportAiJson(aiLastReply == null ? "" : aiLastReply); }
         });
 
         TextView scope = new TextView(this);
