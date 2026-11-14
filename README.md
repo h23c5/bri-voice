@@ -107,7 +107,7 @@ tools/      构建脚本与测试工具
 ## 七、技术规格
 
 - 包名：**com.bri.voice**
-- 版本：8.1.1（versionCode 70）
+- 版本：8.1.2（versionCode 71）
 - minSdk：**21**（Android 5.0）
 - targetSdk：**34**（Android 14）
 - 渲染速度：约 **24–49× 实时**（44.1 kHz 单声道）

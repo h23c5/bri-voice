@@ -797,18 +797,22 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     /** jump the roll and the parameter view to the first note of the song */
     private void scrollToContent() {
         long first = Long.MAX_VALUE, last = 0;
+        int minKey = 127, maxKey = 0;
         for (com.dsh.v4tune.model.Track t : song.tracks) {
             for (Part p : t.parts) {
                 for (Note n : p.notes) {
                     if (n.pos < first) first = n.pos;
                     if (n.end() > last) last = n.end();
+                    if (n.key < minKey) minKey = n.key;
+                    if (n.key > maxKey) maxKey = n.key;
                 }
             }
         }
-        if (first == Long.MAX_VALUE) { first = 0; last = 1920 * 4; }
+        if (first == Long.MAX_VALUE) { first = 0; last = 1920 * 4; minKey = maxKey = 60; }
         long pad = Math.max(960, (last - first) / 8);
         roll.setPlayheadTick(-1);
         paramView.setPlayheadTick(-1);
+        roll.showKeyRange(minKey, maxKey);
         roll.setVisibleTickRange(Math.max(0, first - pad), last + pad);
         paramView.setTickRange(Math.max(0, first - pad), last + pad);
         posText.setText(formatTick(first));
@@ -3143,6 +3147,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 refreshAll();
                 scrollToContent();
                 status("已打开 " + last + "（" + song.tracks.size() + " 轨 / " + countNotes() + " 音符）");
+
             } catch (Exception e) {
                 status("打开失败: " + e.getMessage());
                 toast("打开失败: " + e.getMessage());

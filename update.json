@@ -1,7 +1,7 @@
 {
-  "versionCode": 70,
-  "versionName": "8.1.1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v8.1.1/BriVoice-8.1.1.apk",
-  "sha256": "913cfb9b4c294e9fb9ee175c29c39e4f6c3270e0ce037a2f985fa32f8f9febc4",
-  "notes": "release 8.1.1: detailed copyable zip-import errors, backslash/nested/encoding fixes, character artwork"
+  "versionCode": 71,
+  "versionName": "8.1.2",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v8.1.2/BriVoice-8.1.2.apk",
+  "sha256": "1e29b6c66b23eb9580e5a4a9672f37e54a955ebe05531725836acda68e5d31bd",
+  "notes": "release 8.1.2: OpenUTAU USTX voice_parts/lyrics import, UST lyric fixes, zip import diagnostics"
 }

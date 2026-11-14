@@ -279,6 +279,15 @@ public class PianoRollView extends View {
 
     public Note getSelectedNote() { return selected; }
 
+    /** bring an imported song's pitch range into view; preserving topKey from the previous project can leave new notes off-screen */
+    public void showKeyRange(int minKey, int maxKey) {
+        if (maxKey < minKey) { minKey = 60; maxKey = 60; }
+        topKey = Math.min(127f, maxKey + 5f);
+        vInited = true;
+        clampScroll();
+        invalidate();
+    }
+
     /** Centre the view on a note and select it (used when reporting an overlapping note). */
     public void focusNote(Note n) {
         if (n == null) return;
@@ -732,6 +741,7 @@ public class PianoRollView extends View {
     protected void onDraw(Canvas c) { final int w = getWidth(), h = getHeight(); if (w <= 0 || h <= 0) return;
         if (barsDirty) rebuildBars(); final float gl = keyW, gt = rulerH, gr = w, gb = h;
         final Track t = currentTrack(); final Part act = activePart(); c.drawColor(Theme.BG);
+
         selSeen = false; c.save(); c.clipRect(gl, gt, gr, gb); drawGrid(c, gl, gt, gr, gb);
         if (act != null) drawPartEdges(c, act, gt, gb); if (t != null) drawNotes(c, t, act, gl, gt, gr, gb);
         if (!clips.isEmpty()) drawClipLane(c, gl, gr, gb);

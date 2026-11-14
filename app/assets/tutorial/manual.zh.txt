@@ -1,4 +1,4 @@
-# BriVoice 使用手册（v8.1.1）
+# BriVoice 使用手册（v8.1.2）
 ========================================
 
 目录
@@ -239,3 +239,17 @@
   · 确认 zip 里确实有 oto.ini 和 wav 采样（或一个 .v4voice）
   · 带密码、分卷、7z 改后缀的压缩包不支持，请重新打成普通 zip
   · 把「复制日志」的内容发出来，就能定位到具体是哪个文件/编码/条目出错
+
+【19】USTX / UST 工程打开后看不到音符或歌词（8.1.2）
+19.1 OpenUTAU .ustx
+  · 正确读取 voice_parts、track_no、part.position 和每个 part 的 notes
+  · 多轨工程按 track_no 放回对应音轨；不会再全塞进最后一轨导致第一轨空白
+  · note 的 tone / duration / lyric（单数）都读，歌词不再丢
+  · 打开工程后会自动把钢琴卷帘的纵向范围滚到音符所在音高
+19.2 UTAU .ust
+  · Lyric / Length / NoteNum / Velocity 改为大小写不敏感，值会去掉首尾空格
+  · 歌词按音符顺序一一对应；R 休止仍然跳过
+19.3 如果歌词还是空
+  · 用文本编辑器确认每个 [#0001] 段里有 Lyric=... 行
+  · 如果是 OpenUTAU 的 .ustx，确认 note 里是 lyric: 而不是自定义字段
+  · 把工程文件发出来即可按实际结构补解析

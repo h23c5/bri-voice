@@ -64,13 +64,13 @@ public final class UstReader {
             String k = line.substring(0, eq).trim();
             String v = line.substring(eq + 1);
             if (section.equals("#SETTING")) {
-                if (k.equals("Tempo")) { try { tempo = Double.parseDouble(v); } catch (Exception ignored) {} }
-                else if (k.equals("ProjectName") && v.length() > 0) name = v;
+                if (k.equalsIgnoreCase("Tempo")) { try { tempo = Double.parseDouble(v.trim()); } catch (Exception ignored) {} }
+                else if (k.equalsIgnoreCase("ProjectName") && v.trim().length() > 0) name = v.trim();
             } else if (section.startsWith("#")) {
-                if (k.equals("Length")) { try { len = Long.parseLong(v.trim()); } catch (Exception ignored) {} }
-                else if (k.equals("NoteNum")) { try { key = Integer.parseInt(v.trim()); } catch (Exception ignored) {} }
-                else if (k.equals("Lyric")) lyric = v;
-                else if (k.equals("Velocity")) { try { vel = Integer.parseInt(v.trim()); } catch (Exception ignored) {} }
+                if (k.equalsIgnoreCase("Length")) { try { len = Long.parseLong(v.trim()); } catch (Exception ignored) {} }
+                else if (k.equalsIgnoreCase("NoteNum")) { try { key = Integer.parseInt(v.trim()); } catch (Exception ignored) {} }
+                else if (k.equalsIgnoreCase("Lyric")) lyric = v.trim();
+                else if (k.equalsIgnoreCase("Velocity")) { try { vel = Integer.parseInt(v.trim()); } catch (Exception ignored) {} }
             }
         }
         flush(section, tick, len, key, lyric, vel, notes, lyrics);
