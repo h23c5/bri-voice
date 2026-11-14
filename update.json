@@ -3,5 +3,5 @@
   "versionName": "8.1.2",
   "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v8.1.2/BriVoice-8.1.2.apk",
   "sha256": "1e29b6c66b23eb9580e5a4a9672f37e54a955ebe05531725836acda68e5d31bd",
-  "notes": "release 8.1.2: OpenUTAU USTX voice_parts/lyrics import, UST lyric fixes, zip import diagnostics"
+  "notes": "release 8.1.2: OpenUTAU USTX voice_parts/lyrics import, UST lyric fixes, zip import diagnostics "
 }
