@@ -3250,46 +3250,45 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
     /** a UTAU bank zip (contains oto.ini) must go to the UTAU importer, not the .v4voice parser */
     private boolean zipHasOto(Uri uri) {
+        return zipContainsName(uri, "oto.ini");
+    }
+
+    /** name scan that survives non-UTF-8 zip headers (Java's ZipInputStream throws MALFORMED[1]) */
+    private boolean zipContainsName(Uri uri, String name) {
         java.io.InputStream in = null;
-        java.util.zip.ZipInputStream zis = null;
         try {
             in = ProjectIO.openAny(this, uri);
             if (in == null) return false;
-            zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(in));
-            java.util.zip.ZipEntry e;
-            int n = 0;
-            while ((e = zis.getNextEntry()) != null && n++ < 4000) {
-                String name = e.getName();
-                if (name != null && name.toLowerCase(java.util.Locale.US).endsWith("oto.ini")) return true;
+            byte[] needle = name.toLowerCase(java.util.Locale.US).getBytes("US-ASCII");
+            byte[] buf = new byte[65536];
+            byte[] carry = new byte[Math.max(0, needle.length - 1)];
+            int clen = 0, n;
+            while ((n = in.read(buf)) > 0) {
+                byte[] d = new byte[clen + n];
+                System.arraycopy(carry, 0, d, 0, clen);
+                System.arraycopy(buf, 0, d, clen, n);
+                for (int i = 0; i + needle.length <= d.length; i++) {
+                    boolean ok = true;
+                    for (int j = 0; j < needle.length; j++) {
+                        int c = d[i + j] & 255;
+                        if (c >= 'A' && c <= 'Z') c += 32;
+                        if (c != needle[j]) { ok = false; break; }
+                    }
+                    if (ok) return true;
+                }
+                clen = Math.min(carry.length, d.length);
+                if (clen > 0) System.arraycopy(d, d.length - clen, carry, 0, clen);
             }
         } catch (Throwable ignored) {
         } finally {
-            try { if (zis != null) zis.close(); else if (in != null) in.close(); } catch (Throwable ignored) { }
+            try { if (in != null) in.close(); } catch (Throwable ignored) { }
         }
         return false;
     }
 
     /** some users distribute a zipped .v4voice; detect that before treating it as a UTAU bank */
     private boolean zipHasV4(Uri uri) {
-        java.io.InputStream in = null;
-        java.util.zip.ZipInputStream zis = null;
-        try {
-            in = ProjectIO.openAny(this, uri);
-            if (in == null) return false;
-            zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(in));
-            java.util.zip.ZipEntry e;
-            int n = 0;
-            while ((e = zis.getNextEntry()) != null && n++ < 4000) {
-                String name = e.getName();
-                if (name == null) continue;
-                name = name.replace('\\', '/').toLowerCase(java.util.Locale.US);
-                if (name.endsWith(".v4voice")) return true;
-            }
-        } catch (Throwable ignored) {
-        } finally {
-            try { if (zis != null) zis.close(); else if (in != null) in.close(); } catch (Throwable ignored) { }
-        }
-        return false;
+        return zipContainsName(uri, ".v4voice");
     }
 
     /** extract the first .v4voice from a zip and import it, so a zipped pack also works */

@@ -292,8 +292,21 @@ public final class VoicebankWizard {
         }, "utau-unzip").start();
     }
 
-    /** extract with a chosen filename charset; returns the number of files written */
+    /** extract a zip; falls back to a tolerant header reader when Java rejects malformed names */
     private static int extractZip(Activity act, Uri uri, File base, String charset) throws Exception {
+        try {
+            return extractZipStrict(act, uri, base, charset);
+        } catch (Throwable t) {
+            try {
+                return TolerantZip.extract(act, uri, base, charset);
+            } catch (Throwable t2) {
+                throw new Exception(t.getMessage() + " / tolerant: " + t2.getMessage(), t2);
+            }
+        }
+    }
+
+    /** extract with a chosen filename charset; returns the number of files written */
+    private static int extractZipStrict(Activity act, Uri uri, File base, String charset) throws Exception {
         if (!base.exists()) base.mkdirs();
         InputStream in = act.getContentResolver().openInputStream(uri);
         if (in == null) throw new IllegalStateException("无法读取压缩包（系统没有给文件流）");
