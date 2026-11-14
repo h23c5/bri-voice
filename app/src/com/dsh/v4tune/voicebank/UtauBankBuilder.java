@@ -24,10 +24,7 @@ public final class UtauBankBuilder {
         if (!oto.isFile()) throw new FileNotFoundException("oto.ini not found in " + bankDir);
         List<Entry> entries = parseOto(oto);
         Map<String, File> fileIndex = new HashMap<String, File>();
-        File[] kids = bankDir.listFiles();
-        if (kids != null) for (File k : kids) if (k.isFile()) {
-            fileIndex.put(normName(k.getName()), k);
-        }
+        indexFiles(bankDir, bankDir, fileIndex, 0);
         int missingFiles = 0;
         Map<String, List<double[]>> formantSamples = new HashMap<String, List<double[]>>();
         Map<String, List<BandData>> bandSamples = new HashMap<String, List<BandData>>();
@@ -231,6 +228,24 @@ public final class UtauBankBuilder {
         return w;
     }
 
+    /** index every sample recursively, by both relative path and bare filename */
+    private static void indexFiles(File root, File dir, Map<String, File> out, int depth) {
+        if (dir == null || depth > 5) return;
+        File[] kids = dir.listFiles();
+        if (kids == null) return;
+        for (File k : kids) {
+            if (k.isFile()) {
+                out.put(normName(k.getName()), k);
+                try {
+                    String rel = root.toURI().relativize(k.toURI()).getPath();
+                    out.put(normName(rel), k);
+                } catch (Throwable ignored) { }
+            } else if (k.isDirectory()) {
+                indexFiles(root, k, out, depth + 1);
+            }
+        }
+    }
+
     /** normalize a file name for matching: Unicode form + case + separators */
     private static String normName(String n) {
         if (n == null) return "";
@@ -261,21 +276,30 @@ public final class UtauBankBuilder {
     private static List<Entry> parseOto(File f) throws IOException {
         byte[] b = Files.readAllBytes(f.toPath());
         String s;
-        try {
-            CharsetDecoder dec = Charset.forName("UTF-8").newDecoder()
-                    .onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT);
-            s = dec.decode(java.nio.ByteBuffer.wrap(b)).toString();
-        } catch (Throwable t) {
-            s = new String(b, Charset.forName("Shift_JIS"));
+        if (b.length > 2 && (b[0] == (byte)0xFF && b[1] == (byte)0xFE)) {
+            s = new String(b, "UTF-16LE");
+        } else if (b.length > 2 && (b[0] == (byte)0xFE && b[1] == (byte)0xFF)) {
+            s = new String(b, "UTF-16BE");
+        } else {
+            try {
+                CharsetDecoder dec = Charset.forName("UTF-8").newDecoder()
+                        .onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT);
+                s = dec.decode(java.nio.ByteBuffer.wrap(b)).toString();
+            } catch (Throwable t) {
+                s = new String(b, Charset.forName("Shift_JIS"));
+            }
         }
         if (s.startsWith("\uFEFF")) s = s.substring(1);
         String gbk = new String(b, Charset.forName("GBK"));
         String utf8 = new String(b, Charset.forName("UTF-8"));
         if (utf8.startsWith("\uFEFF")) utf8 = utf8.substring(1);
         if (gbk.startsWith("\uFEFF")) gbk = gbk.substring(1);
-        String[] lines = s.split("\r?\n");
-        String[] alt = gbk.split("\r?\n");
-        String[] u8 = utf8.split("\r?\n");
+        s = s.replace("\r\n", "\n").replace('\r', '\n');
+        gbk = gbk.replace("\r\n", "\n").replace('\r', '\n');
+        utf8 = utf8.replace("\r\n", "\n").replace('\r', '\n');
+        String[] lines = s.split("\n");
+        String[] alt = gbk.split("\n");
+        String[] u8 = utf8.split("\n");
         List<Entry> out = new ArrayList<Entry>();
         for (int li = 0; li < lines.length; li++) {
             String line = lines[li];

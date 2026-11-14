@@ -1,7 +1,7 @@
 {
-  "versionCode": 69,
-  "versionName": "8.1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v8.1/BriVoice-8.1.apk",
-  "sha256": "831797ad66c9480dcb1a98a7ab515534a3d6d11e45eb5a73ddc0bfbde2575234",
-  "notes": "release 8.1: character artwork in the corner (auto white background removal, opacity/size), AI prompt/JSON/cloud, chapter tutorial"
+  "versionCode": 70,
+  "versionName": "8.1.1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v8.1.1/BriVoice-8.1.1.apk",
+  "sha256": "913cfb9b4c294e9fb9ee175c29c39e4f6c3270e0ce037a2f985fa32f8f9febc4",
+  "notes": "release 8.1.1: detailed copyable zip-import errors, backslash/nested/encoding fixes, character artwork"
 }

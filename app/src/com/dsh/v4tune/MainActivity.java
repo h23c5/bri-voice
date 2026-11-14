@@ -3264,6 +3264,119 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         return false;
     }
 
+    /** some users distribute a zipped .v4voice; detect that before treating it as a UTAU bank */
+    private boolean zipHasV4(Uri uri) {
+        java.io.InputStream in = null;
+        java.util.zip.ZipInputStream zis = null;
+        try {
+            in = ProjectIO.openAny(this, uri);
+            if (in == null) return false;
+            zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(in));
+            java.util.zip.ZipEntry e;
+            int n = 0;
+            while ((e = zis.getNextEntry()) != null && n++ < 4000) {
+                String name = e.getName();
+                if (name == null) continue;
+                name = name.replace('\\', '/').toLowerCase(java.util.Locale.US);
+                if (name.endsWith(".v4voice")) return true;
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            try { if (zis != null) zis.close(); else if (in != null) in.close(); } catch (Throwable ignored) { }
+        }
+        return false;
+    }
+
+    /** extract the first .v4voice from a zip and import it, so a zipped pack also works */
+    private VoicePack.Result importPackZip(Uri uri) {
+        java.io.File dir = new java.io.File(getCacheDir(), "v4zip_" + System.currentTimeMillis());
+        dir.mkdirs();
+        java.io.File found = null;
+        java.io.InputStream in = null;
+        java.util.zip.ZipInputStream zis = null;
+        try {
+            in = ProjectIO.openAny(this, uri);
+            if (in == null) {
+                VoicePack.Result r = new VoicePack.Result(); r.error = "无法读取压缩包（系统没有给文件流）"; return r;
+            }
+            zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(in));
+            java.util.zip.ZipEntry e;
+            byte[] buf = new byte[8192];
+            while ((e = zis.getNextEntry()) != null && found == null) {
+                String name = e.getName();
+                if (name == null) continue;
+                name = name.replace('\\', '/');
+                if (e.isDirectory() || !name.toLowerCase(java.util.Locale.US).endsWith(".v4voice")) continue;
+                String base = name.substring(name.lastIndexOf('/') + 1);
+                if (base.length() == 0) base = "pack.v4voice";
+                java.io.File out = new java.io.File(dir, base);
+                java.io.FileOutputStream fo = new java.io.FileOutputStream(out);
+                int n;
+                while ((n = zis.read(buf)) > 0) fo.write(buf, 0, n);
+                fo.close();
+                found = out;
+            }
+            if (found == null) {
+                VoicePack.Result r = new VoicePack.Result(); r.error = "压缩包里没有 .v4voice 文件"; return r;
+            }
+            return importPackUri(Uri.fromFile(found), found.getName());
+        } catch (Throwable t) {
+            VoicePack.Result r = new VoicePack.Result(); r.error = String.valueOf(t.getMessage()); return r;
+        } finally {
+            try { if (zis != null) zis.close(); else if (in != null) in.close(); } catch (Throwable ignored) { }
+            deleteRec(dir);
+        }
+    }
+
+    private void deleteRec(java.io.File f) {
+        if (f == null || !f.exists()) return;
+        java.io.File[] kids = f.listFiles();
+        if (kids != null) for (java.io.File k : kids) deleteRec(k);
+        f.delete();
+    }
+
+    /** detailed pack-import failure with one-tap copy (mirrors the UTAU wizard report) */
+    private void showImportFailure(String detail) {
+        StringBuilder b = new StringBuilder();
+        b.append(detail == null ? "未知错误" : detail).append("\n\n");
+        b.append("--- 设备信息 ---\n");
+        b.append("Android: ").append(android.os.Build.VERSION.RELEASE).append(" (SDK ").append(android.os.Build.VERSION.SDK_INT).append(")\n");
+        b.append("机型: ").append(android.os.Build.MANUFACTURER).append(" ").append(android.os.Build.MODEL).append("\n");
+        b.append("BriVoice: 8.1.1\n");
+        b.append("时间: ").append(new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(new java.util.Date())).append("\n");
+        final String report = b.toString();
+        try {
+            java.io.File dir = new java.io.File(Storage.root(this), "");
+            if (!dir.exists()) dir.mkdirs();
+            java.io.FileOutputStream fo = new java.io.FileOutputStream(new java.io.File(dir, "last_pack_error.txt"));
+            fo.write(report.getBytes("UTF-8")); fo.flush(); fo.close();
+        } catch (Throwable ignored) { }
+        TextView tv = new TextView(this);
+        tv.setText(report);
+        tv.setTextSize(12f);
+        tv.setTextIsSelectable(true);
+        tv.setPadding(dp(16), dp(8), dp(16), dp(8));
+        android.widget.ScrollView sc = new android.widget.ScrollView(this);
+        sc.addView(tv);
+        new AlertDialog.Builder(this)
+                .setTitle("声库导入失败")
+                .setView(sc)
+                .setPositiveButton("复制日志", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) {
+                        try {
+                            android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                            cm.setPrimaryClip(android.content.ClipData.newPlainText("BriVoice pack error", report));
+                            toast("日志已复制，可直接粘贴反馈");
+                        } catch (Throwable t) { toast("复制失败: " + t.getMessage()); }
+                    }
+                })
+                .setNeutralButton("从文件夹导入", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) { importPackFolder(); }
+                })
+                .setNegativeButton(L.t("dlg.cancel"), null)
+                .show();
+    }
+
     /** import one pack, returning the parse result (null when the stream could not be opened) */
     private VoicePack.Result importPackUri(Uri uri, String name) {
         java.io.InputStream in = null;
@@ -3301,7 +3414,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     });
                     return;
                 }
-                final VoicePack.Result r = importPackUri(uri, uri.getLastPathSegment());
+                final VoicePack.Result r = zipHasV4(uri)
+                        ? importPackZip(uri)
+                        : importPackUri(uri, uri.getLastPathSegment());
                 ui.post(new Runnable() {
                     public void run() {
                         try { pd.dismiss(); } catch (Throwable ignored) { }
@@ -3311,15 +3426,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         } else {
                             final String err = (r == null) ? "未知错误" : r.error;
                             status("声库导入失败: " + err);
-                            new AlertDialog.Builder(MainActivity.this)
-                                    .setTitle("导入失败")
-                                    .setMessage(err + "\n\n如果文件本身没问题，多半是系统给的文件流不完整。"
-                                            + "请改用「声库 → 从文件夹批量导入」，把 .v4voice 放进一个文件夹再选那个文件夹。")
-                                    .setPositiveButton("从文件夹导入", new DialogInterface.OnClickListener() {
-                                        public void onClick(DialogInterface d, int w) { importPackFolder(); }
-                                    })
-                                    .setNegativeButton(L.t("dlg.cancel"), null)
-                                    .show();
+                            showImportFailure(err + "\n\n如果文件本身没问题，多半是系统给的文件流不完整。"
+                                    + "可以改用「从文件夹导入」，把 .v4voice 放进一个文件夹再选那个文件夹。");
                         }
                     }
                 });
