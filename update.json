@@ -1,7 +1,7 @@
 {
-  "versionCode": 68,
-  "versionName": "8.0",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v8.0/BriVoice-8.0.apk",
-  "sha256": "804b81c78595afc3d059b9c92bdfdcdd4997737d75f491d86c117b2dd1a42ee2",
-  "notes": "release 8.0: AI panel prompt copy, editable reply JSON, user-backend cloud save; chapter tutorial; web-fast bank colour"
+  "versionCode": 69,
+  "versionName": "8.1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v8.1/BriVoice-8.1.apk",
+  "sha256": "831797ad66c9480dcb1a98a7ab515534a3d6d11e45eb5a73ddc0bfbde2575234",
+  "notes": "release 8.1: character artwork in the corner (auto white background removal, opacity/size), AI prompt/JSON/cloud, chapter tutorial"
 }

@@ -59,7 +59,7 @@ import java.util.ArrayDeque;
 public class MainActivity extends Activity implements PianoRollView.Listener {
 
     private static final int REQ_OPEN = 1001, REQ_SAVE = 1002, REQ_PACK = 1003, REQ_PACK_DIR = 1004,
-            REQ_WAV = 1005;
+            REQ_WAV = 1005, REQ_CHAR = 1007;
     private com.dsh.v4tune.io.PackStore packStore;
 
     private Song song;
@@ -144,6 +144,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private String pendingDirectId = null;
     private boolean dirty = false;
     private boolean autoSaving = false;
+    /** optional character art in the lower-left corner of the piano roll */
+    private android.widget.ImageView charView;
+    private android.widget.FrameLayout rollFrame;
+    private android.graphics.Bitmap charBitmap;
+    private int charAlpha = 190;
+    private float charSize = 0.42f;
     private android.os.Handler autoSaveHandler;
     private Runnable autoSaveTick;
 
@@ -170,6 +176,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         webSynth = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("websynth", false);
         voiceColor = getSharedPreferences("brivoice", MODE_PRIVATE).getInt("voicecolor", 0);
         followPlayhead = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("follow", true);
+        charAlpha = getSharedPreferences("brivoice", MODE_PRIVATE).getInt("charAlpha", 190);
+        charSize = getSharedPreferences("brivoice", MODE_PRIVATE).getFloat("charSize", 0.42f);
         Renderer.webSynth = webSynth;
         Renderer.voiceColor = voiceColor;
         renderAccel = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("renderaccel", true);
@@ -179,6 +187,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         song = Demo.build();
         baseline = song.copy();
         setContentView(buildUi());
+        applyCharacterFromDisk();
         refreshAll();
         scrollToContent();
         updateAiButton();          // the workspace shortcut only exists once the UI is built
@@ -280,7 +289,25 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         roll = new PianoRollView(this);
         roll.setListener(this);
         roll.setSnapTicks(snapTicks);
-        right.addView(roll, new LinearLayout.LayoutParams(
+        rollFrame = new FrameLayout(this);
+        rollFrame.addView(roll, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        charView = new android.widget.ImageView(this);
+        charView.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+        charView.setAdjustViewBounds(true);
+        charView.setClickable(false);
+        charView.setFocusable(false);
+        charView.setVisibility(View.GONE);
+        FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(dp(240), ViewGroup.LayoutParams.WRAP_CONTENT);
+        clp.gravity = Gravity.BOTTOM | Gravity.START;
+        clp.setMargins(dp(4), 0, 0, dp(4));
+        rollFrame.addView(charView, clp);
+        rollFrame.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) {
+                updateCharacterOverlay();
+            }
+        });
+        right.addView(rollFrame, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         if (zoomBox != null) zoomBox.bar.setProgress(zoomIndex());
         roll.setZoomListener(new PianoRollView.ZoomListener() {
@@ -333,6 +360,154 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 ? new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
                 : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         return root;
+    }
+
+    /** dedicated sheet so the character feature is not buried at the bottom of settings */
+    private void characterDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(8), dp(18), dp(8));
+        TextView desc = new TextView(this);
+        desc.setText("选一张图片，自动去掉白底；透明 PNG 直接使用。立绘显示在钢琴卷帘左下角。");
+        desc.setTextColor(Theme.TEXT_DIM);
+        desc.setTextSize(12.5f);
+        box.addView(desc);
+        LinearLayout btns = row();
+        Button pick = small("选择图片…");
+        Button clear = small("清除立绘");
+        btns.addView(pick); btns.addView(clear);
+        box.addView(btns);
+        final TextView alphaLabel = label("透明度 " + Math.round(charAlpha * 100f / 255f) + "%");
+        box.addView(alphaLabel);
+        final SeekBar alpha = new SeekBar(this);
+        alpha.setMax(255);
+        alpha.setProgress(Math.max(0, Math.min(255, charAlpha)));
+        alpha.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar sb, int pr, boolean u) {
+                charAlpha = pr; alphaLabel.setText("透明度 " + Math.round(charAlpha * 100f / 255f) + "%");
+                updateCharacterOverlay();
+                getSharedPreferences("brivoice", MODE_PRIVATE).edit().putInt("charAlpha", charAlpha).apply();
+            }
+            public void onStartTrackingTouch(SeekBar sb) { }
+            public void onStopTrackingTouch(SeekBar sb) { }
+        });
+        box.addView(alpha);
+        final TextView sizeLabel = label("大小 " + Math.round(charSize * 100) + "%");
+        box.addView(sizeLabel);
+        final SeekBar size = new SeekBar(this);
+        size.setMax(100);
+        size.setProgress(Math.max(0, Math.min(100, Math.round((charSize - 0.15f) / 0.60f * 100f))));
+        size.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar sb, int pr, boolean u) {
+                charSize = 0.15f + pr / 100f * 0.60f;
+                sizeLabel.setText("大小 " + Math.round(charSize * 100) + "%");
+                updateCharacterOverlay();
+                getSharedPreferences("brivoice", MODE_PRIVATE).edit().putFloat("charSize", charSize).apply();
+            }
+            public void onStartTrackingTouch(SeekBar sb) { }
+            public void onStopTrackingTouch(SeekBar sb) { }
+        });
+        box.addView(size);
+        pick.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { pickCharacter(); } });
+        clear.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { clearCharacter(); } });
+        new AlertDialog.Builder(this).setTitle("角色立绘").setView(box)
+                .setPositiveButton(L.t("dlg.ok"), null).setNegativeButton(L.t("dlg.cancel"), null).show();
+    }
+
+    /** character art stored in the app's private files, reloaded on every start */
+    private void applyCharacterFromDisk() {
+        try {
+            java.io.File f = com.dsh.v4tune.ui.CharacterArt.savedFile(this);
+            if (!f.exists()) return;
+            android.graphics.Bitmap bm = android.graphics.BitmapFactory.decodeFile(f.getAbsolutePath());
+            if (bm == null) return;
+            charBitmap = bm;
+            charView.setImageBitmap(bm);
+            charView.setVisibility(View.VISIBLE);
+            updateCharacterOverlay();
+        } catch (Throwable ignored) { }
+    }
+
+    private void updateCharacterOverlay() {
+        if (charView == null) return;
+        if (charBitmap == null) { charView.setVisibility(View.GONE); return; }
+        charView.setAlpha(Math.max(0f, Math.min(1f, charAlpha / 255f)));
+        int baseH = (rollFrame != null && rollFrame.getHeight() > 0) ? rollFrame.getHeight() : getResources().getDisplayMetrics().heightPixels;
+        int h = (int) (baseH * charSize);
+        h = Math.max(dp(60), Math.min(h, (int) (baseH * 0.92f)));
+        float ratio = (charBitmap.getHeight() > 0) ? (float) charBitmap.getWidth() / charBitmap.getHeight() : 0.7f;
+        int w = Math.max(dp(40), (int) (h * ratio));
+        ViewGroup.LayoutParams lp = charView.getLayoutParams();
+        if (lp != null && (lp.width != w || lp.height != h)) {
+            lp.width = w;
+            lp.height = h;
+            charView.setLayoutParams(lp);
+        }
+        charView.setVisibility(View.VISIBLE);
+    }
+
+    private void pickCharacter() {
+        try {
+            Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+            i.setType("image/*");
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            startActivityForResult(i, REQ_CHAR);
+        } catch (Throwable t) {
+            status("无法打开图片选择器: " + t.getMessage());
+        }
+    }
+
+    /** decode, flood-fill the white background away, keep a private PNG copy */
+    private void loadCharacter(final Uri uri) {
+        final android.app.ProgressDialog pd = new android.app.ProgressDialog(this);
+        pd.setMessage("正在处理立绘（自动去白底）…");
+        pd.setCancelable(false);
+        pd.show();
+        new Thread(new Runnable() {
+            public void run() {
+                String err = null;
+                android.graphics.Bitmap bm = null;
+                try {
+                    bm = com.dsh.v4tune.ui.CharacterArt.fromUri(MainActivity.this, uri);
+                    com.dsh.v4tune.ui.CharacterArt.savePng(MainActivity.this, bm);
+                } catch (Throwable t) {
+                    err = t.getMessage() == null ? t.toString() : t.getMessage();
+                }
+                final String fe = err;
+                final android.graphics.Bitmap fb = bm;
+                ui.post(new Runnable() {
+                    public void run() {
+                        try { pd.dismiss(); } catch (Throwable ignored) { }
+                        if (fe != null) {
+                            status("立绘处理失败: " + fe);
+                            toast("立绘处理失败: " + fe);
+                            return;
+                        }
+                        charBitmap = fb;
+                        charView.setImageBitmap(fb);
+                        charView.setVisibility(View.VISIBLE);
+                        updateCharacterOverlay();
+                        if (rollFrame != null) rollFrame.post(new Runnable() { public void run() { updateCharacterOverlay(); } });
+                        status("已更新角色立绘（自动去白底）");
+                        toast("角色立绘已更新");
+                    }
+                });
+            }
+        }, "brivoice-character").start();
+    }
+
+    private void clearCharacter() {
+        try {
+            java.io.File f = com.dsh.v4tune.ui.CharacterArt.savedFile(this);
+            if (f.exists()) f.delete();
+        } catch (Throwable ignored) { }
+        charBitmap = null;
+        if (charView != null) {
+            charView.setImageBitmap(null);
+            charView.setVisibility(View.GONE);
+        }
+        status("已清除角色立绘");
+        toast("已清除角色立绘");
     }
 
     private View transportBar(boolean vertical) {
@@ -1891,7 +2066,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 L.t("menu.tools.update"),
                 L.t("menu.tools.mkbank"),
                 L.t("menu.tools.tutorial"),
-                L.t("menu.tools.guide")
+                L.t("menu.tools.guide"),
+                "角色立绘（左下角）"
         };
         menu(L.t("menu.tools"), null, items, -1, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, int which) {
@@ -1909,7 +2085,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 else if (which == 11) checkUpdate(false);
                 else if (which == 12) com.dsh.v4tune.voicebank.VoicebankWizard.start(MainActivity.this);
                 else if (which == 13) showTutorial();
-                else showOnboarding();
+                else if (which == 14) showOnboarding();
+                else characterDialog();
             }
         });
     }
@@ -2952,7 +3129,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         super.onActivityResult(req, res, data);
         if (res != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
-        if (req == REQ_OPEN) {
+        if (req == REQ_CHAR) {
+            loadCharacter(uri);
+        } else if (req == REQ_OPEN) {
             try {
                 beginEdit();
                 song = ProjectIO.open(this, uri);
@@ -3955,6 +4134,59 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         autoDesc.setPadding(dp(4), 0, 0, dp(6));
         box.addView(autoDesc);
 
+        // optional character artwork in the lower-left corner
+        box.addView(label("角色立绘（左下角）"));
+        TextView charDesc = new TextView(this);
+        charDesc.setText("选一张图片，自动去掉白底；透明 PNG 直接使用。");
+        charDesc.setTextColor(Theme.TEXT_DIM);
+        charDesc.setTextSize(12f);
+        charDesc.setPadding(dp(4), 0, 0, dp(6));
+        box.addView(charDesc);
+        LinearLayout charBtns = row();
+        Button pickChar = small("选择图片…");
+        Button clearChar = small("清除立绘");
+        charBtns.addView(pickChar);
+        charBtns.addView(clearChar);
+        box.addView(charBtns);
+        final TextView charAlphaLabel = label("透明度 " + Math.round(charAlpha * 100f / 255f) + "%");
+        box.addView(charAlphaLabel);
+        final SeekBar charAlphaBar = new SeekBar(this);
+        charAlphaBar.setMax(255);
+        charAlphaBar.setProgress(Math.max(0, Math.min(255, charAlpha)));
+        charAlphaBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar sb, int pr, boolean u) {
+                charAlpha = pr;
+                charAlphaLabel.setText("透明度 " + Math.round(charAlpha * 100f / 255f) + "%");
+                updateCharacterOverlay();
+                getSharedPreferences("brivoice", MODE_PRIVATE).edit().putInt("charAlpha", charAlpha).apply();
+            }
+            public void onStartTrackingTouch(SeekBar sb) { }
+            public void onStopTrackingTouch(SeekBar sb) { }
+        });
+        box.addView(charAlphaBar);
+        final TextView charSizeLabel = label("大小 " + Math.round(charSize * 100) + "%");
+        box.addView(charSizeLabel);
+        final SeekBar charSizeBar = new SeekBar(this);
+        charSizeBar.setMax(100);
+        charSizeBar.setProgress(Math.max(0, Math.min(100, Math.round((charSize - 0.15f) / 0.60f * 100f))));
+        charSizeBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar sb, int pr, boolean u) {
+                charSize = 0.15f + pr / 100f * 0.60f;
+                charSizeLabel.setText("大小 " + Math.round(charSize * 100) + "%");
+                updateCharacterOverlay();
+                getSharedPreferences("brivoice", MODE_PRIVATE).edit().putFloat("charSize", charSize).apply();
+            }
+            public void onStartTrackingTouch(SeekBar sb) { }
+            public void onStopTrackingTouch(SeekBar sb) { }
+        });
+        box.addView(charSizeBar);
+        pickChar.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { pickCharacter(); }
+        });
+        clearChar.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { clearCharacter(); }
+        });
+
         // cursor delay compensation: the sound a device emits lags the picture by its output buffer
         final TextView offLabel = label(L.t("set.offset", Integer.valueOf(cursorOffsetMs)));
         box.addView(offLabel);
@@ -4030,7 +4262,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         getSharedPreferences("brivoice", MODE_PRIVATE).edit()
                                 .putBoolean("websynth", webSynth)
                                 .putInt("voicecolor", voiceColor)
-                                .putBoolean("follow", followPlayhead).apply();
+                                .putBoolean("follow", followPlayhead)
+                                .putInt("charAlpha", charAlpha)
+                                .putFloat("charSize", charSize).apply();
                         cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
                         status(autoSaveEnabled ? ("自动保存已开启，间隔 " + autoSaveSec + " 秒") : "自动保存已关闭");
                         status(webSynth ? "合成方式：网页快速（保留声库频谱色彩）" : "合成方式：声库谐波（按声库实测音色）");
