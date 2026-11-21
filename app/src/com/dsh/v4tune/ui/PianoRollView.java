@@ -4,7 +4,10 @@ import android.content.Context; import android.graphics.Canvas; import android.g
 import android.graphics.Path; import android.os.Handler; import android.os.Looper;
 import android.os.SystemClock; import android.view.MotionEvent; import android.view.View; import android.view.ViewConfiguration;
 
-import com.dsh.v4tune.model.Note; import com.dsh.v4tune.model.Part; import com.dsh.v4tune.model.Song; import com.dsh.v4tune.model.Track;
+import com.dsh.v4tune.model.ControlCurve; import com.dsh.v4tune.model.Note; import com.dsh.v4tune.model.Part;
+import com.dsh.v4tune.model.Song; import com.dsh.v4tune.model.TimeUtil; import com.dsh.v4tune.model.Track;
+
+import java.util.ArrayList; import java.util.Collections; import java.util.Comparator; import java.util.List;
 
 /**
  * Touch driven piano roll for the V4 tune editor.
@@ -95,6 +98,7 @@ public class PianoRollView extends View {
     private Paint gridP, beatP, barP, rowBlackP, rowCP, keyWhiteP, keyBlackP, keyLineP, keyTextP;
     private Paint noteP, noteEdgeP, velP, selP, playP, playFillP, lyricP, nameP, rulerP, nameBgP;
     private Paint rulerTickP, barTextP, emptyP, badgeP, badgeBgP, partEdgeP;
+    private Paint pitchP, pitchGlowP, pitchDotP, pitchDotEdgeP;   // continuous pitch curve + per-note dots
     private Paint.FontMetrics lyricFm, keyFm, rulerFm, badgeFm; private float lyricMid, keyMid, rulerMid, badgeMid;
 
     private final Path marker = new Path(); private final char[] numBuf = new char[24];
@@ -214,6 +218,14 @@ public class PianoRollView extends View {
         badgeP = Theme.textPaint(Theme.TEXT, dp(10f), true); badgeFm = badgeP.getFontMetrics();
         badgeMid = (badgeFm.ascent + badgeFm.descent) * 0.5f; badgeBgP = Theme.paint(0xE6000000, 0f, true);
         partEdgeP = Theme.dashPaint(Theme.withAlpha(Theme.ACCENT2, 0x99), Math.max(1f, density), dp(4f), dp(4f));
+        // pitch curve: warm orange stands apart from the cyan notes; glow + dots keep it readable
+        // over the dark grid without hiding the note bars underneath
+        pitchP = Theme.paint(0xFFFFB454, Math.max(1.6f, density * 1.7f), false);
+        pitchP.setStrokeCap(Paint.Cap.ROUND); pitchP.setStrokeJoin(Paint.Join.ROUND);
+        pitchGlowP = Theme.paint(0x55FFB454, Math.max(4f, density * 4.2f), false);
+        pitchGlowP.setStrokeCap(Paint.Cap.ROUND); pitchGlowP.setStrokeJoin(Paint.Join.ROUND);
+        pitchDotP = Theme.paint(0xFFFFD9A0, 0f, true);
+        pitchDotEdgeP = Theme.paint(0xCC5A3200, Math.max(1f, density), false);
     }
 
     private float dp(float v) { return v * density; }
@@ -427,6 +439,8 @@ public class PianoRollView extends View {
     private float tickAtX(float x) { return scrollTick + (x - keyW) / pxPerTick; }
 
     private float yOfKey(int k) { return rulerH + (topKey - k) * pxPerSemitone; }
+
+    private float yOfKeyF(double k) { return (float) (rulerH + (topKey - k) * pxPerSemitone); }
 
     private float keyAtY(float y) { return topKey - (y - rulerH) / pxPerSemitone; }
 
@@ -796,6 +810,154 @@ public class PianoRollView extends View {
             drawPartNotes(c, p, base, false, t0, t1, gt, gb);
         }
         if (act != null) drawPartNotes(c, act, base, true, t0, t1, gt, gb);
+        drawPitchCurves(c, t, act, t0, t1, gt, gb);
+    }
+
+    // ------------------------------------------------------------- pitch curve
+
+    /**
+     * Connects the sounding pitch of every note into one continuous line: a dot on each note at
+     * its centre plus a polyline sampled per pixel. PIT/PBS are applied the same way the renderer
+     * applies them, while the renderer-only default vibrato is deliberately left out so the line
+     * stays a readable contour instead of a fuzzy band.
+     */
+    private void drawPitchCurves(Canvas c, Track t, Part act, long t0, long t1, float gt, float gb) {
+        if (t == null) return;
+        for (int i = 0; i < t.parts.size(); i++) {
+            Part p = t.parts.get(i); if (p == act) continue;
+            drawPitchCurve(c, p, false, t0, t1, gt, gb);
+        }
+        if (act != null) drawPitchCurve(c, act, true, t0, t1, gt, gb);
+    }
+
+    private void drawPitchCurve(Canvas c, Part p, boolean active, long t0, long t1, float gt, float gb) {
+        if (p == null || p.notes.isEmpty()) return;
+        final List<Note> ns = new ArrayList<Note>(p.notes);
+        Collections.sort(ns, new Comparator<Note>() {
+            public int compare(Note a, Note b) { return Long.compare(a.pos, b.pos); }
+        });
+        long first = Long.MAX_VALUE, last = Long.MIN_VALUE;
+        for (int i = 0; i < ns.size(); i++) {
+            Note n = ns.get(i);
+            if (n.end() < t0 || n.pos > t1) continue;
+            if (n.pos < first) first = n.pos;
+            if (n.end() > last) last = n.end();
+        }
+        if (first == Long.MAX_VALUE || last <= first) return;
+        first = Math.max(first, t0); last = Math.min(last, t1);
+        if (last <= first) return;
+
+        long step = Math.max(1L, (long) Math.floor(1.0 / Math.max(0.001f, pxPerTick)));
+        int cap = (int) ((last - first) / Math.max(1L, step)) + 3;
+        float[] xs = new float[cap], ys = new float[cap];
+        int cnt = 0;
+        for (long tick = first; cnt < cap; ) {
+            xs[cnt] = xOfTick(tick);
+            ys[cnt] = yOfKeyF(pitchKeyAt(p, ns, tick));
+            cnt++;
+            if (tick >= last) break;
+            tick = Math.min(last, tick + step);
+        }
+        // soften the unavoidable jump at a note boundary: the contour glides into the next
+        // note instead of drawing a vertical wall, which is also how a sung pitch behaves
+        int rad = Math.max(1, Math.round(dp(9f) / Math.max(1f, pxPerTick * step)));
+        Path path = new Path();
+        for (int i = 0; i < cnt; i++) {
+            float sum = 0f, wsum = 0f;
+            int lo = Math.max(0, i - rad), hi = Math.min(cnt - 1, i + rad);
+            for (int j = lo; j <= hi; j++) {
+                float w = 1f - (float) Math.abs(j - i) / (rad + 1f);
+                sum += ys[j] * w; wsum += w;
+            }
+            float y = wsum <= 0f ? ys[i] : sum / wsum;
+            if (i == 0) path.moveTo(xs[i], y); else path.lineTo(xs[i], y);
+        }
+
+        int lineCol = active ? 0xFFFFB454 : 0x80FFB454;
+        int glowCol = active ? 0x55FFB454 : 0x24FFB454;
+        pitchGlowP.setColor(glowCol); pitchP.setColor(lineCol);
+        c.drawPath(path, pitchGlowP);
+        c.drawPath(path, pitchP);
+
+        if (!active) return;
+        float r = Math.max(dp(2.2f), Math.min(dp(4.2f), pxPerSemitone * 0.16f));
+        for (int i = 0; i < ns.size(); i++) {
+            Note n = ns.get(i);
+            if (n.end() < first || n.pos > last) continue;
+            long mid = n.pos + n.dur / 2L;
+            float x = xOfTick(mid);
+            float y = yOfKeyF(pitchKeyAt(p, ns, mid));
+            if (y < gt - r || y > gb + r) continue;
+            c.drawCircle(x, y, r + Math.max(1f, density), pitchDotEdgeP);
+            c.drawCircle(x, y, r, pitchDotP);
+        }
+    }
+
+    /** continuous MIDI pitch (fractional key) of the note containing absTick, or of the gap */
+    private double pitchKeyAt(Part p, List<Note> ns, long absTick) {
+        int cur = -1;
+        for (int i = 0; i < ns.size(); i++) {
+            Note n = ns.get(i);
+            if (absTick >= n.pos && absTick < n.end()) { cur = i; break; }
+        }
+        if (cur >= 0) return pitchOnNote(p, ns, cur, absTick);
+
+        int prev = -1, next = -1;
+        for (int i = 0; i < ns.size(); i++) {
+            Note n = ns.get(i);
+            if (n.end() <= absTick) prev = i;
+            if (n.pos > absTick && next < 0) { next = i; break; }
+        }
+        if (prev >= 0 && next == prev + 1) {
+            Note a = ns.get(prev), b = ns.get(next);
+            double pa = pitchOnNote(p, ns, prev, Math.max(a.pos, a.end() - 1L));
+            double pb = pitchOnNote(p, ns, next, b.pos);
+            double f = (b.pos <= a.end()) ? 1.0 : (double) (absTick - a.end()) / (double) (b.pos - a.end());
+            if (f < 0.0) f = 0.0; if (f > 1.0) f = 1.0;
+            return pa + (pb - pa) * f;
+        }
+        if (prev >= 0) { Note a = ns.get(prev); return pitchOnNote(p, ns, prev, Math.max(a.pos, a.end() - 1L)); }
+        if (next >= 0) return pitchOnNote(p, ns, next, ns.get(next).pos);
+        return ns.get(0).key;
+    }
+
+    /** pitch of one note at an absolute tick: key + POR glide + PIT/PBS bend */
+    private double pitchOnNote(Part p, List<Note> ns, int idx, long absTick) {
+        Note n = ns.get(idx);
+        long localTick = absTick - p.pos;
+        double key = n.key;
+        if (idx > 0 && absTick >= n.pos) {
+            Note prev = ns.get(idx - 1);
+            double gapSec = TimeUtil.tickToSec(song, n.pos) - TimeUtil.tickToSec(song, prev.end());
+            double porMs = param(p, "POR", localTick, 64) / 127.0 * 110.0;
+            if (gapSec <= 0.06 && porMs > 3.0) {
+                double elapsed = TimeUtil.tickToSec(song, absTick) - TimeUtil.tickToSec(song, n.pos);
+                double prog = elapsed / (porMs / 1000.0);
+                if (prog < 1.0) key = prev.key + (n.key - prev.key) * Math.max(0.0, prog);
+            }
+        }
+        double cents = (pitCents(p, n, localTick) / 8192.0) * pbsRange(p, localTick) * 100.0;
+        return key + cents / 100.0;
+    }
+
+    private static double param(Part p, String id, long tick, double dflt) {
+        ControlCurve c = p.ctrlOrNull(id);
+        if (c == null || c.isEmpty()) return dflt;
+        return c.valueAt(tick);
+    }
+
+    private static double pitCents(Part p, Note n, long localTick) {
+        ControlCurve nc = n.ctrls.get("PIT");
+        if (nc != null && !nc.isEmpty()) return nc.valueAt(localTick - n.pos);
+        ControlCurve pc = p.ctrlOrNull("PIT");
+        if (pc != null && !pc.isEmpty()) return pc.valueAt(localTick);
+        return 0.0;
+    }
+
+    private static double pbsRange(Part p, long tick) {
+        ControlCurve c = p.ctrlOrNull("PBS");
+        if (c == null || c.isEmpty()) return 2.0;
+        return Math.max(0.01, c.valueAt(tick));
     }
 
     private void drawPartNotes(Canvas c, Part p, int base, boolean active,

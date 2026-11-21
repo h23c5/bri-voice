@@ -1,7 +1,7 @@
 {
-  "versionCode": 72,
-  "versionName": "8.1.3",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v8.1.3/BriVoice-8.1.3.apk",
-  "sha256": "3ee3777752ab24c602749a59ff0e86157b72f4b3ad142ef557d8e6351fde0ca9",
-  "notes": "release 8.1.3: tolerant ZIP reader for MALFORMED[1], USTX voice_parts/lyrics, zip diagnostics"
+  "versionCode": 73,
+  "versionName": "8.2",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v8.2/BriVoice-8.2.apk",
+  "sha256": "ece9488f16d616c4485ae91f9ef9a4f00429e49adfb7ef2e93ab862b7ad8a0ca",
+  "notes": "release 8.2: per-note pitch dots and continuous pitch curve in piano roll; web piano roll synced"
 }
