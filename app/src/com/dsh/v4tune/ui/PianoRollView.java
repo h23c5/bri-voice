@@ -278,10 +278,20 @@ public class PianoRollView extends View {
 
     public int getSnapTicks() { return snapTicks; }
 
-    public void setPlayheadTick(long tick) { if (playheadTick == tick) return; playheadTick = tick;
-        if (tick >= 0L && getWidth() > keyW + 4f) { float x = xOfTick(tick); float margin = dp(28f);
+    public void setPlayheadTick(long tick) { setPlayheadTick(tick, true); }
+
+    /**
+     * Moves the playback cursor. Auto-scroll only happens when {@code follow} is set, and only when
+     * the cursor actually leaves the visible area, so a 40 Hz progress callback no longer re-centres
+     * the view (and re-zooms the parameter lane) on every single frame.
+     */
+    public void setPlayheadTick(long tick, boolean follow) { if (playheadTick == tick) return; playheadTick = tick;
+        if (follow && tick >= 0L && getWidth() > keyW + 4f) {
+            float x = xOfTick(tick); float margin = dp(28f);
             if (x < keyW + margin || x > getWidth() - margin) {
+                float before = scrollTick;
                 scrollTick = tick - (getWidth() - keyW) * 0.25f / pxPerTick; clampScroll();
+                if (scrollTick != before) notifyView();
             }
         }
         invalidate();

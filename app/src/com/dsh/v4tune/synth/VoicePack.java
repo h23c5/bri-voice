@@ -17,8 +17,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.zip.Deflater;
 import java.io.PushbackInputStream;
 import java.util.zip.ZipEntry;
@@ -879,9 +877,6 @@ public class VoicePack {
      * Nesting depth, duplicates handling and error positions are all bounded.
      */
     private static final class JsonReader {
-        private static final Pattern NUMBER =
-                Pattern.compile("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][-+]?[0-9]+)?");
-
         private final String s;
         private int i;
         private int depth;
@@ -982,7 +977,21 @@ public class VoicePack {
 
         private String string() throws IOException {
             i++;                                      // '"'
-            StringBuilder sb = new StringBuilder();
+            int start = i;
+            // Fast path: scan to the closing quote; most keys and base64 payloads have no escapes.
+            while (i < s.length()) {
+                char c = s.charAt(i);
+                if (c == '"') {
+                    String out = s.substring(start, i);
+                    i++;
+                    return out;
+                }
+                if (c == '\\') break;
+                if (c < 0x20) throw err("control character in string");
+                i++;
+            }
+            StringBuilder sb = new StringBuilder(i - start + 16);
+            sb.append(s, start, i);
             while (true) {
                 if (i >= s.length()) throw err("unterminated string");
                 char c = s.charAt(i++);
@@ -1021,12 +1030,25 @@ public class VoicePack {
         }
 
         private Double number() throws IOException {
-            Matcher mt = NUMBER.matcher(s);
-            mt.region(i, s.length());
-            if (!mt.lookingAt()) throw err("invalid value");
-            i = mt.end();
+            int start = i;
+            int n = s.length();
+            if (i < n && s.charAt(i) == '-') i++;
+            int digits = 0;
+            while (i < n && s.charAt(i) >= '0' && s.charAt(i) <= '9') { i++; digits++; }
+            if (i < n && s.charAt(i) == '.') {
+                i++;
+                while (i < n && s.charAt(i) >= '0' && s.charAt(i) <= '9') { i++; digits++; }
+            }
+            if (digits == 0) throw err("invalid value");
+            if (i < n && (s.charAt(i) == 'e' || s.charAt(i) == 'E')) {
+                i++;
+                if (i < n && (s.charAt(i) == '+' || s.charAt(i) == '-')) i++;
+                int expDigits = 0;
+                while (i < n && s.charAt(i) >= '0' && s.charAt(i) <= '9') { i++; expDigits++; }
+                if (expDigits == 0) throw err("invalid number");
+            }
             try {
-                return Double.valueOf(Double.parseDouble(mt.group()));
+                return Double.valueOf(Double.parseDouble(s.substring(start, i)));
             } catch (NumberFormatException e) {
                 throw err("invalid number");
             }

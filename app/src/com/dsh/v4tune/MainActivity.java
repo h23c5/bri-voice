@@ -150,6 +150,20 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private boolean webSynth = false;
     private int voiceColor = 0;
     private boolean followPlayhead = true;
+    /** coalesced playhead refresh: the audio callback only stores the newest frame */
+    private volatile long pendingPlayheadTick = -1L;
+    private volatile boolean playheadRefreshPosted = false;
+    private final Runnable playheadRefresh = new Runnable() {
+        public void run() {
+            playheadRefreshPosted = false;
+            long tick = pendingPlayheadTick;
+            if (tick < 0L) return;
+            if (roll != null) roll.setPlayheadTick(tick, followPlayhead);
+            if (paramView != null) paramView.setPlayheadTick(tick);
+            String text = formatTick(tick);
+            if (!text.contentEquals(posText.getText())) posText.setText(text);
+        }
+    };
     /** set while the overlap dialog re-enters playback so the check does not ask again */
     private boolean skipOverlapCheck = false;
     private boolean dirty = false;
@@ -958,6 +972,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 // measured on a 167 s song, 94 s of rendering of which roughly 47 s was redundant. One pass
                 // halves it with identical output. Short songs keep the 1 s first-chunk behaviour.
                 final boolean fullRender = renderAccel && total > com.dsh.v4tune.audio.AudioEngine.FULL_RENDER_FRAMES;
+                // The full pass is CPU bound and runs before playback starts; dropping it to background
+                // priority keeps touches and the "rendering" animation responsive on slower phones.
+                if (fullRender) android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
                 int limit = fullRender ? total : Math.min(total, Math.max(1024, cfg.sampleRate));
                 final long startedMs = System.currentTimeMillis();
                 final long lookaheadMs = 4000L;   // stay at most ~4 s ahead of the audio clock
@@ -1613,7 +1630,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     // also pick up packs the user simply dropped into BriVoice_root/voicebanks
                     File extraDir = Storage.voicebanks(MainActivity.this);
                     if (!extraDir.equals(packStore.directory())) {
-                        rs.addAll(new com.dsh.v4tune.io.PackStore(extraDir).loadAll());
+                        java.util.List<VoicePack.Result> ex = new com.dsh.v4tune.io.PackStore(extraDir).loadAll();
+                        rs.addAll(ex);
                     }
                 } catch (Throwable t) {          // OutOfMemoryError included: never lose the thread
                     err = String.valueOf(t);
@@ -2639,18 +2657,18 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         playBtn.setText(L.t("transport.stop"));
         streamProducer.start();
         engine.playStream(streamProducer, startFrame, new AudioEngine.Callback() {
-            public void onProgress(final long frame) {
-                ui.post(new Runnable() {
-                    public void run() {
-                        long tick = TimeUtil.secToTick(song, frame / 44100.0);
-                        roll.setPlayheadTick(tick);
-                        if (followPlayhead) roll.setVisibleTickRange(tick - 1920, tick + 1920 * 3);
-                        paramView.setPlayheadTick(tick);
-                        posText.setText(formatTick(tick));
-                    }
-                });
+            public void onProgress(long frame) {
+                // Keep only the newest cursor position. Posting one Runnable per audio callback (40/s)
+                // let the UI queue grow faster than it could draw: the playhead stuttered and taps on
+                // the parameter chips were delayed until playback ended.
+                pendingPlayheadTick = TimeUtil.secToTick(song, frame / 44100.0);
+                if (!playheadRefreshPosted) {
+                    playheadRefreshPosted = true;
+                    ui.postDelayed(playheadRefresh, 33L);
+                }
             }
             public void onDone() {
+                cancelPlayheadRefresh();
                 ui.post(new Runnable() {
                     public void run() {
                         playBtn.setText(L.t("transport.play"));
@@ -2663,6 +2681,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 });
             }
             public void onError(final String m) {
+                cancelPlayheadRefresh();
                 ui.post(new Runnable() {
                     public void run() {
                         // The engine has already stopped. Without this the button stayed on "stop"
@@ -2728,6 +2747,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     }
 
     private void stopPlay() {
+        cancelPlayheadRefresh();
         if (streamProducer != null) { streamProducer.cancel(); streamProducer = null; }
         long at = engine.playTick();
         engine.stop();
@@ -2738,6 +2758,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         paramView.setPlayheadTick(startTick);
         posText.setText(formatTick(startTick));
         status("已停止 · 光标停在 " + formatTick(startTick));
+    }
+
+    private void cancelPlayheadRefresh() {
+        pendingPlayheadTick = -1L;
+        playheadRefreshPosted = false;
+        ui.removeCallbacks(playheadRefresh);
     }
 
     private String formatTick(long tick) {
