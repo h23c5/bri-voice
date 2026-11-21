@@ -1,7 +1,7 @@
 {
-  "versionCode": 74,
-  "versionName": "8.2.1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v8.2.1/BriVoice-8.2.1.apk",
-  "sha256": "e5bb3b95c75c9728dc1469d919db9afd4942ed6e37a7e2acf04d1ff3b5628936",
-  "notes": "release 8.2.1: fix playback stopping mid-song / frozen playhead; songs over 12s render once before playing, stop no longer reports a false render error"
+  "versionCode": 75,
+  "versionName": "9.0",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v9.0/BriVoice-9.0.apk",
+  "sha256": "951b7e22fa93b513a2737fc12a2f766020b8775b351a615dfc9e3e69221a145b",
+  "notes": "release 9.0: XStudio .svip3 project import; on-device universal neural spectral model trained from all installed measured voicebanks, then per-singer fine-tune (.v4neural) with progress UI and enable toggle"
 }

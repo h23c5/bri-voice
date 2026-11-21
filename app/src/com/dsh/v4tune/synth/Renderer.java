@@ -151,7 +151,8 @@ public class Renderer {
         boolean nsWasSilent = true;                                  // seed the level match on entry
         final double nsCoef = 1.0 - Math.exp(-1.0 / (0.030 * fs));   // 30 ms
         final double nsXCoef = 1.0 - Math.exp(-1.0 / (0.005 * fs));  // 5 ms path switch
-        if (!webSynth && vm.harmonicFreqs != null && vm.harmonicFreqs.length > 4 && vm.harmonics.size() > 0) {
+        if (!webSynth && vm.harmonicFreqs != null && vm.harmonicFreqs.length > 4
+                && (vm.harmonics.size() > 0 || (vm.neural != null && vm.neuralEnabled))) {
             hv = new HarmonicVoice();
             ns = new NoiseShape();
             fv = new FrameVoice();
@@ -239,8 +240,17 @@ public class Renderer {
                 if (hv != null) {
                     // pick the measured band closest to the note's f0 for this phoneme (and the next one
                     // while we are inside the transition window), then blend the two spectra
-                    VoiceModel.HarmonicBand b1 = vm.bandFor(cur.sym, f0);
-                    VoiceModel.HarmonicBand b2 = (next != null) ? vm.bandFor(next.sym, f0) : null;
+                    // position inside this phoneme segment, used both by the measured frame
+                    // sequence and by the experimental neural envelope
+                    double segPos = (sg.s1 > sg.s0) ? (i - sg.s0) / (double) (sg.s1 - sg.s0) : 0.0;
+                    if (segPos < 0) segPos = 0; else if (segPos > 1) segPos = 1;
+                    VoiceModel.HarmonicBand b1 = neuralBand(vm, cur.sym, f0, pv[0], segPos);
+                    if (b1 == null) b1 = vm.bandFor(cur.sym, f0);
+                    VoiceModel.HarmonicBand b2 = null;
+                    if (next != null) {
+                        b2 = neuralBand(vm, next.sym, f0, pv[0], segPos);
+                        if (b2 == null) b2 = vm.bandFor(next.sym, f0);
+                    }
                     boolean voicedCur = isVoiced(cur);
                     double w2 = 0;
                     if (b2 != null && next != null && remain < trans) w2 = 1.0 - remain / (double) trans;
@@ -248,10 +258,6 @@ public class Renderer {
                         int len = vm.harmonicFreqs.length;
                         // BRI 0..1 (0.5 neutral) tilts the measured spectrum up to +-6 dB/oct above 1 kHz
                         double tiltDb = (pv[2] - 0.5) * 12.0 + vm.tiltBias * 6.0;
-                        // Walk the REAL frame sequence of each band across the note (the converter
-                        // stores the measured trajectory), so the timbre evolves instead of standing still.
-                        double segPos = (sg.s1 > sg.s0) ? (i - sg.s0) / (double) (sg.s1 - sg.s0) : 0.0;
-                        if (segPos < 0) segPos = 0; else if (segPos > 1) segPos = 1;
                         double[] c1 = (b1 != null) ? b1.curveAt(segPos, curveA) : null;
                         double[] c2 = (b2 != null) ? b2.curveAt(segPos, curveB) : null;
                         for (int k = 0; k < len; k++) {
@@ -834,6 +840,28 @@ public class Renderer {
         while (hi - lo > 1) { int m = (lo + hi) >>> 1; if (f[m] <= x) lo = m; else hi = m; }
         double t = Math.log(x / f[lo]) / Math.log(f[hi] / f[lo]);
         return v[lo] + (v[hi] - v[lo]) * t;
+    }
+
+    /**
+     * Experimental neural envelope: predict a full harmonic grid for a voiced phoneme. Returns
+     * null when the model is off/unknown so the caller falls back to the measured band lookup.
+     */
+    private static boolean neuralLogged;
+
+    private static VoiceModel.HarmonicBand neuralBand(VoiceModel vm, String sym, double f0,
+                                                      double dyn, double pos) {
+        if (vm.neural == null || !vm.neuralEnabled || sym == null || !vm.neural.hasSymbol(sym)) return null;
+        if (!neuralLogged) {
+            neuralLogged = true;
+            android.util.Log.i("V4Tune", "neural voice active: " + vm.id + " first=" + sym);
+        }
+        if (!isVoiced(PhonemeTable.getOrDefault(sym))) return null;
+        VoiceModel.HarmonicBand b = new VoiceModel.HarmonicBand();
+        b.f0 = f0;
+        b.dyn = dyn;
+        b.db = new double[vm.harmonicFreqs.length];
+        if (!vm.neural.predictForGrid(sym, f0, dyn, pos, vm.harmonicFreqs, b.db)) return null;
+        return b;
     }
 
     /** phoneme types that carry a measurable harmonic (pitched) spectrum */

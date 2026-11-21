@@ -45,6 +45,7 @@ import com.dsh.v4tune.model.Part;
 import com.dsh.v4tune.model.Song;
 import com.dsh.v4tune.model.TimeUtil;
 import com.dsh.v4tune.phoneme.ChineseG2P;
+import com.dsh.v4tune.synth.NeuralSpectrum;
 import com.dsh.v4tune.synth.Renderer;
 import com.dsh.v4tune.synth.SingerLibrary;
 import com.dsh.v4tune.synth.VoiceModel;
@@ -74,6 +75,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private Button aiBtn;
     /** live result line inside the AI quick sheet (so failures are visible without closing it) */
     private TextView quickAiResult;
+    /** settings widgets for the experimental neural voicebank (updated after training) */
+    private CheckBox neuralChk;
+    private TextView neuralDesc;
+    private TextView neuralDialogStatus;
+    private NeuralSpectrum universalNeural;
+    private boolean universalNeuralTried;
 
     /** keeps a note phoneme when its lyric is edited; off unless enabled in settings */
     private boolean phonemeLock;
@@ -141,6 +148,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private boolean webSynth = false;
     private int voiceColor = 0;
     private boolean followPlayhead = true;
+    /** set while the overlap dialog re-enters playback so the check does not ask again */
+    private boolean skipOverlapCheck = false;
     private String pendingDirectId = null;
     private boolean dirty = false;
     private boolean autoSaving = false;
@@ -1314,9 +1323,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         java.util.List<VoiceModel> all = SingerLibrary.all();
         if (all.isEmpty()) { currentVoice = null; return; }
         for (VoiceModel v : all) {
-            if (currentVoice != null && v.id != null && v.id.equals(currentVoice.id)) return;
+            if (currentVoice != null && v.id != null && v.id.equals(currentVoice.id)) { attachNeural(v); return; }
         }
         currentVoice = all.get(0);
+        attachNeural(currentVoice);
         Part p = currentPart();
         if (p != null) applyVoiceToPart(currentVoice);
     }
@@ -1385,6 +1395,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         public void run() {
                             beginEdit();
                             currentVoice = v;
+                            attachNeural(currentVoice);
                             applyVoiceToPart(currentVoice);
                             cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
                             commitEdit();
@@ -1618,6 +1629,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             VoiceModel direct = SingerLibrary.byId(pendingDirectId);
             if (direct != null) {
                 currentVoice = direct;
+                attachNeural(currentVoice);
                 Part dp = currentPart();
                 if (dp != null) applyVoiceToPart(direct);
                 cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
@@ -2072,7 +2084,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 L.t("menu.tools.mkbank"),
                 L.t("menu.tools.tutorial"),
                 L.t("menu.tools.guide"),
-                "角色立绘（左下角）"
+                "角色立绘（左下角）",
+                "神经声学模型（v9.0）"
         };
         menu(L.t("menu.tools"), null, items, -1, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, int which) {
@@ -2091,7 +2104,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 else if (which == 12) com.dsh.v4tune.voicebank.VoicebankWizard.start(MainActivity.this);
                 else if (which == 13) showTutorial();
                 else if (which == 14) showOnboarding();
-                else characterDialog();
+                else if (which == 15) characterDialog();
+                else neuralDialog();
             }
         });
     }
@@ -2133,8 +2147,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             status("请先把窗口转成横屏或竖屏再试"); return;
         }
         com.dsh.v4tune.ui.OnboardingOverlay.Step[] steps = new com.dsh.v4tune.ui.OnboardingOverlay.Step[]{
-                new com.dsh.v4tune.ui.OnboardingOverlay.Step(newBtn, "1. 新建工程", "点这里从空白开始；也可以点「打开」导入 .vsqx / .ustx / .ust。"),
-                new com.dsh.v4tune.ui.OnboardingOverlay.Step(openBtn, "2. 打开工程", "支持 VOCALOID4 .vsqx、OpenUtau .ustx、UTAU .ust。"),
+                new com.dsh.v4tune.ui.OnboardingOverlay.Step(newBtn, "1. 新建工程", "点这里从空白开始；也可以点「打开」导入 .vsqx / .ustx / .ust / .svip3。"),
+                new com.dsh.v4tune.ui.OnboardingOverlay.Step(openBtn, "2. 打开工程", "支持 VOCALOID4 .vsqx、OpenUtau .ustx、UTAU .ust、XStudio .svip3。"),
                 new com.dsh.v4tune.ui.OnboardingOverlay.Step(packBtn, "3. 导入声库", "先装一个声库：.v4voice，或菜单里的「导入 UTAU 声库」支持 oto.ini 文件夹和 zip。"),
                 new com.dsh.v4tune.ui.OnboardingOverlay.Step(playBtn, "4. 试听", "点播放边渲边播；再点一次停止。参数和音符编辑后会自动保存。"),
                 new com.dsh.v4tune.ui.OnboardingOverlay.Step(exportBtn, "5. 导出 WAV", "满意后导出 44.1kHz WAV，文件在 BriVoice_root/export。"),
@@ -2622,7 +2636,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private void playSong() {
         if (engine.isPlaying()) { stopPlay(); return; }
         if (!requireVoice()) return;
-        if (!checkBeforePlay()) return;        // overlapping notes: ask before making a sound
+        if (!skipOverlapCheck && !checkBeforePlay()) return; // overlapping notes: ask before making a sound
         ensureMixerTracks();
         engine.mixer = mixer;
         final VoiceModel vm = currentVoice;
@@ -2977,7 +2991,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     public void onClick(DialogInterface d, int w) { jumpToIssue(is.get(0)); }
                 })
                 .setNegativeButton(L.t("dlg.overlap.playany"), new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface d, int w) { playSong(); }
+                    public void onClick(DialogInterface d, int w) {
+                        // playSong() checks again by default, which used to just reopen this dialog
+                        skipOverlapCheck = true;
+                        try { playSong(); } finally { skipOverlapCheck = false; }
+                    }
                 })
                 .show();
         return false;
@@ -3124,7 +3142,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     && !android.os.Environment.isExternalStorageManager();
             new AlertDialog.Builder(this)
                     .setTitle("无法打开这个文件")
-                    .setMessage(String.valueOf(e.getMessage()) + "\n\n支持：.vsqx / .vsq 工程、.mid 导入、.v4voice 声库")
+                    .setMessage(String.valueOf(e.getMessage()) + "\n\n支持：.vsqx / .vsq / .svip3 工程、.mid 导入、.v4voice 声库")
                     .setPositiveButton(canAskAllFiles ? "授予文件访问权限" : "好",
                             new DialogInterface.OnClickListener() {
                                 public void onClick(DialogInterface d, int w) {
@@ -3150,7 +3168,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 commitEdit();
                 currentUri = uri;
                 String last = uri.getLastPathSegment();
-                projectName = last == null ? "未命名" : last.replace(".vsqx", "");
+                projectName = last == null ? "未命名" : last.replaceAll("\\.[A-Za-z0-9]+$", "");
                 trackIndex = 0;
                 refreshAll();
                 scrollToContent();
@@ -4135,7 +4153,373 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
     // ------------------------------------------------------------------ settings
 
-    /** the settings sheet; the phoneme lock lives here and is OFF by default */
+    // ------------------------------------------------------------- neural acoustic model (v9.0)
+
+    /** directory holding the optional .v4neural models; one universal + one per singer */
+    private File neuralDir() {
+        File dir = new File(getFilesDir(), "neural");
+        if (!dir.isDirectory()) dir.mkdirs();
+        return dir;
+    }
+
+    /** stable, filesystem-safe id used for the optional neural model of a voicebank */
+    private String neuralKey(VoiceModel vm) {
+        String id = (vm == null || vm.id == null || vm.id.trim().isEmpty()) ? "voice" : vm.id.trim();
+        return id.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    private File neuralFile(VoiceModel vm) {
+        return new File(neuralDir(), neuralKey(vm) + ".v4neural");
+    }
+
+    private File universalNeuralFile() {
+        return new File(neuralDir(), "_universal.v4neural");
+    }
+
+    /** load the shared universal prior once (it is a few dozen KB) */
+    private NeuralSpectrum ensureUniversalNeural() {
+        if (!universalNeuralTried) {
+            universalNeuralTried = true;
+            File f = universalNeuralFile();
+            if (f.isFile()) {
+                try {
+                    universalNeural = NeuralSpectrum.load(f);
+                } catch (Throwable t) {
+                    android.util.Log.w("V4Tune", "universal neural load failed: " + t);
+                }
+            }
+        }
+        return universalNeural;
+    }
+
+    private void saveNeuralEnabled(VoiceModel vm, boolean on) {
+        getSharedPreferences("brivoice", MODE_PRIVATE).edit()
+                .putBoolean("neuralOn_" + neuralKey(vm), on).apply();
+    }
+
+    /** load the per-singer model, else use the universal prior, then restore the on/off state */
+    private void attachNeural(VoiceModel vm) {
+        if (vm == null) return;
+        if (vm.neural == null) {
+            File f = neuralFile(vm);
+            if (f.isFile()) {
+                try {
+                    vm.neural = NeuralSpectrum.load(f);
+                    vm.neuralFromUniversal = false;
+                } catch (Throwable t) {
+                    android.util.Log.w("V4Tune", "neural load failed: " + t);
+                }
+            }
+        }
+        if (vm.neural == null) {
+            NeuralSpectrum u = ensureUniversalNeural();
+            if (u != null) {
+                vm.neural = u;
+                vm.neuralFromUniversal = true;
+            }
+        }
+        vm.neuralEnabled = vm.neural != null
+                && getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("neuralOn_" + neuralKey(vm), false);
+    }
+
+    /** every installed voicebank that actually carries measured harmonic frames */
+    private java.util.List<VoiceModel> neuralBanks() {
+        java.util.ArrayList<VoiceModel> out = new java.util.ArrayList<VoiceModel>();
+        java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<String>();
+        for (VoiceModel vm : SingerLibrary.all()) {
+            if (vm == null || vm.harmonicFreqs == null || vm.harmonicFreqs.length < 4
+                    || vm.harmonics == null || vm.harmonics.isEmpty()) continue;
+            String key = (vm.id == null || vm.id.isEmpty()) ? vm.name : vm.id;
+            if (key == null || !seen.add(key)) continue;
+            out.add(vm);
+        }
+        return out;
+    }
+
+    private String neuralStatusText() {
+        StringBuilder b = new StringBuilder();
+        NeuralSpectrum u = ensureUniversalNeural();
+        b.append("通用模型：");
+        if (u == null) b.append("未训练");
+        else b.append(u.describe());
+        b.append('\n').append("当前歌手：");
+        if (currentVoice == null) {
+            b.append("未选择");
+        } else if (currentVoice.neural == null) {
+            b.append("未训练");
+        } else {
+            b.append(currentVoice.neuralFromUniversal ? "通用模型（尚未微调）" : "已微调");
+            b.append(" · ").append(currentVoice.neural.describe());
+        }
+        return b.toString();
+    }
+
+    private void refreshNeuralWidgets() {
+        String text = neuralStatusText();
+        if (neuralDesc != null) neuralDesc.setText(text);
+        if (neuralDialogStatus != null) neuralDialogStatus.setText(text);
+        if (neuralChk != null) {
+            boolean usable = currentVoice != null && currentVoice.neural != null;
+            neuralChk.setEnabled(usable);
+            neuralChk.setChecked(usable && currentVoice.neuralEnabled);
+        }
+    }
+
+    private android.app.ProgressDialog neuralProgress(String title) {
+        android.app.ProgressDialog pd = new android.app.ProgressDialog(this);
+        pd.setTitle(title);
+        pd.setMessage("准备频谱数据…");
+        pd.setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL);
+        pd.setMax(100);
+        pd.setCancelable(false);
+        pd.show();
+        return pd;
+    }
+
+    private void clearRenderCache() {
+        cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
+    }
+
+    /** Step 1: learn the shared spectral rules of every installed measured voicebank. */
+    private void trainUniversalNeural() {
+        final android.app.ProgressDialog pd = neuralProgress("训练通用神经模型");
+        new Thread(new Runnable() {
+            public void run() {
+                try {
+                    java.util.List<VoiceModel> banks = neuralBanks();
+                    if (banks.isEmpty()) throw new java.io.IOException("没有可用的实测声库");
+                    final NeuralSpectrum model = NeuralSpectrum.trainUniversal(banks,
+                            new NeuralSpectrum.Progress() {
+                                public void onProgress(final int percent, final String message) {
+                                    runOnUiThread(new Runnable() {
+                                        public void run() {
+                                            pd.setProgress(percent);
+                                            pd.setMessage(message);
+                                        }
+                                    });
+                                }
+                            });
+                    final File f = universalNeuralFile();
+                    model.save(f);
+                    final boolean currentWasUniversal = currentVoice == null || currentVoice.neural == null
+                            || currentVoice.neuralFromUniversal;
+                    runOnUiThread(new Runnable() {
+                        public void run() {
+                            pd.dismiss();
+                            universalNeural = model;
+                            universalNeuralTried = true;
+                            for (VoiceModel m : SingerLibrary.all()) {
+                                if (m.neural == null || m.neuralFromUniversal) {
+                                    m.neural = model;
+                                    m.neuralFromUniversal = true;
+                                }
+                            }
+                            if (currentWasUniversal && currentVoice != null) {
+                                currentVoice.neuralEnabled = true;
+                                saveNeuralEnabled(currentVoice, true);
+                            }
+                            clearRenderCache();
+                            refreshNeuralWidgets();
+                            toast("通用模型已训练：" + model.describe());
+                            status("通用神经模型已训练并应用：" + model.describe());
+                        }
+                    });
+                } catch (final Throwable t) {
+                    android.util.Log.e("V4Tune", "universal neural train failed", t);
+                    runOnUiThread(new Runnable() {
+                        public void run() {
+                            pd.dismiss();
+                            toast("通用模型训练失败：" + t.getMessage());
+                            status("通用模型训练失败：" + t.getMessage());
+                        }
+                    });
+                }
+            }
+        }, "neural-universal").start();
+    }
+
+    /**
+     * Step 2: fine-tune the universal prior on the current singer. If no prior exists yet it is
+     * trained first, so the button always produces a usable per-singer model.
+     */
+    private void fineTuneNeural() {
+        final VoiceModel vm = currentVoice;
+        if (vm == null) { toast("先安装并选择一个声库"); return; }
+        final android.app.ProgressDialog pd = neuralProgress("微调神经声学模型");
+        new Thread(new Runnable() {
+            public void run() {
+                try {
+                    final NeuralSpectrum prior;
+                    NeuralSpectrum existing = ensureUniversalNeural();
+                    if (existing == null) {
+                        java.util.List<VoiceModel> banks = neuralBanks();
+                        if (banks.isEmpty()) throw new java.io.IOException("没有可用的实测声库");
+                        existing = NeuralSpectrum.trainUniversal(banks, new NeuralSpectrum.Progress() {
+                            public void onProgress(final int percent, final String message) {
+                                runOnUiThread(new Runnable() {
+                                    public void run() {
+                                        pd.setProgress(Math.max(1, percent / 3));
+                                        pd.setMessage("① 通用模型 · " + message);
+                                    }
+                                });
+                            }
+                        });
+                        existing.save(universalNeuralFile());
+                    }
+                    prior = existing;
+                    final NeuralSpectrum tuned = NeuralSpectrum.fineTune(prior, vm,
+                            new NeuralSpectrum.Progress() {
+                                public void onProgress(final int percent, final String message) {
+                                    runOnUiThread(new Runnable() {
+                                        public void run() {
+                                            pd.setProgress(35 + Math.max(1, percent * 63 / 100));
+                                            pd.setMessage("② 微调 " + vm.name + " · " + message);
+                                        }
+                                    });
+                                }
+                            });
+                    final File f = neuralFile(vm);
+                    tuned.save(f);
+                    runOnUiThread(new Runnable() {
+                        public void run() {
+                            pd.dismiss();
+                            universalNeural = prior;
+                            universalNeuralTried = true;
+                            for (VoiceModel m : SingerLibrary.all()) {
+                                if (m.neural == null || m.neuralFromUniversal) {
+                                    m.neural = prior;
+                                    m.neuralFromUniversal = true;
+                                }
+                            }
+                            vm.neural = tuned;
+                            vm.neuralFromUniversal = false;
+                            vm.neuralEnabled = true;
+                            saveNeuralEnabled(vm, true);
+                            clearRenderCache();
+                            refreshNeuralWidgets();
+                            toast("微调完成：" + f.getName() + "（" + Math.max(1, f.length() / 1024) + " KB）");
+                            status("神经声学模型已微调并启用：" + vm.name + " · " + tuned.describe());
+                        }
+                    });
+                } catch (final Throwable t) {
+                    android.util.Log.e("V4Tune", "neural fine-tune failed", t);
+                    runOnUiThread(new Runnable() {
+                        public void run() {
+                            pd.dismiss();
+                            toast("微调失败：" + t.getMessage());
+                            status("神经声学模型微调失败：" + t.getMessage());
+                        }
+                    });
+                }
+            }
+        }, "neural-finetune").start();
+    }
+
+    private void deleteCurrentNeural() {
+        if (currentVoice == null) return;
+        File nf = neuralFile(currentVoice);
+        if (nf.isFile()) nf.delete();
+        currentVoice.neural = null;
+        currentVoice.neuralFromUniversal = false;
+        currentVoice.neuralEnabled = false;
+        saveNeuralEnabled(currentVoice, false);
+        clearRenderCache();
+        refreshNeuralWidgets();
+        toast("已删除当前歌手的神经模型");
+        status("已删除当前歌手的神经模型");
+    }
+
+    private void deleteUniversalNeural() {
+        File f = universalNeuralFile();
+        if (f.isFile()) f.delete();
+        universalNeural = null;
+        universalNeuralTried = true;
+        for (VoiceModel m : SingerLibrary.all()) {
+            if (m.neuralFromUniversal) {
+                m.neural = null;
+                m.neuralFromUniversal = false;
+                m.neuralEnabled = false;
+                saveNeuralEnabled(m, false);
+            }
+        }
+        clearRenderCache();
+        refreshNeuralWidgets();
+        toast("已删除通用模型");
+        status("已删除通用神经模型");
+    }
+
+    /** dedicated sheet: train the universal prior, fine-tune the current singer, then enable it */
+    private void neuralDialog() {
+        ensureUniversalNeural();
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(6), dp(18), dp(6));
+
+        TextView help = new TextView(this);
+        help.setText("① 用本机所有声库学习通用频谱规律（只读 .v4voice 已测谐波，不读音频采样）\n"
+                + "② 选一个歌手微调，得到该歌手的神经声学模型\n"
+                + "合成的其余部分仍由现有引擎完成，这是频谱模型，不是 XStudio 级别的声音克隆。");
+        help.setTextColor(Theme.TEXT_DIM);
+        help.setTextSize(12f);
+        box.addView(help);
+
+        neuralDialogStatus = new TextView(this);
+        neuralDialogStatus.setTextSize(13f);
+        neuralDialogStatus.setPadding(dp(2), dp(8), dp(2), dp(8));
+        box.addView(neuralDialogStatus);
+
+        LinearLayout row1 = row();
+        Button bUniv = small("训练通用模型");
+        Button bFine = small("微调当前歌手");
+        row1.addView(bUniv);
+        row1.addView(bFine);
+        box.addView(row1);
+
+        LinearLayout row2 = row();
+        Button bDelCur = small("删除当前模型");
+        Button bDelUniv = small("删除通用模型");
+        row2.addView(bDelCur);
+        row2.addView(bDelUniv);
+        box.addView(row2);
+
+        final CheckBox enable = new CheckBox(this);
+        neuralChk = enable;
+        enable.setText("启用神经频谱（当前歌手）");
+        enable.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                if (currentVoice == null) return;
+                if (on && currentVoice.neural == null) {
+                    NeuralSpectrum u = ensureUniversalNeural();
+                    if (u != null) { currentVoice.neural = u; currentVoice.neuralFromUniversal = true; }
+                }
+                currentVoice.neuralEnabled = on && currentVoice.neural != null;
+                saveNeuralEnabled(currentVoice, currentVoice.neuralEnabled);
+                clearRenderCache();
+            }
+        });
+        box.addView(enable);
+
+        bUniv.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { trainUniversalNeural(); }
+        });
+        bFine.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { fineTuneNeural(); }
+        });
+        bDelCur.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { deleteCurrentNeural(); }
+        });
+        bDelUniv.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { deleteUniversalNeural(); }
+        });
+
+        refreshNeuralWidgets();
+        new AlertDialog.Builder(this)
+                .setTitle("神经声学模型（v9.0）")
+                .setView(box)
+                .setNegativeButton("关闭", null)
+                .show();
+    }
+
     private void settingsDialog() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -4306,6 +4690,22 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         clearChar.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { clearCharacter(); }
         });
+
+        // neural acoustic model: universal prior + optional per-singer fine-tune
+        box.addView(label("神经声学模型（v9.0）"));
+        neuralChk = null;
+        TextView nnDesc = new TextView(this);
+        neuralDesc = nnDesc;
+        nnDesc.setText(neuralStatusText());
+        nnDesc.setTextColor(Theme.TEXT_DIM);
+        nnDesc.setTextSize(12f);
+        nnDesc.setPadding(dp(4), 0, 0, dp(6));
+        box.addView(nnDesc);
+        Button nnOpen = small("打开神经声学模型设置…");
+        nnOpen.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { neuralDialog(); }
+        });
+        box.addView(nnOpen);
 
         // cursor delay compensation: the sound a device emits lags the picture by its output buffer
         final TextView offLabel = label(L.t("set.offset", Integer.valueOf(cursorOffsetMs)));

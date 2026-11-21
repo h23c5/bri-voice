@@ -107,6 +107,13 @@ public class VoiceModel {
         }
     }
 
+    /** optional experimental neural spectral model trained on this pack's measured harmonics */
+    public NeuralSpectrum neural;
+    /** when true and {@link #neural} is loaded, the renderer uses predicted envelopes */
+    public boolean neuralEnabled;
+    /** true when {@link #neural} is the shared universal model rather than a fine-tuned one */
+    public boolean neuralFromUniversal;
+
     /** optional measured fricative noise spectra (same grid as harmonicFreqs) */
     public double[] noiseFreqs = new double[0];
     public final LinkedHashMap<String, double[]> noiseDb = new LinkedHashMap<String, double[]>();

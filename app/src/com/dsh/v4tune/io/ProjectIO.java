@@ -7,6 +7,7 @@ import android.net.Uri;
 import com.dsh.v4tune.audio.AudioEngine;
 import com.dsh.v4tune.format.VsqxReader;
 import com.dsh.v4tune.format.VsqxWriter;
+import com.dsh.v4tune.format.XStudioReader;
 import com.dsh.v4tune.model.Song;
 
 import java.io.File;
@@ -75,7 +76,12 @@ public class ProjectIO {
             if (data.length > 14 && data[0] == 'M' && data[1] == 'T' && data[2] == 'h' && data[3] == 'd') {
                 return com.dsh.v4tune.format.MidiReader.read(new java.io.ByteArrayInputStream(data));
             }
-            throw new Exception("不支持的文件格式（支持 .vsqx / .vsq / .mid / .ust / .ustx）");
+            // NetEase XStudio .svip3 is a binary protobuf; it has to be checked after the text
+            // sniffers but before the generic "unsupported" error.
+            if (XStudioReader.looksLike(data)) {
+                return XStudioReader.read(data);
+            }
+            throw new Exception("不支持的文件格式（支持 .vsqx / .vsq / .mid / .ust / .ustx / .svip3）");
         } finally {
             try { in.close(); } catch (Exception ignored) {}
         }
