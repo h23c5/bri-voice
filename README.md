@@ -1,6 +1,6 @@
 # BriVoice · Android 歌声合成 / 调音
 
-以本机安装的 **VOCALOID4 Editor** 为蓝本实现的安卓歌声合成与调音软件。本体不内置任何音色，所有音色来自外部声库（.v4voice）。
+以本机安装的 **VOCALOID4 Editor** 为蓝本实现的安卓歌声合成与调音软件。本体不内置任何音色，所有音色来自外部声库（.v4voice 标准声库 / .v4neural 神经声库）。
 
 纯 Java 8 + 原生 Android 框架编写，不依赖 Gradle / AndroidX / 任何第三方库，直接调用 aapt2 / javac / d8 / zipalign / apksigner 打包成 APK。
 
@@ -15,8 +15,8 @@
 要点速览：
 
 1. 声库是**文件夹**（含 `.ddb` / `.ddi` / `.vvd`），整个拷到手机，如 `/sdcard/VoiceDB/BK8H76TAEHXWSKDB/`
-2. 工具菜单 →「制作声库」→ 填**文件夹路径** + 名称 → 开始转换（PC 约 20 秒，手机几分钟）
-3. 产出在 `/sdcard/BriVoice_root/voicebanks/<名称>.v4voice`，应用自动识别，可直接试听
+2. 工具菜单 →「制作声库」→ 选类型（标准 `.v4voice` / 神经 `.v4neural`）→ 填**文件夹路径** + 名称 → 开始转换（PC 约 20 秒，手机几分钟）
+3. 产出在 `/sdcard/BriVoice_root/voicebanks/<名称>.v4voice` 或 `.v4neural`；到「声库 → 从文件夹批量导入」导入后使用
 4. 包内只有**测量统计量**（谐波包络 / 共振峰 / 辅音噪声谱 / 帧序列），**不含任何原始录音**，全程离线
 5. 测不到的就不写（不编造）：帧数不足 40 的音素不生成曲线；摩擦音素材少的声库只会命名 1~2 个辅音
 
@@ -72,15 +72,15 @@ python tools/build_apk.py
 
 ## 五、添加声库
 
-应用支持导入外部 .v4voice 声库包：
+应用支持导入外部 .v4voice / .v4neural 声库包；两种都通过「声库 → 导入声库文件」或「从文件夹批量导入」进入：
 
 1. 在电脑上运行转换工具生成声库包：
    ```powershell
    python tools/voicebank_pack.py --bank "E:\你的声库目录" --out build/voicepacks/my_bank.v4voice
    ```
 
-2. 把生成的 .v4voice 文件传进手机
-3. 在应用内「声库 → 导入声库文件」选中该文件
+2. 把生成的 .v4voice / .v4neural 文件传进手机
+3. 在应用内「声库 → 导入声库文件」选中该文件，或放进同一文件夹后「从文件夹批量导入」
 
 ---
 
