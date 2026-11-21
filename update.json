@@ -1,7 +1,7 @@
 {
-  "versionCode": 73,
-  "versionName": "8.2",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v8.2/BriVoice-8.2.apk",
-  "sha256": "ece9488f16d616c4485ae91f9ef9a4f00429e49adfb7ef2e93ab862b7ad8a0ca",
-  "notes": "release 8.2: per-note pitch dots and continuous pitch curve in piano roll; web piano roll synced"
+  "versionCode": 74,
+  "versionName": "8.2.1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v8.2.1/BriVoice-8.2.1.apk",
+  "sha256": "e5bb3b95c75c9728dc1469d919db9afd4942ed6e37a7e2acf04d1ff3b5628936",
+  "notes": "release 8.2.1: fix playback stopping mid-song / frozen playhead; songs over 12s render once before playing, stop no longer reports a false render error"
 }

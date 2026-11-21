@@ -293,9 +293,14 @@ public class AudioEngine {
 
     // ------------------------------------------------------- streaming playback
 
-    /** a song that keeps being rendered while it is already playing */
-    /** Songs past this many frames are rendered to the end before the track starts. */
-    public static final int FULL_RENDER_FRAMES = 44100 * 60;
+    /**
+     * Songs past this many frames are rendered to the end before the track starts. Streaming is
+     * only safe while the whole remaining render fits into the track buffer: the doubling renderer
+     * regularly needs more than four seconds for the next slice, and a 17 s song was measured
+     * running dry for ~4 s after its 8 s slice (AudioFlinger BUFFER TIMEOUT, frozen playhead).
+     * Twelve seconds keeps the tiny projects streaming and gives everything longer one clean pass.
+     */
+    public static final int FULL_RENDER_FRAMES = 44100 * 12;
 
     /**
      * Render progress, reported separately from onProgress: onProgress means "the playhead is here"
@@ -343,6 +348,13 @@ public class AudioEngine {
         final short[] inter = new short[bufFrames * 2];
         final int minBuf = AudioTrack.getMinBufferSize(sr, AudioFormat.CHANNEL_OUT_STEREO,
                 AudioFormat.ENCODING_PCM_16BIT);
+        // A 8192-frame buffer is only ~186 ms: the doubling renderer regularly needs several
+        // seconds for the next slice, so the track ran dry and AudioFlinger removed it
+        // ("BUFFER TIMEOUT"), after which write() returned 0 and the UI stayed on "playing".
+        // Three seconds of cushion plus a pre-buffer before play() keeps the track fed.
+        final int bufferBytes = Math.max(minBuf, sr * 3 * 4);
+        final int prebufferFrames = Math.min(total, sr * 2);
+        final long start = Math.max(0L, Math.min(startFrame, total - 1L));
         final AudioTrack at = new AudioTrack.Builder()
                 .setAudioAttributes(new AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -353,7 +365,7 @@ public class AudioEngine {
                         .setSampleRate(sr)
                         .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
                         .build())
-                .setBufferSizeInBytes(Math.max(minBuf, bufFrames * 4))
+                .setBufferSizeInBytes(bufferBytes)
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .build();
         applyPreferredDevice(at);
@@ -371,8 +383,8 @@ public class AudioEngine {
                     // every round costs more than the audio it adds (measured on a 2:47 song: 16 s of audio
                     // took 19.7 s to render). Streaming from the first second therefore fell further behind the
                     // longer the song ran and the tail was never rendered - the last notes never sounded.
-                    // Waiting here costs exactly one render pass and keeps playback smooth; short songs are
-                    // unaffected and still start after about a second.
+                    // Waiting here costs exactly one render pass and keeps playback smooth; only projects
+                    // shorter than FULL_RENDER_FRAMES still stream from the first second.
                     if (total > FULL_RENDER_FRAMES) {
                         long shown = -1;
                         while (playing && !src.finished()) {
@@ -382,12 +394,26 @@ public class AudioEngine {
                         }
                         if (!playing) { try { at.release(); } catch (Throwable ignored) { } return; }
                     }
+                    // Never start the track while it is still silent. For a resume in the middle of
+                    // the song the producer restarts at frame 0, so the old code called play() and
+                    // then wrote nothing for several seconds; AudioFlinger removed that track before
+                    // the first sample. Wait for two seconds of audio (or the whole short song) while
+                    // the track is still stopped.
+                    final long needReady = Math.min(total, start + prebufferFrames);
+                    while (playing && src.ready() < needReady && !src.finished()) {
+                        try { Thread.sleep(20); } catch (InterruptedException ignored) { }
+                    }
+                    if (!playing) return;
+                    if (src.ready() <= start) {
+                        if (cb != null) cb.onError("渲染失败：音频数据未就绪");
+                        return;
+                    }
                     at.play();
-                    final long start = Math.max(0L, Math.min(startFrame, total - 1));
                     wallStart = System.currentTimeMillis();
                     int pos = (int) start;
                     long lastCb = 0;
                     long waitedMs = 0;
+                    boolean writeFailed = false;
                     while (playing && pos < total) {
                         int ready = src.ready();
                         boolean done = src.finished();
@@ -406,7 +432,14 @@ public class AudioEngine {
                             inter[i * 2 + 1] = (short) (rr * 32000);
                         }
                         int written = at.write(inter, 0, cnt * 2);
-                        if (written <= 0) break;
+                        if (written <= 0) {
+                            // The output track is gone (usually removed after an underrun). Do not
+                            // just fall out of the loop: that left the UI on "playing" forever.
+                            android.util.Log.e("V4Tune", "playStream write failed: session=" + session
+                                    + " pos=" + pos + " written=" + written);
+                            writeFailed = true;
+                            break;
+                        }
                         pos += Math.min(cnt, written / 2);
                         long now = System.currentTimeMillis();
                         if (cb != null && now - lastCb > 100) {
@@ -422,8 +455,23 @@ public class AudioEngine {
                         }
                     }
                     android.util.Log.i("V4Tune", "playStream writer done: session=" + session
-                            + " pos=" + pos + " waitedMs=" + waitedMs);
+                            + " pos=" + pos + " waitedMs=" + waitedMs + " failed=" + writeFailed);
+                    if (writeFailed) {
+                        if (playing && cb != null) cb.onError("音频输出中断，已停止");
+                        return;
+                    }
+                    // Only an unexpected end while playback is still wanted is an error. A user stop
+                    // also leaves pos short of total, and with a cache hit src.finished() is already
+                    // true, which made every stop report "渲染中断，音频不完整".
+                    if (playing && pos < total && src.finished()) {
+                        android.util.Log.e("V4Tune", "playStream render ended early: session=" + session
+                                + " pos=" + pos + " total=" + total);
+                        if (playing && cb != null) cb.onError("渲染中断，音频不完整");
+                        return;
+                    }
                     final long startMs = wallStart;
+                    long lastHeard = start;
+                    long lastMove = System.currentTimeMillis();
                     while (playing) {
                         long elapsed = System.currentTimeMillis() - startMs;
                         // Playback must end when the audio track has actually played the song, not when
@@ -434,23 +482,34 @@ public class AudioEngine {
                         // the clock only as a fallback plus a hard ceiling so this can never hang.
                         long head = 0;
                         try { head = at.getPlaybackHeadPosition(); } catch (Throwable ignored) { }
-                        long byClock = (long) (elapsed * sr / 1000.0);
+                        long now = System.currentTimeMillis();
+                        long byClock = start + (long) (elapsed * sr / 1000.0);
                         long heard = (head > 0) ? (start + head) : byClock;
                         heard -= (long) (cursorOffsetMs * sr / 1000.0);
-                        if (heard >= total - start) break;
-                        if (elapsed > (long) ((total - start) * 1000.0 / sr) + 8000L) break;;
-                        if (cb != null) {
-                            long now = System.currentTimeMillis();
-                            if (now - lastCb > 100) {
-                                lastCb = now;
-                                cb.onProgress(Math.max(start, start + heard));
-                            }
+                        if (heard < start) heard = start;
+                        if (heard > total) heard = total;
+                        if (heard > lastHeard) { lastHeard = heard; lastMove = now; }
+                        if (heard >= total) break;
+                        // If the device head has not moved for several seconds the track died under us.
+                        // End through onError instead of hanging forever.
+                        if (now - lastMove > 5000L) {
+                            android.util.Log.e("V4Tune", "playStream stalled: session=" + session
+                                    + " heard=" + heard + " total=" + total);
+                            if (cb != null) cb.onError("音频输出中断，已停止");
+                            return;
+                        }
+                        if (elapsed > (long) ((total - start) * 1000.0 / sr) + 15000L) break;
+                        if (cb != null && now - lastCb > 100) {
+                            lastCb = now;
+                            playTick = TimeUtil.secToTick(src.song(), heard / (double) sr);
+                            cb.onProgress(heard);
                         }
                         try { Thread.sleep(25); } catch (InterruptedException ignored) { }
                     }
                     if (playing && cb != null) cb.onDone();
                 } catch (Throwable t) {
-                    android.util.Log.w("V4Tune", "playStream failed: " + t);
+                    android.util.Log.e("V4Tune", "playStream failed: " + t, t);
+                    if (playing && cb != null) cb.onError(String.valueOf(t.getMessage()));
                 } finally {
                     playing = false;
                     try { at.stop(); at.release(); } catch (Throwable ignored) { }

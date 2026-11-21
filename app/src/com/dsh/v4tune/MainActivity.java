@@ -1035,6 +1035,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     limit = (int) Math.min((long) total, nextLimit);
                 }
             } catch (Throwable t) {
+                android.util.Log.e("V4Tune", "render failed: " + t, t);
                 final String m = String.valueOf(t);
                 ui.post(new Runnable() { public void run() { status(L.t("status.stream.fail", m)); } });
             } finally {
@@ -2656,7 +2657,14 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 });
             }
             public void onError(final String m) {
-                ui.post(new Runnable() { public void run() { status(L.t("status.stream.fail", m)); } });
+                ui.post(new Runnable() {
+                    public void run() {
+                        // The engine has already stopped. Without this the button stayed on "stop"
+                        // and the playhead looked frozen while nothing was playing.
+                        playBtn.setText(L.t("transport.play"));
+                        status(L.t("status.stream.fail", m));
+                    }
+                });
             }
         });
     }
