@@ -2664,7 +2664,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 pendingPlayheadTick = TimeUtil.secToTick(song, frame / 44100.0);
                 if (!playheadRefreshPosted) {
                     playheadRefreshPosted = true;
-                    ui.postDelayed(playheadRefresh, 33L);
+                    // One frame worth of delay: audio now reports every ~16 ms, so the cursor can
+                    // move every display frame instead of stepping in 100 ms chunks.
+                    ui.postDelayed(playheadRefresh, 16L);
                 }
             }
             public void onDone() {

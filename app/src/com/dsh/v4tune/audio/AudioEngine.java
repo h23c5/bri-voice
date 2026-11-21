@@ -21,6 +21,12 @@ import java.util.ArrayList;
 public class AudioEngine {
 
     public static final int SR = 44100;
+    /**
+     * How often playback reports the cursor position. 100 ms made the on-screen playhead
+     * visibly step ten times a second; ~16 ms lets the UI move it every frame (the UI still
+     * coalesces callbacks, so a slow device simply redraws less often).
+     */
+    private static final int PROGRESS_MS = 16;
 
     public interface Callback {
         void onProgress(long tick);
@@ -228,7 +234,7 @@ public class AudioEngine {
                         if (written <= 0) break;
                         pos += Math.min(cnt, written / 2);
                         long now = System.currentTimeMillis();
-                        if (cb != null && now - lastCb > 100) {
+                        if (cb != null && now - lastCb >= PROGRESS_MS) {
                             lastCb = now;
                             // Follow the frames the device has actually played out, not the writer's
                             // position: with a few hundred ms of output buffer the cursor used to run
@@ -258,7 +264,7 @@ public class AudioEngine {
                             cb.onProgress(playTick);
                         }
                         if (elapsed >= totalMs) break;
-                        try { Thread.sleep(25); } catch (InterruptedException ignored) {}
+                        try { Thread.sleep(PROGRESS_MS); } catch (InterruptedException ignored) {}
                     }
                     android.util.Log.i("V4Tune", "play loop end: session=" + session + " playing=" + playing + " start=" + start
                             + " frames=" + frames + " elapsedMs=" + (System.currentTimeMillis() - wallStart)
@@ -442,7 +448,7 @@ public class AudioEngine {
                         }
                         pos += Math.min(cnt, written / 2);
                         long now = System.currentTimeMillis();
-                        if (cb != null && now - lastCb > 100) {
+                        if (cb != null && now - lastCb >= PROGRESS_MS) {
                             lastCb = now;
                             long head = 0;
                             try { head = at.getPlaybackHeadPosition(); } catch (Throwable ignored) { }
@@ -499,12 +505,12 @@ public class AudioEngine {
                             return;
                         }
                         if (elapsed > (long) ((total - start) * 1000.0 / sr) + 15000L) break;
-                        if (cb != null && now - lastCb > 100) {
+                        if (cb != null && now - lastCb >= PROGRESS_MS) {
                             lastCb = now;
                             playTick = TimeUtil.secToTick(src.song(), heard / (double) sr);
                             cb.onProgress(heard);
                         }
-                        try { Thread.sleep(25); } catch (InterruptedException ignored) { }
+                        try { Thread.sleep(PROGRESS_MS); } catch (InterruptedException ignored) { }
                     }
                     if (playing && cb != null) cb.onDone();
                 } catch (Throwable t) {

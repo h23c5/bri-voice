@@ -1,7 +1,7 @@
 {
-  "versionCode": 78,
-  "versionName": "9.2.1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v9.2.1/BriVoice-9.2.1.apk",
-  "sha256": "0a9dd5597ce924ef5cc45182cf027d27d14b8604c0fc12ba5faca314af2ec96e",
-  "notes": "release 9.2.1: voicebank loading at startup is about 90x faster (21 banks 19.5s -> ~0.2s) by removing per-number regex parsing; playhead UI updates are coalesced to ~30 fps with edge-only scrolling, so dragging and switching parameter chips stays responsive during playback; long render threads run at background priority; no feature or audio changes"
+  "versionCode": 79,
+  "versionName": "9.2.2",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v9.2.2/BriVoice-9.2.2.apk",
+  "sha256": "335be4a6b6c7d51579c2f9b753869ad174dff04c3122c370a718ef3d8a7369c2",
+  "notes": "release 9.2.2: playhead now moves continuously instead of stepping; playback position is reported about every 16 ms instead of every 100 ms and the UI refreshes it once per frame, with the same callback coalescing so slow devices just draw fewer frames; no audio, voice or export changes"
 }
