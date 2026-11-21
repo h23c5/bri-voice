@@ -42,6 +42,11 @@ public class AudioEngine {
     private volatile boolean cancelRender;
     /** how far the on-screen cursor is shifted back to match what the user hears */
     public volatile int cursorOffsetMs;
+    /**
+     * Output latency measured at start-up. Used only when AudioTrack timestamps are unavailable;
+     * the live sampler keeps correcting for the actual route.
+     */
+    public volatile int outputLatencyMs;
 
     public boolean isPlaying() { return playing; }
     public long playTick() { return playTick; }
@@ -430,6 +435,9 @@ public class AudioEngine {
                     sampler = new Thread(new Runnable() {
                         public void run() {
                             boolean hadHead = false;
+                            boolean latencyLogged = false;
+                            boolean liveLogged = false;
+                            double latSmooth = -1;
                             while (playing && !sampleStop[0]) {
                                 long head = 0;
                                 try { head = at.getPlaybackHeadPosition(); } catch (Throwable ignored) { }
@@ -437,6 +445,32 @@ public class AudioEngine {
                                 if (head > 0) {
                                     heard = start + head;
                                     hadHead = true;
+                                    // The playback head runs ahead of the speaker: it counts frames
+                                    // handed to the mixer. AudioTrack's timestamp tells us when a
+                                    // known frame actually reaches the output, so use it live and
+                                    // fall back to the start-up measurement when it is unavailable.
+                                    double live = LatencyCalibrator.fromTimestamp(at, head, sr);
+                                    if (!Double.isNaN(live)) {
+                                        if (latSmooth < 0) latSmooth = live;
+                                        else latSmooth += (live - latSmooth) * 0.15;
+                                        if (!liveLogged) {
+                                            liveLogged = true;
+                                            android.util.Log.i("V4Tune", "live latency available: "
+                                                    + String.format(java.util.Locale.US, "%.1f", live) + " ms");
+                                        }
+                                    }
+                                    double latencyMs = (latSmooth >= 0)
+                                            ? latSmooth : Math.max(0, outputLatencyMs);
+                                    if (latencyMs < 0) latencyMs = 0;
+                                    if (latencyMs > 900) latencyMs = 900;
+                                    if (!latencyLogged) {
+                                        latencyLogged = true;
+                                        android.util.Log.i("V4Tune", "playback latency: session=" + session
+                                                + " live=" + (Double.isNaN(live) ? "n/a" : String.format(java.util.Locale.US, "%.1f", live))
+                                                + " used=" + String.format(java.util.Locale.US, "%.1f", latencyMs)
+                                                + " measured=" + outputLatencyMs + " manual=" + cursorOffsetMs);
+                                    }
+                                    heard -= (long) (latencyMs * sr / 1000.0);
                                 } else if (!hadHead) {
                                     long elapsed = System.currentTimeMillis() - clockStart;
                                     // Before the first frame is consumed, do not run ahead of the sound.

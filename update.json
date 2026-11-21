@@ -1,7 +1,7 @@
 {
-  "versionCode": 80,
-  "versionName": "9.2.3",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v9.2.3/BriVoice-9.2.3.apk",
-  "sha256": "973de7d65e1df4481f5f19606e252df552a9d9f77d72938d859f01cc0a639d0a",
-  "notes": "release 9.2.3: the playhead now stays continuous from the very start of a song. Playback position is sampled from the AudioTrack on its own 16 ms thread instead of only when the renderer delivers a new chunk, so short songs that stream while rendering no longer jump in 0.5-1 s steps; audio, voices and exports are unchanged"
+  "versionCode": 81,
+  "versionName": "9.3",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v9.3/BriVoice-9.3.apk",
+  "sha256": "7306c4e0a67a1c74443fe7d35a7aee3e24e3b94a6c453a5e39f7eeff7bef35b8",
+  "notes": "release 9.3: the playhead and the audio you hear are now time-aligned. On startup BriVoice plays a near-silent two-second probe, reads the AudioTrack timestamps to measure this device's output latency (31-33 ms on the test emulator), and stores it; during playback the current track's live timestamp is read and smoothed, and the playhead is offset by that latency. If a device cannot report timestamps, a one-time walkthrough points to the manual compensation slider. Auto-measurement can be turned off and re-run from Settings; audio, voices and exports are unchanged"
 }

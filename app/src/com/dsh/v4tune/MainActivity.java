@@ -88,6 +88,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private boolean phonemeLock;
     /** ms the cursor is pulled back so it matches the sound the user hears */
     private int cursorOffsetMs;
+    /** measured output latency; the live sampler uses it only when timestamps are unavailable */
+    private int latencyMeasuredMs = -1;
+    private String latencySource = "";
+    private boolean latencyAuto = true;
+    private boolean latencyMeasuring;
     /** experimental AI + external control settings (both off by default) */
     private com.dsh.v4tune.ai.AiConfig aiCfg;
     private com.dsh.v4tune.ai.ExtApi extApi;
@@ -192,6 +197,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         aiCfg = com.dsh.v4tune.ai.AiConfig.load(this);
         phonemeLock = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("phonemeLock", false);
         cursorOffsetMs = getSharedPreferences("brivoice", MODE_PRIVATE).getInt("cursorOffsetMs", 0);
+        latencyMeasuredMs = getSharedPreferences("brivoice", MODE_PRIVATE).getInt("latencyMeasuredMs", -1);
+        latencySource = getSharedPreferences("brivoice", MODE_PRIVATE).getString("latencySource", "");
+        latencyAuto = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("latencyAuto", true);
         Renderer.measuredNoise = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("mnoise", false);
         Renderer.noiseGain = getSharedPreferences("brivoice", MODE_PRIVATE).getInt("mnoiseGain", 100) / 100f;
         Renderer.frameSequence = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("frameseq", false);
@@ -206,6 +214,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         Renderer.voiceColor = voiceColor;
         renderAccel = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("renderaccel", true);
         engine.cursorOffsetMs = cursorOffsetMs;
+        engine.outputLatencyMs = Math.max(0, latencyMeasuredMs);
         reloadPacksAsync(false);
         applyExtServer();          // only starts anything when the user has enabled it
         song = Demo.build();
@@ -216,6 +225,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         scrollToContent();
         updateAiButton();          // the workspace shortcut only exists once the UI is built
         scheduleAutoSave();
+        if (latencyAuto) {
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(new Runnable() {
+                public void run() { maybeAutoMeasureLatency(); }
+            }, 1000);
+        }
         if (SingerLibrary.isEmpty()) {
             status("BriVoice · 尚未安装声库 —— 点「声库 → 导入声库文件」载入你自己的 .v4voice / .v4neural 声库");
         } else {
@@ -4718,6 +4732,117 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 .show();
     }
 
+    private String latencyInfoText() {
+        if (latencyMeasuredMs >= 0) {
+            String src = (latencySource == null || latencySource.isEmpty()) ? "自动测量" : latencySource;
+            return "输出延迟：" + latencyMeasuredMs + " ms（" + src + "）。\n"
+                    + "播放指针会按实时时间戳继续校正；换耳机或蓝牙后可在下面重新测量。";
+        }
+        return "尚未测得输出延迟。播放指针会尝试用实时时间戳校正；"
+                + "点下面的按钮会播放约 2 秒接近无声的测试音，自动测算并应用。";
+    }
+
+    private void saveLatency(int ms, String source) {
+        latencyMeasuredMs = Math.max(0, ms);
+        latencySource = source == null ? "" : source;
+        engine.outputLatencyMs = latencyMeasuredMs;
+        android.content.SharedPreferences p = getSharedPreferences("brivoice", MODE_PRIVATE);
+        android.content.SharedPreferences.Editor ed = p.edit()
+                .putInt("latencyMeasuredMs", latencyMeasuredMs)
+                .putString("latencySource", latencySource)
+                .putLong("latencyMeasuredAt", System.currentTimeMillis());
+        // Before v9.3 the manual slider was the only way to compensate, so an existing value
+        // already represents the same output delay; auto measurement replaces it once.
+        if (!p.getBoolean("latencyAutoMigrated", false)) {
+            if (cursorOffsetMs != 0) {
+                cursorOffsetMs = 0;
+                engine.cursorOffsetMs = 0;
+                ed.putInt("cursorOffsetMs", 0);
+            }
+            ed.putBoolean("latencyAutoMigrated", true);
+        }
+        ed.apply();
+    }
+
+    /** quiet 2-second probe at start-up; result is only used when live timestamps are unavailable */
+    private void maybeAutoMeasureLatency() {
+        if (!latencyAuto || latencyMeasuring || isFinishing() || engine.isPlaying()) return;
+        latencyMeasuring = true;
+        new Thread(new Runnable() {
+            public void run() {
+                final com.dsh.v4tune.audio.LatencyCalibrator.Result res =
+                        com.dsh.v4tune.audio.LatencyCalibrator.measure(MainActivity.this);
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        latencyMeasuring = false;
+                        if (isFinishing()) return;
+                        if (res == null || !res.reliable) {
+                            maybeShowLatencyGuide();
+                            return;
+                        }
+                        saveLatency(res.ms, res.source);
+                        if (!getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("latencyTold", false)) {
+                            getSharedPreferences("brivoice", MODE_PRIVATE).edit()
+                                    .putBoolean("latencyTold", true).apply();
+                            toast("已自动测量音频延迟：" + res.ms + " ms");
+                        }
+                    }
+                });
+            }
+        }, "latency-measure").start();
+    }
+
+    /** one-time fallback guide for devices that cannot report an AudioTrack presentation time */
+    private void maybeShowLatencyGuide() {
+        if (getSharedPreferences("brivoice", MODE_PRIVATE)
+                .getBoolean("latencyGuideTold", false)) return;
+        getSharedPreferences("brivoice", MODE_PRIVATE).edit()
+                .putBoolean("latencyGuideTold", true).apply();
+        new AlertDialog.Builder(this)
+                .setTitle("音频延迟校准")
+                .setMessage("这台设备没有提供可用的音频时间戳，暂时无法自动测量。\n\n"
+                        + "可以点「播放」听示例，然后在设置里拖动「指针延迟补偿」，"
+                        + "直到指针和听到的声音对齐。模拟器和蓝牙耳机通常需要更大的补偿值。")
+                .setPositiveButton("打开设置", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) { settingsDialog(); }
+                })
+                .setNegativeButton("稍后", null)
+                .show();
+    }
+
+    /** same probe, but visible and re-applied while the settings dialog is open */
+    private void measureLatencyNow(final TextView info) {
+        if (engine.isPlaying()) {
+            toast("请先停止播放再测量");
+            return;
+        }
+        if (latencyMeasuring) return;
+        latencyMeasuring = true;
+        final android.app.ProgressDialog pd = new android.app.ProgressDialog(this);
+        pd.setMessage("正在测量音频输出延迟…");
+        pd.setCancelable(false);
+        pd.show();
+        new Thread(new Runnable() {
+            public void run() {
+                final com.dsh.v4tune.audio.LatencyCalibrator.Result res =
+                        com.dsh.v4tune.audio.LatencyCalibrator.measure(MainActivity.this);
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        latencyMeasuring = false;
+                        try { pd.dismiss(); } catch (Throwable ignored) { }
+                        if (res != null && res.reliable) {
+                            saveLatency(res.ms, res.source);
+                            if (info != null) info.setText(latencyInfoText());
+                            toast("测得输出延迟：" + res.ms + " ms，已应用");
+                        } else {
+                            toast("当前设备不支持自动测量，请用下面的滑块手动微调");
+                        }
+                    }
+                });
+            }
+        }, "latency-measure-now").start();
+    }
+
     private void settingsDialog() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -4926,6 +5051,27 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         offDesc.setPadding(dp(4), 0, 0, dp(6));
         box.addView(offDesc);
 
+        // v9.3: output latency is measured on start-up and corrected again live from AudioTrack
+        // timestamps, so this slider is only a manual trim on top of that.
+        final TextView latInfo = new TextView(this);
+        latInfo.setText(latencyInfoText());
+        latInfo.setTextColor(Theme.TEXT_DIM);
+        latInfo.setTextSize(12f);
+        latInfo.setPadding(dp(4), dp(4), 0, dp(4));
+        box.addView(latInfo);
+        final CheckBox latAuto = new CheckBox(this);
+        latAuto.setText("启动时自动测量输出延迟");
+        latAuto.setChecked(latencyAuto);
+        box.addView(latAuto);
+        Button remeasure = smallButton("重新测量输出延迟…", new View.OnClickListener() {
+            public void onClick(View v) { measureLatencyNow(latInfo); }
+        });
+        LinearLayout.LayoutParams remeasureLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(38));
+        remeasureLp.setMargins(0, dp(2), 0, dp(8));
+        remeasure.setLayoutParams(remeasureLp);
+        box.addView(remeasure);
+
         TextView desc = new TextView(this);
         desc.setText(L.t("set.phoneme.desc"));
         desc.setTextColor(Theme.TEXT_DIM);
@@ -4954,8 +5100,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     public void onClick(DialogInterface d, int w) {
                         cursorOffsetMs = off.getProgress() - 2500;
                         engine.cursorOffsetMs = cursorOffsetMs;
+                        latencyAuto = latAuto.isChecked();
                         getSharedPreferences("brivoice", MODE_PRIVATE).edit()
-                                .putInt("cursorOffsetMs", cursorOffsetMs).apply();
+                                .putInt("cursorOffsetMs", cursorOffsetMs)
+                                .putBoolean("latencyAuto", latencyAuto).apply();
                         Renderer.frameSequence = frameSeqChk.isChecked();
                         getSharedPreferences("brivoice", MODE_PRIVATE).edit()
                                 .putBoolean("frameseq", Renderer.frameSequence).apply();
