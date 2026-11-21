@@ -75,7 +75,7 @@ public class PackStore {
             File f = files[i];
             if (f == null || !f.isFile()) continue;
             String name = f.getName();
-            if (!name.toLowerCase(Locale.ROOT).endsWith(VoicePack.EXT)) continue;
+            if (!VoicePack.isPackName(name)) continue;
             VoicePack.Result r;
             try {
                 r = VoicePack.load(f);
@@ -138,10 +138,15 @@ public class PackStore {
 
             String id = sanitizeId(model.id);
             if (id.isEmpty()) return err(hint + "pack id has no usable characters");
-            File target = new File(dir, id + VoicePack.EXT);
-            if (target.exists()) {
-                if (!overwrite) return err(hint + "a pack with id \"" + id + "\" is already installed");
-                if (!target.delete() && target.exists()) return err(hint + "cannot replace " + target.getName());
+            File target = new File(dir, id + VoicePack.extFor(model));
+            // a rebuild may switch the same singer between voice and neural format
+            File other = new File(dir, id + (model.neuralBank ? VoicePack.EXT : VoicePack.EXT_NEURAL));
+            if ((target.exists() || other.exists()) && !overwrite) {
+                return err(hint + "a pack with id \"" + id + "\" is already installed");
+            }
+            if (other.exists()) other.delete();
+            if (target.exists() && !target.delete() && target.exists()) {
+                return err(hint + "cannot replace " + target.getName());
             }
             if (!tmp.renameTo(target)) copy(tmp, target);        // cross-device / locked fallback
             if (!target.isFile()) return err(hint + "cannot write " + target.getName());
@@ -167,8 +172,12 @@ public class PackStore {
     public boolean delete(String packId) {
         String id = sanitizeId(packId);
         if (id.isEmpty()) return false;
-        File f = new File(dir, id + VoicePack.EXT);
-        return f.isFile() && f.delete();
+        boolean any = false;
+        for (String ext : new String[]{VoicePack.EXT, VoicePack.EXT_NEURAL}) {
+            File f = new File(dir, id + ext);
+            if (f.isFile() && f.delete()) any = true;
+        }
+        return any;
     }
 
     /**
@@ -178,7 +187,8 @@ public class PackStore {
     public File fileFor(String packId) {
         String id = sanitizeId(packId);
         if (id.isEmpty()) id = "unnamed";
-        return new File(dir, id + VoicePack.EXT);
+        File neural = new File(dir, id + VoicePack.EXT_NEURAL);
+        return neural.isFile() ? neural : new File(dir, id + VoicePack.EXT);
     }
 
     /** Number of {@code .v4voice} files currently in the store. */
@@ -188,7 +198,7 @@ public class PackStore {
         int n = 0;
         for (int i = 0; i < files.length; i++) {
             File f = files[i];
-            if (f != null && f.isFile() && f.getName().toLowerCase(Locale.ROOT).endsWith(VoicePack.EXT)) n++;
+            if (f != null && f.isFile() && VoicePack.isPackName(f.getName())) n++;
         }
         return n;
     }

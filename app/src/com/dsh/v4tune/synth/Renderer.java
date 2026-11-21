@@ -199,7 +199,13 @@ public class Renderer {
         PhonemeDef cur = segs.get(0).ph;
         for (int k = 0; k < 5; k++) { fm[k] = formantOf(cur, k, vm); bw[k] = bwOf(cur, k); fmT[k] = fm[k]; bwT[k] = bw[k]; }
 
-        double[] pv = new double[8];
+        double[] pv = new double[9];     // 8 VOCALOID controls + normalized DYN
+        final boolean neuralBank = vm.neuralBank;
+        final VoiceModel.NeuralParams np = vm.neuralParams;
+        final double npBreath = neuralBank ? (np.breath - 0.5) * 0.35 : 0.0;
+        final double npBright = neuralBank ? (0.5 - np.brightness) * 0.35 : 0.0;
+        final double npTension = neuralBank ? (np.tension - 0.5) * 0.18 : 0.0;
+        final double npClarity = neuralBank ? (0.72 + 0.56 * np.clarity) : 1.0;
         double f0 = 220;
         int lastCtl = -ctlStep;
         double smoothCtl = 1.0 - Math.exp(-(double) ctlStep / (0.005 * fs));
@@ -230,12 +236,14 @@ public class Renderer {
                     fm[k] += (fmT[k] - fm[k]) * smoothCtl;
                     bw[k] += (bwT[k] - bw[k]) * smoothCtl;
                 }
-                bwScale = clamp(1.0 - pv[3] * 0.35, 0.55, 1.8);
-                genMul = Math.pow(2.0, (pv[5] - 0.5) * 0.5);      // GEN: +-41% vocal tract length
+                double clearAmt = neuralBank ? 0.30 * np.clarity : 0.0;
+                bwScale = clamp(1.0 - pv[3] * (0.35 + clearAmt), 0.45, 1.8);
+                double genResp = neuralBank ? (0.5 + 0.5 * np.tension) : 0.5;
+                genMul = Math.pow(2.0, (pv[5] - 0.5) * (0.5 * (genResp / 0.5)));  // GEN: vocal tract length
                 for (int k = 0; k < 5; k++) ff.setFormant(k, fm[k] * genMul, bw[k] * bwScale);
                 ff.setFricGain(clamp(cur.noise, 0, 1));
                 ff.setFricBand(0, Math.max(150, cur.noiseFc), Math.max(100, cur.noiseBw), 1.0);
-                ff.setTilt(clamp((0.5 - pv[2] + vm.tiltBias) * 0.6, -1, 1));
+                ff.setTilt(clamp((0.5 - pv[2] + vm.tiltBias + npBright) * 0.6, -1, 1));
 
                 if (hv != null) {
                     // pick the measured band closest to the note's f0 for this phoneme (and the next one
@@ -244,12 +252,12 @@ public class Renderer {
                     // sequence and by the experimental neural envelope
                     double segPos = (sg.s1 > sg.s0) ? (i - sg.s0) / (double) (sg.s1 - sg.s0) : 0.0;
                     if (segPos < 0) segPos = 0; else if (segPos > 1) segPos = 1;
-                    VoiceModel.HarmonicBand b1 = neuralBand(vm, cur.sym, f0, pv[0], segPos);
-                    if (b1 == null) b1 = vm.bandFor(cur.sym, f0);
+                    VoiceModel.HarmonicBand b1 = neuralBand(vm, cur.sym, f0, pv[8], segPos);
+                    if (b1 == null) b1 = vm.bandFor(cur.sym, f0, pv[8]);
                     VoiceModel.HarmonicBand b2 = null;
                     if (next != null) {
-                        b2 = neuralBand(vm, next.sym, f0, pv[0], segPos);
-                        if (b2 == null) b2 = vm.bandFor(next.sym, f0);
+                        b2 = neuralBand(vm, next.sym, f0, pv[8], segPos);
+                        if (b2 == null) b2 = vm.bandFor(next.sym, f0, pv[8]);
                     }
                     boolean voicedCur = isVoiced(cur);
                     double w2 = 0;
@@ -257,7 +265,7 @@ public class Renderer {
                     if (b1 != null || b2 != null) {
                         int len = vm.harmonicFreqs.length;
                         // BRI 0..1 (0.5 neutral) tilts the measured spectrum up to +-6 dB/oct above 1 kHz
-                        double tiltDb = (pv[2] - 0.5) * 12.0 + vm.tiltBias * 6.0;
+                        double tiltDb = (pv[2] - 0.5) * 12.0 + vm.tiltBias * 6.0 + npBright * 18.0;
                         double[] c1 = (b1 != null) ? b1.curveAt(segPos, curveA) : null;
                         double[] c2 = (b2 != null) ? b2.curveAt(segPos, curveB) : null;
                         for (int k = 0; k < len; k++) {
@@ -312,7 +320,7 @@ public class Renderer {
                     } else {
                         hTarget = 0.0;
                     }
-                    hv.setBreath(clamp(pv[1] + vm.breathBias * 0.35, 0, 1) * 0.5);
+                    hv.setBreath(clamp(pv[1] + vm.breathBias * 0.35 + npBreath, 0, 1) * 0.5);
                 }
                 hw += (hTarget - hw) * smoothCtl;
                 if (hw < 0.001) hw = 0; else if (hw > 0.999) hw = 1;
@@ -327,9 +335,9 @@ public class Renderer {
 
             double dyn = pv[0], bre = pv[1], ope = pv[4], gwl = pv[7];
             // OPE 127 (default) is neutral; smaller = more pressed/closed glottis
-            double oq = clamp(0.55 + (ope - 1.0) * 0.25 + vm.oqBias, 0.25, 0.95);
-            double tilt = clamp(0.5 - pv[2] + vm.tiltBias, 0.0, 1.0);
-            double breath = clamp(bre + vm.breathBias * 0.35, 0, 1);
+            double oq = clamp(0.55 + (ope - 1.0) * 0.25 + vm.oqBias - npTension, 0.25, 0.95);
+            double tilt = clamp(0.5 - pv[2] + vm.tiltBias + npBright, 0.0, 1.0);
+            double breath = clamp(bre + vm.breathBias * 0.35 + npBreath, 0, 1);
             // web-style colour presets: bright cuts the tilt and tightens the glottis a little,
             // soft/whisper trade brightness for aspiration
             if (voiceColor == 1) {
@@ -423,6 +431,22 @@ public class Renderer {
                     break;
                 default:
                     break;
+            }
+            if (neuralBank) {
+                // articulation is the point of a neural voicebank: consonants get closer to the
+                // vowel instead of being buried, which is what makes the words read as clearer.
+                switch (cur.type) {
+                    case PhonemeDef.T_FRIC:
+                    case PhonemeDef.T_AFFRIC:
+                    case PhonemeDef.T_ASPIR:
+                    case PhonemeDef.T_NASAL:
+                    case PhonemeDef.T_LIQUID:
+                    case PhonemeDef.T_GLIDE:
+                        g *= npClarity;
+                        break;
+                    default:
+                        break;
+                }
             }
             out[i] = (float) (y * g);
         }
@@ -651,6 +675,13 @@ public class Renderer {
             default: mul = vm.f5Mul; break;
         }
         if (f <= 0) f = (i == 0 ? 500 : (i == 1 ? 1500 : (i == 2 ? 2500 : (i == 3 ? 3500 : 4500))));
+        if (vm.neuralBank) {
+            double n = vm.neuralParams.nasality - 0.5;
+            double t = vm.neuralParams.tension - 0.5;
+            if (i == 0) f *= 1.0 - 0.08 * n;            // nasal murmur pulls F1 down a little
+            else if (i == 1) f *= 1.0 - 0.03 * n;
+            f *= 1.0 - 0.04 * t;                        // more tension = slightly shorter tract
+        }
         return f * mul * vm.formantScale;
     }
 
@@ -678,6 +709,10 @@ public class Renderer {
                 bwT[k] = ba;
             }
         }
+        if (vm.neuralBank) {
+            bwT[0] *= 1.0 + 0.8 * (vm.neuralParams.nasality - 0.5);
+            bwT[1] *= 1.0 + 0.25 * (vm.neuralParams.nasality - 0.5);
+        }
     }
 
     /**
@@ -686,7 +721,11 @@ public class Renderer {
      * v = {dynGain, breath, bri, cle, ope, gen, vib, growl}
      */
     static void sampleParams(Part part, long tick, double[] v, VoiceModel vm) {
-        v[0] = dbGain(param(part, "DYN", tick, 64));
+        double dynRaw = param(part, "DYN", tick, 64);
+        double dynExp = 1.0;
+        if (vm != null && vm.neuralBank) dynExp = 0.8 + 0.8 * vm.neuralParams.dynamics;
+        v[0] = Math.pow(10, ((dynRaw - 64.0) * 0.30 * dynExp) / 20.0);
+        v[8] = clamp(dynRaw / 127.0, 0, 1);
         v[1] = param(part, "BRE", tick, 0) / 127.0;
         v[2] = param(part, "BRI", tick, 64) / 127.0;
         v[3] = param(part, "CLE", tick, 0) / 127.0;
@@ -749,7 +788,8 @@ public class Renderer {
                     int idx = st + i;
                     if (idx < 0 || idx >= out.length) continue;      // segments may reach past the buffer
                     double e = Math.sin(Math.PI * i / len);
-                    out[idx] += (float) (nz.next() * e * e * 0.018 * Math.min(0.5, vm.breathSoundAmount));
+                    double amount = vm.breathSoundAmount + (vm.neuralBank ? (vm.neuralParams.breath - 0.5) * 0.2 : 0);
+                    out[idx] += (float) (nz.next() * e * e * 0.018 * Math.min(0.6, Math.max(0, amount)));
                 }
             }
         }
@@ -775,7 +815,10 @@ public class Renderer {
         double f = keyHz(cur.key);
 
         Note prev = ci > 0 ? notes.get(ci - 1) : null;
-        double porMs = param(part, "POR", localTick, 64) / 127.0 * 110.0;
+        double npPitch = vm.neuralBank ? vm.neuralParams.pitch : 0.5;
+        double npVib = vm.neuralBank ? vm.neuralParams.vibrato : 0.5;
+        double porMs = param(part, "POR", localTick, 64) / 127.0 * 110.0
+                * (vm.neuralBank ? (0.75 + 0.5 * npPitch) : 1.0);
         if (prev != null && sec >= a) {
             double pe = TimeUtil.tickToSec(song, prev.pos + prev.dur);
             if (a - pe <= 0.06 && porMs > 3) {       // also glide across small gaps
@@ -814,6 +857,7 @@ public class Renderer {
             depthCents = 22.0;
             if (vibRate < 0) vibRate = 41;        // 4 + (41/127)*4 = 5.3 Hz
         }
+        if (vm.neuralBank) depthCents *= 0.65 + 0.9 * npVib;
         depthCents *= clamp(vibScale, 0, 2.0);
         if (depthCents > 0.5 && sec >= a) {
             double ta = sec - a;
@@ -825,6 +869,7 @@ public class Renderer {
 
         // PIT is a 14-bit bend (-8192..8191) scaled by PBS semitones (docs/vsqx-format-spec.md §4.4)
         double cents = (pitCents(part, cur, localTick) / 8192.0) * pbsRange(part, localTick) * 100.0;
+        if (vm.neuralBank) cents *= 0.8 + 0.9 * npPitch;
         f *= Math.pow(2, cents / 1200.0);
         return f;
     }

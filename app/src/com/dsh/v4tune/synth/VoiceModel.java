@@ -113,6 +113,47 @@ public class VoiceModel {
     public boolean neuralEnabled;
     /** true when {@link #neural} is the shared universal model rather than a fine-tuned one */
     public boolean neuralFromUniversal;
+    /** true for a .v4neural pack: this singer is always driven by the BriNeting engine */
+    public boolean neuralBank;
+
+    /** XStudio-style voicebank controls, all 0..1 with 0.5 neutral */
+    public NeuralParams neuralParams = new NeuralParams();
+
+    public static class NeuralParams {
+        public double breath = 0.5;      // 气息：气声与起音柔和度
+        public double tension = 0.5;     // 张力：声门闭合与明亮度
+        public double brightness = 0.5;  // 明亮：高频倾斜
+        public double nasality = 0.35;   // 鼻音：鼻腔共鸣
+        public double clarity = 0.65;    // 吐字：辅音清晰度
+        public double vibrato = 0.5;     // 颤音深度
+        public double dynamics = 0.6;    // DYN 响应
+        public double pitch = 0.6;       // PIT/PBS 响应
+
+        public void clampAll() {
+            breath = clamp01(breath); tension = clamp01(tension);
+            brightness = clamp01(brightness); nasality = clamp01(nasality);
+            clarity = clamp01(clarity); vibrato = clamp01(vibrato);
+            dynamics = clamp01(dynamics); pitch = clamp01(pitch);
+        }
+
+        public void copyFrom(NeuralParams o) {
+            if (o == null) return;
+            breath = o.breath; tension = o.tension; brightness = o.brightness;
+            nasality = o.nasality; clarity = o.clarity; vibrato = o.vibrato;
+            dynamics = o.dynamics; pitch = o.pitch;
+            clampAll();
+        }
+
+        private static double clamp01(double v) {
+            if (Double.isNaN(v)) return 0.5;
+            return v < 0 ? 0 : (v > 1 ? 1 : v);
+        }
+    }
+
+    /** true when rendering should use the BriNeting envelopes right now */
+    public boolean neuralActive() {
+        return neuralEnabled && neural != null;
+    }
 
     /** optional measured fricative noise spectra (same grid as harmonicFreqs) */
     public double[] noiseFreqs = new double[0];

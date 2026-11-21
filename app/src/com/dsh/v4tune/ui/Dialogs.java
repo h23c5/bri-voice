@@ -53,9 +53,13 @@ public final class Dialogs {
     /** one line of a menu */
     public static final class Row {
         String badge, title, subtitle;
+        /** optional small trailing label, e.g. the blue "AI" tag on BriNeting singers */
+        String tag;
         int color = Theme.ACCENT;
         boolean on;
         Runnable action;
+
+        public Row tag(String text) { this.tag = text; return this; }
     }
 
     public static Row row(String badge, int color, String title, String subtitle, boolean on, Runnable action) {
@@ -181,11 +185,33 @@ public final class Dialogs {
 
         LinearLayout col = new LinearLayout(a);
         col.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout titleRow = new LinearLayout(a);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
         TextView t = new TextView(a);
         t.setText(r.title);
         t.setTextColor(r.on ? Theme.ACCENT : Theme.TEXT);
         t.setTextSize(15.5f);
-        col.addView(t);
+        titleRow.addView(t);
+        if (!TextUtils.isEmpty(r.tag)) {
+            TextView tag = new TextView(a);
+            tag.setText(r.tag);
+            tag.setTextColor(0xFFFFFFFF);
+            tag.setTextSize(9.5f);
+            tag.setTypeface(Typeface.DEFAULT_BOLD);
+            tag.setGravity(Gravity.CENTER);
+            tag.setIncludeFontPadding(false);
+            GradientDrawable pill = new GradientDrawable();
+            pill.setCornerRadius(dp(a, 4f));
+            pill.setColor(0xFF2F9BFF);
+            tag.setBackground(pill);
+            tag.setPadding(dp(a, 5f), dp(a, 1f), dp(a, 5f), dp(a, 1.5f));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.leftMargin = dp(a, 7f);
+            titleRow.addView(tag, lp);
+        }
+        col.addView(titleRow);
         if (!TextUtils.isEmpty(r.subtitle)) {
             TextView s = new TextView(a);
             s.setText(r.subtitle);

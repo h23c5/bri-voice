@@ -23,7 +23,7 @@ public class ProjectIO {
 
     /** true when the file looks like a voicebank pack rather than a project */
     public static boolean isVoicePackName(String name) {
-        return name != null && name.toLowerCase(java.util.Locale.US).endsWith(".v4voice");
+        return com.dsh.v4tune.synth.VoicePack.isPackName(name);
     }
 
     /** Read a project from any content Uri. Detects VSQX / VSQ / MIDI from the content itself. */

@@ -33,6 +33,10 @@ public final class VoicebankWriter {
     public String nameJa = "";
     public int lang = 2;
     public String compID = "";
+    /** "voice" = traditional engine; "neural" = this pack is a .v4neural BriNeting voicebank */
+    public String engine = "voice";
+    /** neural voicebank controls (0..1); only written for nerve packs but harmless for voice packs */
+    public final LinkedHashMap<String, Double> neuralParams = new LinkedHashMap<String, Double>();
     public String notes = "";
 
     /** free-form provenance, e.g. "VOCALOID4 FRM2 frames of <bank> (<compID>)" */
@@ -67,9 +71,18 @@ public final class VoicebankWriter {
         str(b, "nameJa", nameJa); b.append(',');
         num(b, "lang", lang); b.append(',');
         str(b, "compID", compID); b.append(',');
+        str(b, "engine", engine); b.append(',');
         str(b, "source", source); b.append(',');
-        b.append("\"voice\":{");
         boolean first = true;
+        b.append("\"neuralParams\":{");
+        for (Map.Entry<String, Double> e : neuralParams.entrySet()) {
+            if (!first) b.append(',');
+            first = false;
+            quote(b, e.getKey()); b.append(':').append(fmt(e.getValue().doubleValue()));
+        }
+        b.append("},");
+        b.append("\"voice\":{");
+        first = true;
         for (Map.Entry<String, Double> e : voice.entrySet()) {
             if (!first) b.append(',');
             first = false;

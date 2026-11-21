@@ -43,6 +43,20 @@ public class VoicePack {
     public static final String FORMAT = "v4voice/1";
     /** File extension of a singer pack, including the dot. */
     public static final String EXT = ".v4voice";
+    /** neural voicebank container: same measured data, but its engine is always BriNeting */
+    public static final String EXT_NEURAL = ".v4neural";
+
+    /** true for either supported voicebank file name */
+    public static boolean isPackName(String name) {
+        if (name == null) return false;
+        String n = name.toLowerCase(Locale.ROOT);
+        return n.endsWith(EXT) || n.endsWith(EXT_NEURAL);
+    }
+
+    /** file extension a parsed model must be stored under */
+    public static String extFor(VoiceModel m) {
+        return (m != null && m.neuralBank) ? EXT_NEURAL : EXT;
+    }
 
     /** Maximum size of voice.json (bytes) - voicebanks may carry large measured payloads. */
     private static final int MAX_JSON_BYTES = 256 * 1024 * 1024;
@@ -296,6 +310,9 @@ public class VoicePack {
         vm.nameJa = cleanText(str(m, "nameJa", ""), MAX_NAME);
         vm.lang = langOf(m, vm.lang);
         vm.compID = cleanText(str(m, "compID", ""), MAX_COMPID);
+        String engine = str(m, "engine", "voice").trim();
+        vm.neuralBank = "neural".equalsIgnoreCase(engine);
+        readNeuralParams(m.get("neuralParams"), vm);
 
         Map<String, Object> v = asObj(m.get("voice"));
         vm.formantScale = num(v, "formantScale", vm.formantScale, 0.5, 2.0);
@@ -323,6 +340,21 @@ public class VoicePack {
         Result r = new Result();
         r.model = vm;
         return r;
+    }
+
+    private static void readNeuralParams(Object raw, VoiceModel vm) {
+        Map<String, Object> map = asObj(raw);
+        if (map == null) return;
+        VoiceModel.NeuralParams p = vm.neuralParams;
+        p.breath = num(map, "breath", p.breath, 0.0, 1.0);
+        p.tension = num(map, "tension", p.tension, 0.0, 1.0);
+        p.brightness = num(map, "brightness", p.brightness, 0.0, 1.0);
+        p.nasality = num(map, "nasality", p.nasality, 0.0, 1.0);
+        p.clarity = num(map, "clarity", p.clarity, 0.0, 1.0);
+        p.vibrato = num(map, "vibrato", p.vibrato, 0.0, 1.0);
+        p.dynamics = num(map, "dynamics", p.dynamics, 0.0, 1.0);
+        p.pitch = num(map, "pitch", p.pitch, 0.0, 1.0);
+        p.clampAll();
     }
 
     private static void readShelf(Object raw, VoiceModel vm) {
@@ -717,6 +749,19 @@ public class VoicePack {
     }
         kv(sb, 1, "lang", Integer.toString(langInt(m.lang)), true);
         kv(sb, 1, "compID", quote(cleanText(m.compID, MAX_COMPID)), true);
+        kv(sb, 1, "engine", quote(m.neuralBank ? "neural" : "voice"), true);
+        VoiceModel.NeuralParams np = m.neuralParams == null ? new VoiceModel.NeuralParams() : m.neuralParams;
+        np.clampAll();
+        sb.append("  \"neuralParams\": {\n");
+        kv(sb, 2, "breath", numStr(np.breath), true);
+        kv(sb, 2, "tension", numStr(np.tension), true);
+        kv(sb, 2, "brightness", numStr(np.brightness), true);
+        kv(sb, 2, "nasality", numStr(np.nasality), true);
+        kv(sb, 2, "clarity", numStr(np.clarity), true);
+        kv(sb, 2, "vibrato", numStr(np.vibrato), true);
+        kv(sb, 2, "dynamics", numStr(np.dynamics), true);
+        kv(sb, 2, "pitch", numStr(np.pitch), false);
+        sb.append("  },\n");
         sb.append("  \"voice\": {\n");
         kv(sb, 2, "formantScale", numStr(m.formantScale), true);
         kv(sb, 2, "f1Mul", numStr(m.f1Mul), true);

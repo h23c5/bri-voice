@@ -203,7 +203,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         updateAiButton();          // the workspace shortcut only exists once the UI is built
         scheduleAutoSave();
         if (SingerLibrary.isEmpty()) {
-            status("BriVoice · 尚未安装声库 —— 点「声库 → 导入声库文件」载入你自己的 .v4voice 声库");
+            status("BriVoice · 尚未安装声库 —— 点「声库 → 导入声库文件」载入你自己的 .v4voice / .v4neural 声库");
         } else {
             status("BriVoice · 已安装 " + SingerLibrary.userPackCount() + " 个声库：" + singerName(currentVoice));
         }
@@ -1381,9 +1381,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         java.util.List<com.dsh.v4tune.ui.Dialogs.Row> rows = com.dsh.v4tune.ui.Dialogs.rows();
         final VoiceModel baseSinger = briNetingSinger();
         boolean baseCur = currentVoice != null && "_brineting".equals(currentVoice.id);
-        rows.add(com.dsh.v4tune.ui.Dialogs.row("神", Theme.ACCENT,
-                "神经歌手  AI",
-                "BriNeting 基座 · 所有歌手的合成基础",
+        com.dsh.v4tune.ui.Dialogs.Row baseRow = com.dsh.v4tune.ui.Dialogs.row("神", Theme.ACCENT,
+                "神经歌手",
+                "BriNeting 基座 · 直出中性声线",
                 baseCur, new Runnable() {
                     public void run() {
                         beginEdit();
@@ -1397,21 +1397,30 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                                 ? "神经歌手需要先训练 BriNeting 基座"
                                 : "已选择神经歌手：BriNeting 基座");
                     }
-                }));
+                });
+        if (baseSinger.neural != null && baseSinger.neuralEnabled) baseRow.tag("AI");
+        rows.add(baseRow);
         for (int i = 0; i < all.size(); i++) {
             final VoiceModel v = all.get(i);
+            if (v.neural == null) attachNeural(v);          // decide the engine badge accurately
             int bands = 0;
             for (java.util.Map.Entry<String, VoiceModel.HarmonicBand[]> e2 : v.harmonics.entrySet()) {
                 bands += e2.getValue().length;
             }
-            String tag = (v.harmonics.size() > 0)
+            String info = (v.harmonics.size() > 0)
                     ? L.t("dlg.singer.stats", v.harmonics.size(), bands)
                     : L.t("dlg.singer.legacy");
+            String engine;
+            if (v.neuralBank) {
+                engine = v.neuralEnabled ? "BriNeting 神经声库" : "BriNeting 神经声库（需训练基座）";
+            } else {
+                engine = v.neuralEnabled ? "BriNeting 神经合成" : "传统合成";
+            }
             boolean cur = currentVoice != null && currentVoice.id != null && currentVoice.id.equals(v.id);
-            rows.add(com.dsh.v4tune.ui.Dialogs.row(
+            com.dsh.v4tune.ui.Dialogs.Row row = com.dsh.v4tune.ui.Dialogs.row(
                     com.dsh.v4tune.ui.Dialogs.badgeFor(singerName(v)),
                     com.dsh.v4tune.ui.Dialogs.PALETTE[i % com.dsh.v4tune.ui.Dialogs.PALETTE.length],
-                    singerName(v), tag, cur, new Runnable() {
+                    singerName(v), info + " · " + engine, cur, new Runnable() {
                         public void run() {
                             beginEdit();
                             currentVoice = v;
@@ -1420,7 +1429,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                             cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
                             commitEdit();
                             refreshAll();
-                            status(L.t("status.singer", singerName(v)));
+                            status(v.neuralBank && currentVoice.neural == null
+                                    ? "这是神经声库，请先训练 BriNeting 基座"
+                                    : L.t("status.singer", singerName(v)));
                             if (Renderer.webSynth) {
                                 new AlertDialog.Builder(MainActivity.this)
                                         .setTitle("当前是网页快速合成")
@@ -1438,7 +1449,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                                         .show();
                             }
                         }
-                    }));
+                    });
+            if (v.neuralBank || (v.neural != null && v.neuralEnabled)) row.tag("AI");
+            rows.add(row);
         }
         if (rows.isEmpty()) {
             com.dsh.v4tune.ui.Dialogs.menu(this, L.t("dlg.singer.title"), null,
@@ -2090,7 +2103,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 L.t("menu.tools.tutorial"),
                 L.t("menu.tools.guide"),
                 "角色立绘（左下角）",
-                "BriNeting 神经声学模型（v9.1）"
+                "BriNeting 神经声学模型（v9.2）"
         };
         menu(L.t("menu.tools"), null, items, -1, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, int which) {
@@ -2154,7 +2167,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         com.dsh.v4tune.ui.OnboardingOverlay.Step[] steps = new com.dsh.v4tune.ui.OnboardingOverlay.Step[]{
                 new com.dsh.v4tune.ui.OnboardingOverlay.Step(newBtn, "1. 新建工程", "点这里从空白开始；也可以点「打开」导入 .vsqx / .ustx / .ust / .svip3。"),
                 new com.dsh.v4tune.ui.OnboardingOverlay.Step(openBtn, "2. 打开工程", "支持 VOCALOID4 .vsqx、OpenUtau .ustx、UTAU .ust、XStudio .svip3。"),
-                new com.dsh.v4tune.ui.OnboardingOverlay.Step(packBtn, "3. 导入声库", "先装一个声库：.v4voice，或菜单里的「导入 UTAU 声库」支持 oto.ini 文件夹和 zip。"),
+                new com.dsh.v4tune.ui.OnboardingOverlay.Step(packBtn, "3. 导入声库", "先装一个声库：.v4voice 或神经声库 .v4neural，或菜单里的「导入 UTAU 声库」支持 oto.ini 文件夹和 zip。"),
                 new com.dsh.v4tune.ui.OnboardingOverlay.Step(playBtn, "4. 试听", "点播放边渲边播；再点一次停止。参数和音符编辑后会自动保存。"),
                 new com.dsh.v4tune.ui.OnboardingOverlay.Step(exportBtn, "5. 导出 WAV", "满意后导出 44.1kHz WAV，文件在 BriVoice_root/export。"),
                 new com.dsh.v4tune.ui.OnboardingOverlay.Step(toolsBtn, "6. 工具与设置", "合成方式、音色、自动保存、教程都在这里；随时可以重看这个引导。")
@@ -2315,7 +2328,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
     private void managePacks() {
         final String[] items = {
-                "导入声库文件（.v4voice）",
+                "导入声库文件（.v4voice / .v4neural）",
                 "从文件夹批量导入（推荐，真机更稳）",
                 "打开 " + Storage.ROOT_NAME + " 文件夹说明",
                 "删除已导入的声库（" + SingerLibrary.userPackCount() + "）",
@@ -2343,7 +2356,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         String msg = "BriVoice 的所有文件都放在这一个文件夹里：\n\n"
                 + Storage.root(this).getAbsolutePath() + "\n"
                 + "  projects/   工程（.vsqx）\n"
-                + "  voicebanks/ 声库（.v4voice，可以直接从电脑拷进来）\n"
+                + "  voicebanks/ 声库（.v4voice / .v4neural，可以直接从电脑拷进来）\n"
                 + "  export/     导出的 WAV\n\n"
                 + (ok ? "当前状态：有「所有文件访问」权限，保存会直接写进这个文件夹。"
                       : "当前状态：还没有「所有文件访问」权限，文件暂时放在应用自己的目录；"
@@ -3121,7 +3134,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     && !android.os.Environment.isExternalStorageManager();
             new AlertDialog.Builder(this)
                     .setTitle("无法打开这个文件")
-                    .setMessage(String.valueOf(e.getMessage()) + "\n\n支持：.vsqx / .vsq / .svip3 工程、.mid 导入、.v4voice 声库")
+                    .setMessage(String.valueOf(e.getMessage()) + "\n\n支持：.vsqx / .vsq / .svip3 工程、.mid 导入、.v4voice / .v4neural 声库")
                     .setPositiveButton(canAskAllFiles ? "授予文件访问权限" : "好",
                             new DialogInterface.OnClickListener() {
                                 public void onClick(DialogInterface d, int w) {
@@ -3236,7 +3249,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             while (c.moveToNext()) {
                 String name = c.getString(0);
                 String docId = c.getString(1);
-                if (name == null || !name.toLowerCase(java.util.Locale.US).endsWith(".v4voice")) continue;
+                if (name == null || !VoicePack.isPackName(name)) continue;
                 Uri file = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, docId);
                 VoicePack.Result r = importPackUri(file, name);
                 if (r != null && r.ok()) ok++;
@@ -3291,9 +3304,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         return false;
     }
 
-    /** some users distribute a zipped .v4voice; detect that before treating it as a UTAU bank */
+    /** some users distribute a zipped voicebank; detect that before treating it as a UTAU bank */
     private boolean zipHasV4(Uri uri) {
-        return zipContainsName(uri, ".v4voice");
+        return zipContainsName(uri, ".v4voice") || zipContainsName(uri, ".v4neural");
     }
 
     /** extract the first .v4voice from a zip and import it, so a zipped pack also works */
@@ -3315,7 +3328,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 String name = e.getName();
                 if (name == null) continue;
                 name = name.replace('\\', '/');
-                if (e.isDirectory() || !name.toLowerCase(java.util.Locale.US).endsWith(".v4voice")) continue;
+                if (e.isDirectory() || !VoicePack.isPackName(name)) continue;
                 String base = name.substring(name.lastIndexOf('/') + 1);
                 if (base.length() == 0) base = "pack.v4voice";
                 java.io.File out = new java.io.File(dir, base);
@@ -3326,7 +3339,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 found = out;
             }
             if (found == null) {
-                VoicePack.Result r = new VoicePack.Result(); r.error = "压缩包里没有 .v4voice 文件"; return r;
+                VoicePack.Result r = new VoicePack.Result(); r.error = "压缩包里没有 .v4voice / .v4neural 文件"; return r;
             }
             return importPackUri(Uri.fromFile(found), found.getName());
         } catch (Throwable t) {
@@ -3436,7 +3449,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                             final String err = (r == null) ? "未知错误" : r.error;
                             status("声库导入失败: " + err);
                             showImportFailure(err + "\n\n如果文件本身没问题，多半是系统给的文件流不完整。"
-                                    + "可以改用「从文件夹导入」，把 .v4voice 放进一个文件夹再选那个文件夹。");
+                                    + "可以改用「从文件夹导入」，把 .v4voice / .v4neural 放进一个文件夹再选那个文件夹。");
                         }
                     }
                 });
@@ -4166,14 +4179,14 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             vm.lang = 2;
             vm.compID = "BriNeting";
             vm.description = "BriNeting 神经基座";
+            vm.neuralBank = true;
             vm.harmonicFreqs = NeuralSpectrum.canonicalGrid();
             briNetingVoice = vm;
         }
         NeuralSpectrum u = ensureUniversalNeural();
         briNetingVoice.neural = u;
         briNetingVoice.neuralFromUniversal = true;
-        briNetingVoice.neuralEnabled = u != null && getSharedPreferences("brivoice", MODE_PRIVATE)
-                .getBoolean("neuralOn__brineting", true);
+        briNetingVoice.neuralEnabled = u != null;
         return briNetingVoice;
     }
 
@@ -4198,9 +4211,43 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 .putBoolean("neuralOn_" + neuralKey(vm), on).apply();
     }
 
+    /** restore the user's saved neural controls for this singer (pack defaults otherwise) */
+    private void applyNeuralPrefs(VoiceModel vm) {
+        if (vm == null || vm.neuralParams == null) return;
+        String s = getSharedPreferences("brivoice", MODE_PRIVATE)
+                .getString("np_" + neuralKey(vm), null);
+        if (s == null || s.trim().isEmpty()) return;
+        try {
+            String[] p = s.split(",");
+            if (p.length >= 8) {
+                VoiceModel.NeuralParams n = vm.neuralParams;
+                n.breath = Double.parseDouble(p[0]);
+                n.tension = Double.parseDouble(p[1]);
+                n.brightness = Double.parseDouble(p[2]);
+                n.nasality = Double.parseDouble(p[3]);
+                n.clarity = Double.parseDouble(p[4]);
+                n.vibrato = Double.parseDouble(p[5]);
+                n.dynamics = Double.parseDouble(p[6]);
+                n.pitch = Double.parseDouble(p[7]);
+                n.clampAll();
+            }
+        } catch (Throwable ignored) { }
+    }
+
+    private void saveNeuralPrefs(VoiceModel vm) {
+        if (vm == null || vm.neuralParams == null) return;
+        VoiceModel.NeuralParams n = vm.neuralParams;
+        n.clampAll();
+        String s = n.breath + "," + n.tension + "," + n.brightness + "," + n.nasality + ","
+                + n.clarity + "," + n.vibrato + "," + n.dynamics + "," + n.pitch;
+        getSharedPreferences("brivoice", MODE_PRIVATE).edit()
+                .putString("np_" + neuralKey(vm), s).apply();
+    }
+
     /** load the per-singer model, else use the universal prior, then restore the on/off state */
     private void attachNeural(VoiceModel vm) {
         if (vm == null) return;
+        applyNeuralPrefs(vm);
         if (vm.neural == null) {
             File f = neuralFile(vm);
             if (f.isFile()) {
@@ -4219,11 +4266,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 vm.neuralFromUniversal = true;
             }
         }
-        // v9.1: the shared BriNeting base is on by default. Respect an explicit opt-out saved
-        // by an older build, but a fresh install / newly imported singer starts enabled.
-        vm.neuralEnabled = vm.neural != null
-                && getSharedPreferences("brivoice", MODE_PRIVATE)
-                        .getBoolean("neuralOn_" + neuralKey(vm), true);
+        // v9.2: engine follows the pack type. A .v4neural bank is always BriNeting; a normal
+        // .v4voice bank uses the traditional engine unless the user explicitly turned neural on.
+        vm.neuralEnabled = vm.neural != null && (vm.neuralBank
+                || getSharedPreferences("brivoice", MODE_PRIVATE)
+                        .getBoolean("neuralOn_" + neuralKey(vm), false));
     }
 
     /** every installed voicebank that actually carries measured harmonic frames */
@@ -4254,7 +4301,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         } else if ("_brineting".equals(currentVoice.id)) {
             b.append("神经歌手（基座直出）");
         } else {
-            b.append(currentVoice.neuralFromUniversal ? "BriNeting 基座（尚未微调）" : "已微调");
+            b.append(currentVoice.neuralBank ? "神经声库" : "传统声库");
+            b.append(" · ").append(currentVoice.neuralFromUniversal ? "BriNeting 基座（尚未微调）" : "已微调");
             b.append(" · ").append(currentVoice.neural.describe());
         }
         return b.toString();
@@ -4266,8 +4314,15 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         if (neuralDialogStatus != null) neuralDialogStatus.setText(text);
         if (neuralChk != null) {
             boolean usable = currentVoice != null && currentVoice.neural != null;
-            neuralChk.setEnabled(usable);
-            neuralChk.setChecked(usable && currentVoice.neuralEnabled);
+            if (currentVoice != null && currentVoice.neuralBank) {
+                neuralChk.setText("此声库固定使用 BriNeting 神经合成");
+                neuralChk.setEnabled(false);
+                neuralChk.setChecked(usable);
+            } else {
+                neuralChk.setText("启用神经合成（当前歌手）");
+                neuralChk.setEnabled(usable);
+                neuralChk.setChecked(usable && currentVoice != null && currentVoice.neuralEnabled);
+            }
         }
     }
 
@@ -4312,18 +4367,19 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                             pd.dismiss();
                             universalNeural = model;
                             universalNeuralTried = true;
-                            // Every singer sings on top of this base. Fine-tuned models keep their
-                            // own weights, but they were initialised from the same base and are
-                            // switched on with it.
+                            // The base is shared, but the engine of a normal .v4voice singer stays
+                            // traditional unless the user already opted that singer in. .v4neural
+                            // packs are always driven by the base.
                             for (VoiceModel m : SingerLibrary.all()) {
                                 if (m.neural == null || m.neuralFromUniversal) {
                                     m.neural = model;
                                     m.neuralFromUniversal = true;
                                 }
-                                if (m.neural != null) {
-                                    m.neuralEnabled = true;
-                                    saveNeuralEnabled(m, true);
-                                }
+                                boolean on = m.neural != null && (m.neuralBank
+                                        || getSharedPreferences("brivoice", MODE_PRIVATE)
+                                                .getBoolean("neuralOn_" + neuralKey(m), false));
+                                m.neuralEnabled = on;
+                                saveNeuralEnabled(m, on);
                             }
                             if (briNetingVoice != null) {
                                 briNetingVoice.neural = model;
@@ -4334,13 +4390,13 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                             if (currentVoice != null && currentVoice.neural == null) {
                                 currentVoice.neural = model;
                                 currentVoice.neuralFromUniversal = true;
-                                currentVoice.neuralEnabled = true;
-                                saveNeuralEnabled(currentVoice, true);
+                                currentVoice.neuralEnabled = currentVoice.neuralBank;
+                                saveNeuralEnabled(currentVoice, currentVoice.neuralEnabled);
                             }
                             clearRenderCache();
                             refreshNeuralWidgets();
                             toast("BriNeting 基座已训练：" + model.describe());
-                            status("BriNeting 基座已训练，所有歌手默认基于它合成");
+                            status("BriNeting 基座已训练：神经声库将基于它合成，传统声库保持原引擎");
                         }
                     });
                 } catch (final Throwable t) {
@@ -4492,8 +4548,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         box.setPadding(dp(18), dp(6), dp(18), dp(6));
 
         TextView help = new TextView(this);
-        help.setText("① BriNeting 基座：用本机所有声库学习共享的频谱规律（只读 .v4voice 已测谐波，不读取音频采样）\n"
-                + "② 所有歌手默认基于这个基座合成；也可以对单个歌手微调，让它更接近该声库的音色。");
+        help.setText("① BriNeting 基座：用本机声库已测量的谐波学习共享频谱规律（不读取音频采样）\n"
+                + "② 声库类型决定引擎：.v4voice 走传统合成，.v4neural 固定走 BriNeting；传统声库也可以手动启用\n"
+                + "③ 神经声库可以调声线参数（气息、张力、明亮、鼻音、吐字、颤音、DYN/PIT 响应）。");
         help.setTextColor(Theme.TEXT_DIM);
         help.setTextSize(12f);
         box.addView(help);
@@ -4516,6 +4573,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         row2.addView(bDelCur);
         row2.addView(bDelUniv);
         box.addView(row2);
+
+        LinearLayout row3 = row();
+        Button bTune = small("声线参数…");
+        row3.addView(bTune);
+        box.addView(row3);
 
         final CheckBox enable = new CheckBox(this);
         neuralChk = enable;
@@ -4546,12 +4608,85 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         bDelUniv.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { deleteUniversalNeural(); }
         });
+        bTune.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { neuralParamsDialog(); }
+        });
 
         refreshNeuralWidgets();
         new AlertDialog.Builder(this)
-                .setTitle("BriNeting 神经声学模型（v9.1）")
+                .setTitle("BriNeting 神经声学模型（v9.2）")
                 .setView(box)
                 .setNegativeButton("关闭", null)
+                .show();
+    }
+
+    /** XStudio-style neural voicebank controls; saved per singer and applied at render time */
+    private void neuralParamsDialog() {
+        final VoiceModel vm = currentVoice;
+        if (vm == null) { toast("先选择一个声库"); return; }
+        if (vm.neuralParams == null) vm.neuralParams = new VoiceModel.NeuralParams();
+        final VoiceModel.NeuralParams np = vm.neuralParams;
+        final double[] tmp = {np.breath, np.tension, np.brightness, np.nasality,
+                np.clarity, np.vibrato, np.dynamics, np.pitch};
+        final String[] names = {"气息", "张力", "明亮", "鼻音", "吐字清晰度", "颤音深度", "DYN 响应", "PIT/PBS 响应"};
+
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(6), dp(18), dp(4));
+        TextView tip = new TextView(this);
+        tip.setText("这些参数在 BriNeting 引擎里额外强化对应表现；0.5 为中性。");
+        tip.setTextColor(Theme.TEXT_DIM);
+        tip.setTextSize(11.5f);
+        box.addView(tip);
+
+        for (int i = 0; i < names.length; i++) {
+            final int idx = i;
+            LinearLayout head = new LinearLayout(this);
+            head.setOrientation(LinearLayout.HORIZONTAL);
+            head.setPadding(0, dp(6), 0, 0);
+            TextView name = new TextView(this);
+            name.setText(names[i]);
+            name.setTextColor(Theme.TEXT);
+            name.setTextSize(13.5f);
+            head.addView(name, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            final TextView val = new TextView(this);
+            val.setText(String.format(java.util.Locale.US, "%.0f%%", tmp[i] * 100));
+            val.setTextColor(Theme.ACCENT);
+            val.setTextSize(12.5f);
+            head.addView(val);
+            box.addView(head);
+            android.widget.SeekBar bar = new android.widget.SeekBar(this);
+            bar.setMax(100);
+            bar.setProgress((int) Math.round(tmp[i] * 100));
+            bar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+                public void onProgressChanged(android.widget.SeekBar sb, int progress, boolean fromUser) {
+                    tmp[idx] = progress / 100.0;
+                    val.setText(progress + "%");
+                }
+                public void onStartTrackingTouch(android.widget.SeekBar sb) { }
+                public void onStopTrackingTouch(android.widget.SeekBar sb) { }
+            });
+            box.addView(bar);
+        }
+
+        android.widget.ScrollView sc = new android.widget.ScrollView(this);
+        sc.addView(box);
+        new AlertDialog.Builder(this)
+                .setTitle("声线参数 · " + singerName(vm))
+                .setView(sc)
+                .setPositiveButton("保存并应用", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) {
+                        np.breath = tmp[0]; np.tension = tmp[1]; np.brightness = tmp[2];
+                        np.nasality = tmp[3]; np.clarity = tmp[4]; np.vibrato = tmp[5];
+                        np.dynamics = tmp[6]; np.pitch = tmp[7];
+                        np.clampAll();
+                        saveNeuralPrefs(vm);
+                        clearRenderCache();
+                        refreshNeuralWidgets();
+                        toast("声线参数已应用");
+                    }
+                })
+                .setNegativeButton("取消", null)
                 .show();
     }
 
@@ -4727,7 +4862,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         });
 
         // neural acoustic model: universal prior + optional per-singer fine-tune
-        box.addView(label("BriNeting 神经声学模型（v9.1）"));
+        box.addView(label("BriNeting 神经声学模型（v9.2）"));
         neuralChk = null;
         TextView nnDesc = new TextView(this);
         neuralDesc = nnDesc;

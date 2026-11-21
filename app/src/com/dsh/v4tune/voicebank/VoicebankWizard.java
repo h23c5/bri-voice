@@ -39,11 +39,29 @@ public final class VoicebankWizard {
 
     private VoicebankWizard() { }
 
+    /** format chosen in the dialog; also used when a zip is picked later */
+    private static boolean lastNeural = false;
+
     public static void start(final Activity act) {
         final EditText path = new EditText(act);
         path.setInputType(InputType.TYPE_CLASS_TEXT);
         path.setHint("/sdcard/VoiceDB/BK8H76TAEHXWSKDB");
         final EditText name = new EditText(act);
+        final boolean[] neural = {false};
+        android.widget.RadioGroup types = new android.widget.RadioGroup(act);
+        types.setOrientation(android.widget.RadioGroup.HORIZONTAL);
+        android.widget.RadioButton rbVoice = new android.widget.RadioButton(act);
+        rbVoice.setText("标准 .v4voice");
+        rbVoice.setId(1);
+        android.widget.RadioButton rbNeural = new android.widget.RadioButton(act);
+        rbNeural.setText("神经 .v4neural");
+        rbNeural.setId(2);
+        types.addView(rbVoice);
+        types.addView(rbNeural);
+        rbVoice.setChecked(true);
+        types.setOnCheckedChangeListener(new android.widget.RadioGroup.OnCheckedChangeListener() {
+            public void onCheckedChanged(android.widget.RadioGroup g, int id) { neural[0] = (id == 2); }
+        });
         LinearLayout box = new LinearLayout(act);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(24, 8, 24, 8);
@@ -67,6 +85,8 @@ public final class VoicebankWizard {
             public void onClick(android.view.View v) { pickZip(act); }
         });
         box.addView(zipBtn);
+        box.addView(label(act, "声库类型"));
+        box.addView(types);
         box.addView(label(act, L.t("vb.bank.name")));
         box.addView(name);
         new AlertDialog.Builder(act)
@@ -74,7 +94,8 @@ public final class VoicebankWizard {
                 .setView(box)
                 .setPositiveButton(L.t("vb.build"), new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface d, int w) {
-                        run(act, path.getText().toString().trim(), name.getText().toString().trim());
+                        lastNeural = neural[0];
+                        run(act, path.getText().toString().trim(), name.getText().toString().trim(), null, lastNeural);
                     }
                 })
                 .setNegativeButton(L.t("update.later"), null)
@@ -114,11 +135,16 @@ public final class VoicebankWizard {
     }
 
     private static void run(final Activity act, final String dirText, final String nameText) {
-        run(act, dirText, nameText, null);
+        run(act, dirText, nameText, null, lastNeural);
     }
 
     /** extra is the zip diagnostic block, shown in the failure sheet */
     private static void run(final Activity act, final String dirText, final String nameText, final String extra) {
+        run(act, dirText, nameText, extra, lastNeural);
+    }
+
+    private static void run(final Activity act, final String dirText, final String nameText,
+                            final String extra, final boolean neural) {
         final File dir = new File(dirText);
         if (!dir.isDirectory()) { toast(act, L.t("vb.bad.dir")); return; }
         File oto = findOto(dir, 0);
@@ -147,11 +173,23 @@ public final class VoicebankWizard {
                     }
                     File vdir = new File(Environment.getExternalStorageDirectory(), "BriVoice_root/voicebanks");
                     if (!vdir.exists()) vdir.mkdirs();
-                    out = new File(vdir, w.id + ".v4voice");
+                    w.engine = neural ? "neural" : "voice";
+                    if (neural) {
+                        w.neuralParams.put("breath", 0.5);
+                        w.neuralParams.put("tension", 0.55);
+                        w.neuralParams.put("brightness", 0.55);
+                        w.neuralParams.put("nasality", 0.32);
+                        w.neuralParams.put("clarity", 0.72);
+                        w.neuralParams.put("vibrato", 0.5);
+                        w.neuralParams.put("dynamics", 0.65);
+                        w.neuralParams.put("pitch", 0.65);
+                    }
+                    out = new File(vdir, w.id + (neural ? ".v4neural" : ".v4voice"));
                     w.writeZip(out, null);
                     int bandCount = 0;
                     for (ArrayList<VoicebankPack.Band> bl : w.phonemes.values()) bandCount += bl.size();
-                    info = "声库：" + w.name + "\n元音：" + w.phonemes.size() + " 个\n频段：" + bandCount
+                    info = "声库：" + w.name + "\n类型：" + (neural ? "神经声库（.v4neural，BriNeting 引擎）" : "标准声库（.v4voice，传统引擎）")
+                            + "\n元音：" + w.phonemes.size() + " 个\n频段：" + bandCount
                             + " 条\n辅音谱：" + w.noise.size() + " 个\n文件：" + out.getName()
                             + "（" + (out.length() / 1024) + " KB）";
                 } catch (Throwable t) {
