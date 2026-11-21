@@ -1,7 +1,7 @@
 {
-  "versionCode": 75,
-  "versionName": "9.0",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v9.0/BriVoice-9.0.apk",
-  "sha256": "951b7e22fa93b513a2737fc12a2f766020b8775b351a615dfc9e3e69221a145b",
-  "notes": "release 9.0: XStudio .svip3 project import; on-device universal neural spectral model trained from all installed measured voicebanks, then per-singer fine-tune (.v4neural) with progress UI and enable toggle"
+  "versionCode": 76,
+  "versionName": "9.1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v9.1/BriVoice-9.1.apk",
+  "sha256": "2bcda4ab0499c3d9140014d61e365ab5dc9c83f25cedc8a45b17a8fabef8f3cf",
+  "notes": "release 9.1: BriNeting neural base trained from all installed measured voicebanks; all singers synthesize through the base by default; new AI-badged neural singer entry and per-singer fine-tune; removed direct V4/UTAU source loading"
 }

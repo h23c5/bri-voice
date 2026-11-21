@@ -20,11 +20,11 @@ import java.util.Locale;
 import java.util.Random;
 
 /**
- * On-device neural spectral voice model (v9.0).
+ * On-device neural spectral voice model (v9.1, BriNeting base).
  *
  * <p>Two-stage training, both on the phone:</p>
  * <ol>
- *   <li><b>Universal prior</b> - {@link #trainUniversal(List, Progress)} learns the common
+ *   <li><b>BriNeting base</b> - {@link #trainUniversal(List, Progress)} learns the common
  *       spectral-envelope patterns of every installed voicebank. Only the harmonic frames already
  *       measured into each {@code .v4voice} are read; no audio samples are decoded.</li>
  *   <li><b>Per-singer acoustic model</b> - {@link #fineTune(NeuralSpectrum, VoiceModel, Progress)}
@@ -220,10 +220,15 @@ public class NeuralSpectrum {
         }
     }
 
+    /** the canonical 64-bin log grid shared by every model (Hz, copy) */
+    public static double[] canonicalGrid() {
+        return GRID_HZ.clone();
+    }
+
     public String describe() {
         if (legacy) return "旧版模型 · " + sampleCount + " 帧";
         String base;
-        if (kind == KIND_UNIVERSAL) base = "通用模型";
+        if (kind == KIND_UNIVERSAL) base = "BriNeting 基座";
         else if (kind == KIND_FINE) base = "当前歌手模型";
         else base = "单声库模型";
         return base + " · " + Math.max(1, bankCount) + " 声库 · " + sampleCount + " 帧"
@@ -259,7 +264,7 @@ public class NeuralSpectrum {
         if (usable.isEmpty()) throw new IOException("没有可用的实测声库（需要含谐波数据的 .v4voice）");
         if (cb != null) cb.onProgress(2, "读取 " + usable.size() + " 个声库的频谱…");
         Data data = collect(usable, true, cb);
-        if (data.count < 8) throw new IOException("实测帧太少，无法训练通用模型");
+        if (data.count < 8) throw new IOException("实测帧太少，无法训练 BriNeting 基座");
         return fit(data, KIND_UNIVERSAL, usable.size(), HIDDEN_UNIVERSAL, EPOCHS_UNIVERSAL, LR,
                 null, cb);
     }
