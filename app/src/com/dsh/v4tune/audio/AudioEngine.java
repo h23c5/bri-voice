@@ -383,6 +383,8 @@ public class AudioEngine {
         playThread = new Thread(new Runnable() {
             public void run() {
                 long wallStart = 0;
+                final boolean[] sampleStop = new boolean[1];
+                Thread sampler = null;
                 try {
                     // A long or dense song is rendered to the end before the track starts. The synth always
                     // restarts at frame 0 because the filters need their history, so with the doubling window
@@ -416,10 +418,48 @@ public class AudioEngine {
                     }
                     at.play();
                     wallStart = System.currentTimeMillis();
+                    final long clockStart = wallStart;
                     int pos = (int) start;
-                    long lastCb = 0;
                     long waitedMs = 0;
                     boolean writeFailed = false;
+                    // Independent 16 ms cursor sampler. The writer can only report when the producer
+                    // delivers another chunk, and while it renders the first seconds that happens in
+                    // ~0.5-1 s steps, so the first part of a song made the playhead jump in chunks.
+                    // The AudioTrack head keeps moving smoothly as long as the buffer is fed, so sample
+                    // it on its own thread from the moment the track starts.
+                    sampler = new Thread(new Runnable() {
+                        public void run() {
+                            boolean hadHead = false;
+                            while (playing && !sampleStop[0]) {
+                                long head = 0;
+                                try { head = at.getPlaybackHeadPosition(); } catch (Throwable ignored) { }
+                                long heard;
+                                if (head > 0) {
+                                    heard = start + head;
+                                    hadHead = true;
+                                } else if (!hadHead) {
+                                    long elapsed = System.currentTimeMillis() - clockStart;
+                                    // Before the first frame is consumed, do not run ahead of the sound.
+                                    if (elapsed < 250L) {
+                                        try { Thread.sleep(PROGRESS_MS); } catch (InterruptedException ignored) { }
+                                        continue;
+                                    }
+                                    heard = start + (long) (elapsed * sr / 1000.0);
+                                } else {
+                                    try { Thread.sleep(PROGRESS_MS); } catch (InterruptedException ignored) { }
+                                    continue;
+                                }
+                                heard -= (long) (cursorOffsetMs * sr / 1000.0);
+                                if (heard < start) heard = start;
+                                if (heard > total) heard = total;
+                                playTick = TimeUtil.secToTick(src.song(), heard / (double) sr);
+                                if (cb != null) cb.onProgress(heard);
+                                if (heard >= total) break;
+                                try { Thread.sleep(PROGRESS_MS); } catch (InterruptedException ignored) { }
+                            }
+                        }
+                    }, "v4tune-progress");
+                    sampler.start();
                     while (playing && pos < total) {
                         int ready = src.ready();
                         boolean done = src.finished();
@@ -447,22 +487,12 @@ public class AudioEngine {
                             break;
                         }
                         pos += Math.min(cnt, written / 2);
-                        long now = System.currentTimeMillis();
-                        if (cb != null && now - lastCb >= PROGRESS_MS) {
-                            lastCb = now;
-                            long head = 0;
-                            try { head = at.getPlaybackHeadPosition(); } catch (Throwable ignored) { }
-                            long byClock = start + (long) ((now - wallStart) * sr / 1000.0);
-                            long played = (head > 0) ? Math.min(start + head, byClock) : byClock;
-                            played -= (long) (cursorOffsetMs * sr / 1000.0);
-                            if (played < start) played = start;
-                            playTick = TimeUtil.secToTick(src.song(), played / (double) sr);
-                            cb.onProgress(played);
-                        }
                     }
                     android.util.Log.i("V4Tune", "playStream writer done: session=" + session
                             + " pos=" + pos + " waitedMs=" + waitedMs + " failed=" + writeFailed);
                     if (writeFailed) {
+                        sampleStop[0] = true;
+                        if (sampler != null) { try { sampler.join(80L); } catch (InterruptedException ignored) { } }
                         if (playing && cb != null) cb.onError("音频输出中断，已停止");
                         return;
                     }
@@ -472,6 +502,8 @@ public class AudioEngine {
                     if (playing && pos < total && src.finished()) {
                         android.util.Log.e("V4Tune", "playStream render ended early: session=" + session
                                 + " pos=" + pos + " total=" + total);
+                        sampleStop[0] = true;
+                        if (sampler != null) { try { sampler.join(80L); } catch (InterruptedException ignored) { } }
                         if (playing && cb != null) cb.onError("渲染中断，音频不完整");
                         return;
                     }
@@ -505,18 +537,16 @@ public class AudioEngine {
                             return;
                         }
                         if (elapsed > (long) ((total - start) * 1000.0 / sr) + 15000L) break;
-                        if (cb != null && now - lastCb >= PROGRESS_MS) {
-                            lastCb = now;
-                            playTick = TimeUtil.secToTick(src.song(), heard / (double) sr);
-                            cb.onProgress(heard);
-                        }
                         try { Thread.sleep(PROGRESS_MS); } catch (InterruptedException ignored) { }
                     }
+                    sampleStop[0] = true;
+                    if (sampler != null) { try { sampler.join(80L); } catch (InterruptedException ignored) { } }
                     if (playing && cb != null) cb.onDone();
                 } catch (Throwable t) {
                     android.util.Log.e("V4Tune", "playStream failed: " + t, t);
                     if (playing && cb != null) cb.onError(String.valueOf(t.getMessage()));
                 } finally {
+                    sampleStop[0] = true;
                     playing = false;
                     try { at.stop(); at.release(); } catch (Throwable ignored) { }
                     if (track == at) track = null;

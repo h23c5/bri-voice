@@ -1,7 +1,7 @@
 {
-  "versionCode": 79,
-  "versionName": "9.2.2",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v9.2.2/BriVoice-9.2.2.apk",
-  "sha256": "335be4a6b6c7d51579c2f9b753869ad174dff04c3122c370a718ef3d8a7369c2",
-  "notes": "release 9.2.2: playhead now moves continuously instead of stepping; playback position is reported about every 16 ms instead of every 100 ms and the UI refreshes it once per frame, with the same callback coalescing so slow devices just draw fewer frames; no audio, voice or export changes"
+  "versionCode": 80,
+  "versionName": "9.2.3",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v9.2.3/BriVoice-9.2.3.apk",
+  "sha256": "973de7d65e1df4481f5f19606e252df552a9d9f77d72938d859f01cc0a639d0a",
+  "notes": "release 9.2.3: the playhead now stays continuous from the very start of a song. Playback position is sampled from the AudioTrack on its own 16 ms thread instead of only when the renderer delivers a new chunk, so short songs that stream while rendering no longer jump in 0.5-1 s steps; audio, voices and exports are unchanged"
 }
