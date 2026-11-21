@@ -47,6 +47,13 @@ public class AudioEngine {
      * the live sampler keeps correcting for the actual route.
      */
     public volatile int outputLatencyMs;
+    /**
+     * True when the start-up measurement produced a trustworthy value. In that case the live
+     * timestamps are only allowed to fine-tune around it: some devices report a frame that is a
+     * whole output buffer behind the playback head, which used to drive the correction towards its
+     * 900 ms ceiling and made the cursor drift behind the sound on long projects.
+     */
+    public volatile boolean autoLatency;
 
     public boolean isPlaying() { return playing; }
     public long playTick() { return playTick; }
@@ -450,25 +457,39 @@ public class AudioEngine {
                                     // known frame actually reaches the output, so use it live and
                                     // fall back to the start-up measurement when it is unavailable.
                                     double live = LatencyCalibrator.fromTimestamp(at, head, sr);
+                                    final double measured = Math.max(0, outputLatencyMs);
+                                    final boolean auto = autoLatency;
                                     if (!Double.isNaN(live)) {
+                                        if (auto) {
+                                            // Fine-tune only. A raw value that runs away (buffer-long
+                                            // timestamp lag) must not accumulate into a visible offset.
+                                            double lo = measured - 80.0, hi = measured + 120.0;
+                                            if (live < lo) live = lo;
+                                            else if (live > hi) live = hi;
+                                        }
                                         if (latSmooth < 0) latSmooth = live;
                                         else latSmooth += (live - latSmooth) * 0.15;
                                         if (!liveLogged) {
                                             liveLogged = true;
                                             android.util.Log.i("V4Tune", "live latency available: "
-                                                    + String.format(java.util.Locale.US, "%.1f", live) + " ms");
+                                                    + String.format(java.util.Locale.US, "%.1f", live) + " ms"
+                                                    + (auto ? " (clamped around " + measured + ")" : ""));
                                         }
+                                    } else if (auto) {
+                                        latSmooth = measured;
                                     }
                                     double latencyMs = (latSmooth >= 0)
-                                            ? latSmooth : Math.max(0, outputLatencyMs);
+                                            ? latSmooth : measured;
                                     if (latencyMs < 0) latencyMs = 0;
-                                    if (latencyMs > 900) latencyMs = 900;
+                                    if (latencyMs > 600) latencyMs = 600;
                                     if (!latencyLogged) {
                                         latencyLogged = true;
                                         android.util.Log.i("V4Tune", "playback latency: session=" + session
                                                 + " live=" + (Double.isNaN(live) ? "n/a" : String.format(java.util.Locale.US, "%.1f", live))
                                                 + " used=" + String.format(java.util.Locale.US, "%.1f", latencyMs)
-                                                + " measured=" + outputLatencyMs + " manual=" + cursorOffsetMs);
+                                                + " measured=" + outputLatencyMs
+                                                + " auto=" + auto
+                                                + " manual=" + (auto ? 0 : cursorOffsetMs));
                                     }
                                     heard -= (long) (latencyMs * sr / 1000.0);
                                 } else if (!hadHead) {
@@ -483,7 +504,7 @@ public class AudioEngine {
                                     try { Thread.sleep(PROGRESS_MS); } catch (InterruptedException ignored) { }
                                     continue;
                                 }
-                                heard -= (long) (cursorOffsetMs * sr / 1000.0);
+                                if (!autoLatency) heard -= (long) (cursorOffsetMs * sr / 1000.0);
                                 if (heard < start) heard = start;
                                 if (heard > total) heard = total;
                                 playTick = TimeUtil.secToTick(src.song(), heard / (double) sr);

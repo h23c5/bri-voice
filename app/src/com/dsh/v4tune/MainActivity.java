@@ -215,6 +215,22 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         renderAccel = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("renderaccel", true);
         engine.cursorOffsetMs = cursorOffsetMs;
         engine.outputLatencyMs = Math.max(0, latencyMeasuredMs);
+        engine.autoLatency = latencyAuto && latencyMeasuredMs >= 0;
+        // Upgrade cleanup: a value left over from the old manual slider could reach +/-2500 ms and,
+        // when combined with automatic measurement, put the cursor seconds behind the sound. Once
+        // automatic measurement is active it owns the compensation, so drop the stale manual value.
+        boolean legacyOffset = latencyAuto && latencyMeasuredMs >= 0
+                ? cursorOffsetMs != 0
+                : Math.abs(cursorOffsetMs) > 500;   // beyond any realistic device latency
+        android.content.SharedPreferences offsetPrefs = getSharedPreferences("brivoice", MODE_PRIVATE);
+        if (!offsetPrefs.getBoolean("offsetReset931", false)) {
+            if (legacyOffset) {
+                cursorOffsetMs = 0;
+                engine.cursorOffsetMs = 0;
+                offsetPrefs.edit().putInt("cursorOffsetMs", 0).apply();
+            }
+            offsetPrefs.edit().putBoolean("offsetReset931", true).apply();
+        }
         reloadPacksAsync(false);
         applyExtServer();          // only starts anything when the user has enabled it
         song = Demo.build();
@@ -4743,24 +4759,25 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     }
 
     private void saveLatency(int ms, String source) {
-        latencyMeasuredMs = Math.max(0, ms);
+        // No consumer device has seconds of output latency; a larger reading means the timestamp
+        // pair was unreliable and must not be allowed to push the cursor that far behind.
+        latencyMeasuredMs = Math.min(600, Math.max(0, ms));
         latencySource = source == null ? "" : source;
         engine.outputLatencyMs = latencyMeasuredMs;
+        engine.autoLatency = latencyAuto && latencyMeasuredMs >= 0;
         android.content.SharedPreferences p = getSharedPreferences("brivoice", MODE_PRIVATE);
         android.content.SharedPreferences.Editor ed = p.edit()
                 .putInt("latencyMeasuredMs", latencyMeasuredMs)
                 .putString("latencySource", latencySource)
                 .putLong("latencyMeasuredAt", System.currentTimeMillis());
-        // Before v9.3 the manual slider was the only way to compensate, so an existing value
-        // already represents the same output delay; auto measurement replaces it once.
-        if (!p.getBoolean("latencyAutoMigrated", false)) {
-            if (cursorOffsetMs != 0) {
-                cursorOffsetMs = 0;
-                engine.cursorOffsetMs = 0;
-                ed.putInt("cursorOffsetMs", 0);
-            }
-            ed.putBoolean("latencyAutoMigrated", true);
+        // Automatic measurement now owns the compensation: keep any manual value out of the sum,
+        // otherwise the two corrections stack and the cursor can trail by seconds.
+        if (latencyAuto && cursorOffsetMs != 0) {
+            cursorOffsetMs = 0;
+            engine.cursorOffsetMs = 0;
+            ed.putInt("cursorOffsetMs", 0);
         }
+        ed.putBoolean("latencyAutoMigrated", true);
         ed.apply();
     }
 
@@ -5031,11 +5048,13 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         box.addView(nnOpen);
 
         // cursor delay compensation: the sound a device emits lags the picture by its output buffer
+        final boolean autoOffset = latencyAuto && latencyMeasuredMs >= 0;
         final TextView offLabel = label(L.t("set.offset", Integer.valueOf(cursorOffsetMs)));
         box.addView(offLabel);
         final SeekBar off = new SeekBar(this);
         off.setMax(5000);                       // -2500 .. +2500 ms, 2500 is zero
         off.setProgress(cursorOffsetMs + 2500);
+        off.setEnabled(!autoOffset);
         off.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             public void onProgressChanged(SeekBar sb, int pr, boolean u) {
                 offLabel.setText(L.t("set.offset", Integer.valueOf(pr - 2500)));
@@ -5045,7 +5064,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         });
         box.addView(off);
         TextView offDesc = new TextView(this);
-        offDesc.setText(L.t("set.offset.desc"));
+        offDesc.setText(autoOffset
+                ? L.t("set.offset.desc") + "\n自动测量已启用：此滑块不会叠加使用，需要手动微调请先取消上面的勾选。"
+                : L.t("set.offset.desc"));
         offDesc.setTextColor(Theme.TEXT_DIM);
         offDesc.setTextSize(12f);
         offDesc.setPadding(dp(4), 0, 0, dp(6));
@@ -5062,6 +5083,15 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         final CheckBox latAuto = new CheckBox(this);
         latAuto.setText("启动时自动测量输出延迟");
         latAuto.setChecked(latencyAuto);
+        latAuto.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean on) {
+                boolean useAuto = on && latencyMeasuredMs >= 0;
+                off.setEnabled(!useAuto);
+                offDesc.setText(useAuto
+                        ? L.t("set.offset.desc") + "\n自动测量已启用：此滑块不会叠加使用。"
+                        : L.t("set.offset.desc"));
+            }
+        });
         box.addView(latAuto);
         Button remeasure = smallButton("重新测量输出延迟…", new View.OnClickListener() {
             public void onClick(View v) { measureLatencyNow(latInfo); }
@@ -5098,9 +5128,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 .setView(sc)
                 .setPositiveButton(L.t("ai.save"), new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface d, int w) {
-                        cursorOffsetMs = off.getProgress() - 2500;
-                        engine.cursorOffsetMs = cursorOffsetMs;
                         latencyAuto = latAuto.isChecked();
+                        boolean autoUse = latencyAuto && latencyMeasuredMs >= 0;
+                        cursorOffsetMs = autoUse ? 0 : off.getProgress() - 2500;
+                        engine.cursorOffsetMs = cursorOffsetMs;
+                        engine.autoLatency = autoUse;
                         getSharedPreferences("brivoice", MODE_PRIVATE).edit()
                                 .putInt("cursorOffsetMs", cursorOffsetMs)
                                 .putBoolean("latencyAuto", latencyAuto).apply();
