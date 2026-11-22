@@ -1,0 +1,10 @@
+{
+ "version": "1",
+ "name": "BriTune-Net v1",
+ "arch": "68-96-64-11",
+ "params": 13547,
+ "size": 54800,
+ "sha256": "82b87373d53c180541e9a58eb2327a5b55d9cc73773ba16f47d01b1a0156f472",
+ "url": "https://gitee.com/h23c5/bri-voice/raw/main/aimodel/britune-v1.bin",
+ "note": "Local tuning model for BriVoice v10_26H1.0; distilled from general Chinese vocal tuning strategies, runs on-device."
+}
