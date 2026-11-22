@@ -352,6 +352,7 @@ public class VoicePack {
         p.vibrato = num(map, "vibrato", p.vibrato, 0.0, 1.0);
         p.dynamics = num(map, "dynamics", p.dynamics, 0.0, 1.0);
         p.pitch = num(map, "pitch", p.pitch, 0.0, 1.0);
+        p.mix = num(map, "mix", p.mix, 0.0, 1.0);
         p.clampAll();
     }
 
@@ -758,7 +759,8 @@ public class VoicePack {
         kv(sb, 2, "clarity", numStr(np.clarity), true);
         kv(sb, 2, "vibrato", numStr(np.vibrato), true);
         kv(sb, 2, "dynamics", numStr(np.dynamics), true);
-        kv(sb, 2, "pitch", numStr(np.pitch), false);
+        kv(sb, 2, "pitch", numStr(np.pitch), true);
+        kv(sb, 2, "mix", numStr(np.mix), false);
         sb.append("  },\n");
         sb.append("  \"voice\": {\n");
         kv(sb, 2, "formantScale", numStr(m.formantScale), true);

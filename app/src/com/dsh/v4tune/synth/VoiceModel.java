@@ -128,19 +128,21 @@ public class VoiceModel {
         public double vibrato = 0.5;     // 颤音深度
         public double dynamics = 0.6;    // DYN 响应
         public double pitch = 0.6;       // PIT/PBS 响应
+        public double mix = 0.6;         // 神经频谱占比：其余来自声库实测包络
 
         public void clampAll() {
             breath = clamp01(breath); tension = clamp01(tension);
             brightness = clamp01(brightness); nasality = clamp01(nasality);
             clarity = clamp01(clarity); vibrato = clamp01(vibrato);
             dynamics = clamp01(dynamics); pitch = clamp01(pitch);
+            mix = clamp01(mix);
         }
 
         public void copyFrom(NeuralParams o) {
             if (o == null) return;
             breath = o.breath; tension = o.tension; brightness = o.brightness;
             nasality = o.nasality; clarity = o.clarity; vibrato = o.vibrato;
-            dynamics = o.dynamics; pitch = o.pitch;
+            dynamics = o.dynamics; pitch = o.pitch; mix = o.mix;
             clampAll();
         }
 

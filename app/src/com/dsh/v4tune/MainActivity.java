@@ -2151,7 +2151,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 L.t("menu.tools.tutorial"),
                 L.t("menu.tools.guide"),
                 "角色立绘（左下角）",
-                "BriNeting 神经声学模型（v9.2）"
+                "BriNeting 神经声学模型（v9.3.2）"
         };
         menu(L.t("menu.tools"), null, items, -1, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, int which) {
@@ -4287,6 +4287,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 n.vibrato = Double.parseDouble(p[5]);
                 n.dynamics = Double.parseDouble(p[6]);
                 n.pitch = Double.parseDouble(p[7]);
+                if (p.length >= 9) n.mix = Double.parseDouble(p[8]);
                 n.clampAll();
             }
         } catch (Throwable ignored) { }
@@ -4297,7 +4298,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         VoiceModel.NeuralParams n = vm.neuralParams;
         n.clampAll();
         String s = n.breath + "," + n.tension + "," + n.brightness + "," + n.nasality + ","
-                + n.clarity + "," + n.vibrato + "," + n.dynamics + "," + n.pitch;
+                + n.clarity + "," + n.vibrato + "," + n.dynamics + "," + n.pitch + "," + n.mix;
         getSharedPreferences("brivoice", MODE_PRIVATE).edit()
                 .putString("np_" + neuralKey(vm), s).apply();
     }
@@ -4672,7 +4673,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
         refreshNeuralWidgets();
         new AlertDialog.Builder(this)
-                .setTitle("BriNeting 神经声学模型（v9.2）")
+                .setTitle("BriNeting 神经声学模型（v9.3.2）")
                 .setView(box)
                 .setNegativeButton("关闭", null)
                 .show();
@@ -4685,8 +4686,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         if (vm.neuralParams == null) vm.neuralParams = new VoiceModel.NeuralParams();
         final VoiceModel.NeuralParams np = vm.neuralParams;
         final double[] tmp = {np.breath, np.tension, np.brightness, np.nasality,
-                np.clarity, np.vibrato, np.dynamics, np.pitch};
-        final String[] names = {"气息", "张力", "明亮", "鼻音", "吐字清晰度", "颤音深度", "DYN 响应", "PIT/PBS 响应"};
+                np.clarity, np.vibrato, np.dynamics, np.pitch, np.mix};
+        final String[] names = {"气息", "张力", "明亮", "鼻音", "吐字清晰度", "颤音深度",
+                "DYN 响应", "PIT/PBS 响应", "神经混合（其余用声库实测包络）"};
 
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -4736,7 +4738,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     public void onClick(DialogInterface d, int w) {
                         np.breath = tmp[0]; np.tension = tmp[1]; np.brightness = tmp[2];
                         np.nasality = tmp[3]; np.clarity = tmp[4]; np.vibrato = tmp[5];
-                        np.dynamics = tmp[6]; np.pitch = tmp[7];
+                        np.dynamics = tmp[6]; np.pitch = tmp[7]; np.mix = tmp[8];
                         np.clampAll();
                         saveNeuralPrefs(vm);
                         clearRenderCache();
@@ -5032,7 +5034,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         });
 
         // neural acoustic model: universal prior + optional per-singer fine-tune
-        box.addView(label("BriNeting 神经声学模型（v9.2）"));
+        box.addView(label("BriNeting 神经声学模型（v9.3.2）"));
         neuralChk = null;
         TextView nnDesc = new TextView(this);
         neuralDesc = nnDesc;

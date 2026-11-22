@@ -906,6 +906,22 @@ public class Renderer {
         b.dyn = dyn;
         b.db = new double[vm.harmonicFreqs.length];
         if (!vm.neural.predictForGrid(sym, f0, dyn, pos, vm.harmonicFreqs, b.db)) return null;
+        // v9.3.2: keep part of the singer's own measured envelope. The neural model generalises
+        // across f0/position but a little measured detail preserves the individual formants that
+        // make a singer recognisable, which is exactly where a small on-device model is weakest.
+        double mix = (vm.neuralParams == null) ? 0.6 : vm.neuralParams.mix;
+        if (mix < 0.999) {
+            VoiceModel.HarmonicBand m = vm.bandFor(sym, f0, dyn);
+            if (m != null) {
+                double[] measured = new double[b.db.length];
+                m.curveAt(pos, measured);
+                for (int k = 0; k < b.db.length; k++) {
+                    double v = measured[k];
+                    if (v < -90) v = -90; else if (v > 6) v = 6;
+                    b.db[k] = b.db[k] * mix + v * (1.0 - mix);
+                }
+            }
+        }
         return b;
     }
 

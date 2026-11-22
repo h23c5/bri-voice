@@ -577,17 +577,19 @@ public class AudioEngine {
                         try { head = at.getPlaybackHeadPosition(); } catch (Throwable ignored) { }
                         long now = System.currentTimeMillis();
                         long byClock = start + (long) (elapsed * sr / 1000.0);
-                        long heard = (head > 0) ? (start + head) : byClock;
-                        heard -= (long) (cursorOffsetMs * sr / 1000.0);
-                        if (heard < start) heard = start;
-                        if (heard > total) heard = total;
-                        if (heard > lastHeard) { lastHeard = heard; lastMove = now; }
-                        if (heard >= total) break;
+                        // Completion must not depend on the display offset: with a positive manual
+                        // pointer delay the reported position can never reach total even though the
+                        // track has finished, which used to look like a stall and raised an error.
+                        long rawHeard = (head > 0) ? (start + head) : byClock;
+                        if (rawHeard < start) rawHeard = start;
+                        if (rawHeard > total) rawHeard = total;
+                        if (rawHeard > lastHeard) { lastHeard = rawHeard; lastMove = now; }
+                        if (rawHeard >= total) break;
                         // If the device head has not moved for several seconds the track died under us.
                         // End through onError instead of hanging forever.
                         if (now - lastMove > 5000L) {
                             android.util.Log.e("V4Tune", "playStream stalled: session=" + session
-                                    + " heard=" + heard + " total=" + total);
+                                    + " heard=" + rawHeard + " total=" + total);
                             if (cb != null) cb.onError("音频输出中断，已停止");
                             return;
                         }

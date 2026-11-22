@@ -32,10 +32,12 @@ import java.util.Random;
  *       colour while needing only a few hundred frames.</li>
  * </ol>
  *
- * <p>The network is deliberately small (one tanh hidden layer, 64-bin envelope). It predicts the
- * harmonic envelope used by the measured-harmonic renderer; the glottal source, formants,
- * consonants and effects still come from the existing synthesizer. This is an acoustic
- * <i>spectral</i> model, not a full XStudio/NNSVS acoustic model trained on audio.</p>
+ * <p>The v9.3.2 network is a two-layer tanh MLP (64x48 hidden) predicting a 64-bin envelope.
+ * Compared with the first version it adds articulation features (F1/F2/F3 spacing, voiced-noise
+ * interaction, consonant place), a perceptual band weighting, early stopping on a held-out split
+ * and an L2-SP pull back to the universal prior during fine-tuning. The glottal source, formants,
+ * consonants and effects still come from the existing synthesizer; this remains a spectral-envelope
+ * model, not a full XStudio/NNSVS acoustic model trained on audio.</p>
  *
  * <p>Inputs are bank-independent articulatory features (phoneme class, F1/F2/F3, voicing, noise,
  * nasal zero, pitch, DYN and note position), so a universal prior transfers to any singer without
@@ -43,7 +45,8 @@ import java.util.Random;
  */
 public class NeuralSpectrum {
     private static final int MAGIC = 0x56344E4E; // "V4NN"
-    private static final int VERSION = 2;
+    private static final int VERSION = 3;
+    private static final int VERSION_V2 = 2;
     private static final int VERSION_LEGACY = 1;
 
     public static final int KIND_BANK = 0;
@@ -53,33 +56,47 @@ public class NeuralSpectrum {
     private static final int GRID = 64;
     private static final double GRID_LO = 60.0;
     private static final double GRID_HI = 16000.0;
-    private static final int FEATURE_DIM = 27;
+    private static final int FEATURE_DIM = 33;
     private static final int MAX_SYMBOLS = 2048;
     private static final int MAX_GRID = 4096;
     private static final int MAX_SAMPLES = 36000;
-    private static final int HIDDEN_BANK = 32;
-    private static final int HIDDEN_UNIVERSAL = 48;
+    private static final int HID1_BANK = 40;
+    private static final int HID1_UNIVERSAL = 64;
+    private static final int HID1_FINE = 64;
+    private static final int HID2_BANK = 24;
+    private static final int HID2_UNIVERSAL = 48;
+    private static final int HID2_FINE = 48;
 
-    private static final int EPOCHS_BANK = 120;
-    private static final int EPOCHS_UNIVERSAL = 80;
-    private static final int EPOCHS_FINE = 55;
+    private static final int EPOCHS_BANK = 160;
+    private static final int EPOCHS_UNIVERSAL = 130;
+    private static final int EPOCHS_FINE = 100;
     private static final int BATCH = 16;
-    private static final double LR = 0.010;
-    private static final double LR_FINE = 0.0045;
+    private static final double LR = 0.008;
+    private static final double LR_FINE = 0.0035;
     private static final double SCALE = 12.0;
+    /** L2-SP pull towards the universal weights during per-singer fine-tuning. */
+    private static final double SP_LAMBDA = 0.0025;
+    /** perceptual loss weighting: low/mid bands count more than the top octave */
+    private static final double[] BAND_W = buildBandWeights();
+    private static final double BAND_W_MEAN = meanOf(BAND_W);
 
     /** fixed log-spaced analysis grid shared by every model (Hz) */
     private static final double[] GRID_HZ = buildGrid();
 
     public final String[] symbols;
     public final int gridLen;
+    /** width of the first hidden layer */
     public final int hidden;
+    /** width of the second hidden layer (0 for a v1/v2 single-layer model) */
+    public final int hidden2;
     public final int inputDim;
     public final float[] meanDb;
     public final float[][] w1;
     public final float[] b1;
     public final float[][] w2;
     public final float[] b2;
+    public final float[][] w3;
+    public final float[] b3;
     /** {@link #KIND_BANK}, {@link #KIND_UNIVERSAL} or {@link #KIND_FINE}. */
     public final int kind;
     /** number of voicebanks that contributed training data (1 for a per-bank model). */
@@ -96,6 +113,7 @@ public class NeuralSpectrum {
 
     private NeuralSpectrum(String[] symbols, int gridLen, float[] meanDb,
                            float[][] w1, float[] b1, float[][] w2, float[] b2,
+                           float[][] w3, float[] b3,
                            int kind, int bankCount, int sampleCount,
                            double trainLoss, double valLoss, boolean legacy) {
         this.symbols = symbols == null ? new String[0] : symbols;
@@ -105,7 +123,10 @@ public class NeuralSpectrum {
         this.b1 = b1;
         this.w2 = w2;
         this.b2 = b2;
+        this.w3 = w3;
+        this.b3 = b3;
         this.hidden = b1.length;
+        this.hidden2 = (b2 == null) ? 0 : b2.length;
         this.inputDim = (w1.length > 0 && w1[0] != null) ? w1[0].length : symbols.length + 3;
         this.kind = kind;
         this.bankCount = bankCount;
@@ -134,9 +155,10 @@ public class NeuralSpectrum {
         Integer ix = index.get(sym);
         if (ix == null || out == null || out.length < gridLen) return false;
         float[] x = legacy ? legacyInput(ix.intValue(), f0, dyn, pos) : features(sym, f0, dyn, pos);
-        float[] h = new float[hidden];
+        float[] h1 = new float[hidden];
+        float[] h2 = new float[hidden2];
         float[] o = new float[gridLen];
-        forward(x, h, o);
+        forward(x, h1, h2, o);
         for (int k = 0; k < gridLen; k++) {
             double db = meanDb[k] + SCALE * Math.tanh(o[k]);
             if (db < -90.0) db = -90.0;
@@ -202,20 +224,38 @@ public class NeuralSpectrum {
         x[24] = (float) clamp(lf, -3, 3);
         x[25] = (float) ((clamp01(dyn) - 0.5) * 2.0);
         x[26] = (float) ((clamp01(pos) - 0.5) * 2.0);
+        // v9.3.2 articulation features: formant spacing/rounding and consonant place
+        double f1 = d == null ? 500 : d.f1;
+        double f2 = d == null ? 1500 : d.f2;
+        double f3 = d == null ? 2500 : d.f3;
+        x[27] = (float) clamp((f1 - 300) / 700.0, -1.5, 2.0);       // openness
+        x[28] = (float) clamp((f2 - 1000) / 1500.0, -1.5, 2.0);     // frontness
+        x[29] = (float) clamp((f2 - f1) / 1200.0, -2.0, 2.0);       // rounding / backness
+        x[30] = (float) clamp((f3 - f2) / 1200.0, -2.0, 2.0);       // front-cavity spacing
+        double vv = d == null ? 1.0 : clamp01(d.voiced);
+        double nn = d == null ? 0.0 : clamp01(d.noise);
+        x[31] = (float) (vv * (1.0 - nn));                          // voiced frication margin
+        x[32] = (float) (nn * clamp((d == null ? 0 : d.noiseFc) / 8000.0, 0, 2)); // consonant place
         return x;
     }
 
-    private void forward(float[] x, float[] h, float[] o) {
+    private void forward(float[] x, float[] h1, float[] h2, float[] o) {
         for (int j = 0; j < hidden; j++) {
             double z = b1[j];
             float[] wj = w1[j];
             for (int i = 0; i < x.length; i++) z += wj[i] * x[i];
-            h[j] = (float) Math.tanh(z);
+            h1[j] = (float) Math.tanh(z);
+        }
+        for (int j = 0; j < hidden2; j++) {
+            double z = b2[j];
+            float[] wj = w2[j];
+            for (int i = 0; i < hidden; i++) z += wj[i] * h1[i];
+            h2[j] = (float) Math.tanh(z);
         }
         for (int k = 0; k < gridLen; k++) {
-            double z = b2[k];
-            float[] wk = w2[k];
-            for (int j = 0; j < hidden; j++) z += wk[j] * h[j];
+            double z = b3[k];
+            float[] wk = w3[k];
+            for (int j = 0; j < hidden2; j++) z += wk[j] * h2[j];
             o[k] = (float) z;
         }
     }
@@ -251,7 +291,7 @@ public class NeuralSpectrum {
         if (cb != null) cb.onProgress(2, "读取声库频谱…");
         Data data = collect(java.util.Collections.singletonList(vm), false, cb);
         if (data.count < 8) throw new IOException("实测帧太少，无法训练");
-        return fit(data, KIND_BANK, 1, HIDDEN_BANK, EPOCHS_BANK, LR, null, cb);
+        return fit(data, KIND_BANK, 1, HID1_BANK, HID2_BANK, EPOCHS_BANK, LR, null, cb);
     }
 
     /**
@@ -265,8 +305,8 @@ public class NeuralSpectrum {
         if (cb != null) cb.onProgress(2, "读取 " + usable.size() + " 个声库的频谱…");
         Data data = collect(usable, true, cb);
         if (data.count < 8) throw new IOException("实测帧太少，无法训练 BriNeting 基座");
-        return fit(data, KIND_UNIVERSAL, usable.size(), HIDDEN_UNIVERSAL, EPOCHS_UNIVERSAL, LR,
-                null, cb);
+        return fit(data, KIND_UNIVERSAL, usable.size(), HID1_UNIVERSAL, HID2_UNIVERSAL,
+                EPOCHS_UNIVERSAL, LR, null, cb);
     }
 
     /**
@@ -279,13 +319,14 @@ public class NeuralSpectrum {
                 || vm.harmonics.isEmpty()) {
             throw new IOException("当前声库没有实测谐波数据，无法微调");
         }
-        if (prior == null || prior.legacy || prior.gridLen != GRID) {
+        if (prior == null || prior.legacy || prior.gridLen != GRID || prior.hidden2 <= 0) {
             return train(vm, cb);
         }
         if (cb != null) cb.onProgress(2, "读取 " + vm.name + " 的频谱…");
         Data data = collect(java.util.Collections.singletonList(vm), false, cb);
         if (data.count < 8) throw new IOException("当前声库实测帧太少，无法微调");
-        return fit(data, KIND_FINE, 1, prior.hidden, EPOCHS_FINE, LR_FINE, prior, cb);
+        return fit(data, KIND_FINE, 1, prior.hidden, prior.hidden2, EPOCHS_FINE, LR_FINE,
+                prior, cb);
     }
 
     private static List<VoiceModel> usableBanks(List<VoiceModel> banks) {
@@ -387,13 +428,15 @@ public class NeuralSpectrum {
         return y;
     }
 
-    private static NeuralSpectrum fit(Data d, int kind, int bankCount, int hidden, int epochs,
-                                      double lr, NeuralSpectrum init, Progress cb)
+    private static NeuralSpectrum fit(Data d, int kind, int bankCount, int hid1, int hid2,
+                                      int epochs, double lr, NeuralSpectrum init, Progress cb)
             throws IOException {
         if (d == null || d.count < 8) throw new IOException("训练样本太少");
+        if (hid2 <= 0) hid2 = 1;
         final int n = d.count;
         final int grid = GRID;
         final int in = FEATURE_DIM;
+        final int h1n = hid1, h2n = hid2;
 
         // centre targets on the mean spectrum of this dataset
         float[] mean = new float[grid];
@@ -416,76 +459,105 @@ public class NeuralSpectrum {
         int[] trainOrder = new int[trainN];
         for (int i = 0; i < trainN; i++) trainOrder[i] = order[i];
 
-        float[][] w1;
-        float[] b1;
-        float[][] w2;
-        float[] b2;
-        if (init != null && init.w1.length == hidden && init.w1[0].length == in
-                && init.w2.length == grid && init.w2[0].length == hidden) {
-            w1 = copy(init.w1);
-            b1 = init.b1.clone();
-            w2 = copy(init.w2);
-            b2 = init.b2.clone();
+        float[][] w1, w2, w3;
+        float[] b1, b2, b3;
+        boolean reuse = init != null && init.w1.length == h1n && init.w1[0].length == in
+                && init.w2.length == h2n && init.w2[0].length == h1n
+                && init.w3.length == grid && init.w3[0].length == h2n;
+        if (reuse) {
+            w1 = copy(init.w1); b1 = init.b1.clone();
+            w2 = copy(init.w2); b2 = init.b2.clone();
+            w3 = copy(init.w3); b3 = init.b3.clone();
         } else {
-            w1 = new float[hidden][in];
-            b1 = new float[hidden];
-            w2 = new float[grid][hidden];
-            b2 = new float[grid];
-            for (int j = 0; j < hidden; j++) {
-                double s = Math.sqrt(6.0 / (in + hidden));
+            w1 = new float[h1n][in]; b1 = new float[h1n];
+            w2 = new float[h2n][h1n]; b2 = new float[h2n];
+            w3 = new float[grid][h2n]; b3 = new float[grid];
+            for (int j = 0; j < h1n; j++) {
+                double s = Math.sqrt(6.0 / (in + h1n));
                 for (int i = 0; i < in; i++) w1[j][i] = (float) ((rnd.nextDouble() * 2 - 1) * s);
             }
+            for (int j = 0; j < h2n; j++) {
+                double s = Math.sqrt(6.0 / (h1n + h2n));
+                for (int i = 0; i < h1n; i++) w2[j][i] = (float) ((rnd.nextDouble() * 2 - 1) * s);
+            }
             for (int k = 0; k < grid; k++) {
-                double s = Math.sqrt(6.0 / (hidden + grid));
-                for (int j = 0; j < hidden; j++) w2[k][j] = (float) ((rnd.nextDouble() * 2 - 1) * s);
+                double s = Math.sqrt(6.0 / (h2n + grid));
+                for (int j = 0; j < h2n; j++) w3[k][j] = (float) ((rnd.nextDouble() * 2 - 1) * s);
             }
         }
+        // L2-SP: keep the fine-tuned model close to the universal prior
+        float[][] p1 = null, p2 = null, p3 = null;
+        float[] pb1 = null, pb2 = null, pb3 = null;
+        if (init != null && kind == KIND_FINE) {
+            p1 = copy(init.w1); pb1 = init.b1.clone();
+            p2 = copy(init.w2); pb2 = init.b2.clone();
+            p3 = copy(init.w3); pb3 = init.b3.clone();
+        }
 
-        float[][] mw1 = new float[hidden][in], vw1 = new float[hidden][in];
-        float[] mb1 = new float[hidden], vb1 = new float[hidden];
-        float[][] mw2 = new float[grid][hidden], vw2 = new float[grid][hidden];
-        float[] mb2 = new float[grid], vb2 = new float[grid];
-        float[][] gw1 = new float[hidden][in];
-        float[] gb1 = new float[hidden];
-        float[][] gw2 = new float[grid][hidden];
-        float[] gb2 = new float[grid];
+        float[][] mw1 = new float[h1n][in], vw1 = new float[h1n][in];
+        float[] mb1 = new float[h1n], vb1 = new float[h1n];
+        float[][] mw2 = new float[h2n][h1n], vw2 = new float[h2n][h1n];
+        float[] mb2 = new float[h2n], vb2 = new float[h2n];
+        float[][] mw3 = new float[grid][h2n], vw3 = new float[grid][h2n];
+        float[] mb3 = new float[grid], vb3 = new float[grid];
+        float[][] gw1 = new float[h1n][in]; float[] gb1 = new float[h1n];
+        float[][] gw2 = new float[h2n][h1n]; float[] gb2 = new float[h2n];
+        float[][] gw3 = new float[grid][h2n]; float[] gb3 = new float[grid];
         int step = 0;
+
+        float[][] bw1 = null, bw2 = null, bw3 = null;
+        float[] bb1 = null, bb2 = null, bb3 = null;
+        double bestVal = Double.MAX_VALUE;
+        int bestEp = 0;
 
         for (int ep = 1; ep <= epochs; ep++) {
             shuffle(trainOrder, rnd);
             for (int base = 0; base < trainN; base += BATCH) {
                 int end = Math.min(trainN, base + BATCH);
-                zero(gw1); zero(gb1); zero(gw2); zero(gb2);
+                zero(gw1); zero(gb1); zero(gw2); zero(gb2); zero(gw3); zero(gb3);
                 for (int q = base; q < end; q++) {
                     int idx = trainOrder[q];
                     float[] x = d.x[idx];
                     float[] y = d.y[idx];
-                    float[] h = new float[hidden];
+                    float[] h1 = new float[h1n];
+                    float[] h2 = new float[h2n];
                     float[] o = new float[grid];
-                    for (int j = 0; j < hidden; j++) {
+                    for (int j = 0; j < h1n; j++) {
                         double z = b1[j];
                         for (int i = 0; i < in; i++) z += w1[j][i] * x[i];
-                        h[j] = (float) Math.tanh(z);
+                        h1[j] = (float) Math.tanh(z);
+                    }
+                    for (int j = 0; j < h2n; j++) {
+                        double z = b2[j];
+                        for (int i = 0; i < h1n; i++) z += w2[j][i] * h1[i];
+                        h2[j] = (float) Math.tanh(z);
                     }
                     for (int k = 0; k < grid; k++) {
-                        double z = b2[k];
-                        for (int j = 0; j < hidden; j++) z += w2[k][j] * h[j];
+                        double z = b3[k];
+                        for (int j = 0; j < h2n; j++) z += w3[k][j] * h2[j];
                         o[k] = (float) z;
                     }
+                    float[] dH2 = new float[h2n];
                     for (int k = 0; k < grid; k++) {
                         double p = Math.tanh(o[k]);
-                        double dO = (p - y[k]) * (1.0 - p * p);
-                        gb2[k] += (float) dO;
-                        for (int j = 0; j < hidden; j++) gw2[k][j] += (float) (dO * h[j]);
+                        double dO = (p - y[k]) * (1.0 - p * p) * (BAND_W[k] / BAND_W_MEAN);
+                        gb3[k] += (float) dO;
+                        for (int j = 0; j < h2n; j++) {
+                            gw3[k][j] += (float) (dO * h2[j]);
+                            dH2[j] += (float) (dO * w3[k][j]);
+                        }
                     }
-                    float[] dH = new float[hidden];
-                    for (int k = 0; k < grid; k++) {
-                        double p = Math.tanh(o[k]);
-                        double dO = (p - y[k]) * (1.0 - p * p);
-                        for (int j = 0; j < hidden; j++) dH[j] += (float) (dO * w2[k][j]);
+                    float[] dH1 = new float[h1n];
+                    for (int j = 0; j < h2n; j++) {
+                        double dd = dH2[j] * (1.0 - h2[j] * (double) h2[j]);
+                        gb2[j] += (float) dd;
+                        for (int i = 0; i < h1n; i++) {
+                            gw2[j][i] += (float) (dd * h1[i]);
+                            dH1[i] += (float) (dd * w2[j][i]);
+                        }
                     }
-                    for (int j = 0; j < hidden; j++) {
-                        double dd = dH[j] * (1.0 - h[j] * (double) h[j]);
+                    for (int j = 0; j < h1n; j++) {
+                        double dd = dH1[j] * (1.0 - h1[j] * (double) h1[j]);
                         gb1[j] += (float) dd;
                         for (int i = 0; i < in; i++) gw1[j][i] += (float) (dd * x[i]);
                     }
@@ -494,77 +566,101 @@ public class NeuralSpectrum {
                 step++;
                 double bc1 = 1.0 - Math.pow(0.9, step);
                 double bc2 = 1.0 - Math.pow(0.999, step);
-                for (int j = 0; j < hidden; j++) {
-                    for (int i = 0; i < in; i++) {
-                        mw1[j][i] = (float) (0.9 * mw1[j][i] + 0.1 * gw1[j][i] / bn);
-                        vw1[j][i] = (float) (0.999 * vw1[j][i] + 0.001 * (gw1[j][i] / bn) * (gw1[j][i] / bn));
-                        w1[j][i] -= (float) (lr * (mw1[j][i] / bc1) / (Math.sqrt(vw1[j][i] / bc2) + 1e-8));
-                    }
-                    mb1[j] = (float) (0.9 * mb1[j] + 0.1 * gb1[j] / bn);
-                    vb1[j] = (float) (0.999 * vb1[j] + 0.001 * (gb1[j] / bn) * (gb1[j] / bn));
-                    b1[j] -= (float) (lr * (mb1[j] / bc1) / (Math.sqrt(vb1[j] / bc2) + 1e-8));
+                for (int j = 0; j < h1n; j++) {
+                    adamRow(w1[j], gw1[j], mw1[j], vw1[j], lr, bc1, bc2, bn,
+                            p1 == null ? null : p1[j], SP_LAMBDA);
+                    adamRow(b1, gb1, mb1, vb1, j, lr, bc1, bc2, bn,
+                            p1 == null ? null : pb1, SP_LAMBDA);
+                }
+                for (int j = 0; j < h2n; j++) {
+                    adamRow(w2[j], gw2[j], mw2[j], vw2[j], lr, bc1, bc2, bn,
+                            p2 == null ? null : p2[j], SP_LAMBDA);
+                    adamRow(b2, gb2, mb2, vb2, j, lr, bc1, bc2, bn,
+                            p2 == null ? null : pb2, SP_LAMBDA);
                 }
                 for (int k = 0; k < grid; k++) {
-                    for (int j = 0; j < hidden; j++) {
-                        mw2[k][j] = (float) (0.9 * mw2[k][j] + 0.1 * gw2[k][j] / bn);
-                        vw2[k][j] = (float) (0.999 * vw2[k][j] + 0.001 * (gw2[k][j] / bn) * (gw2[k][j] / bn));
-                        w2[k][j] -= (float) (lr * (mw2[k][j] / bc1) / (Math.sqrt(vw2[k][j] / bc2) + 1e-8));
-                    }
-                    mb2[k] = (float) (0.9 * mb2[k] + 0.1 * gb2[k] / bn);
-                    vb2[k] = (float) (0.999 * vb2[k] + 0.001 * (gb2[k] / bn) * (gb2[k] / bn));
-                    b2[k] -= (float) (lr * (mb2[k] / bc1) / (Math.sqrt(vb2[k] / bc2) + 1e-8));
+                    adamRow(w3[k], gw3[k], mw3[k], vw3[k], lr, bc1, bc2, bn,
+                            p3 == null ? null : p3[k], SP_LAMBDA);
+                    adamRow(b3, gb3, mb3, vb3, k, lr, bc1, bc2, bn,
+                            p3 == null ? null : pb3, SP_LAMBDA);
                 }
             }
             if (cb != null && (ep == 1 || ep % 5 == 0 || ep == epochs)) {
-                double tr = 0;
-                for (int q = 0; q < trainN; q++) tr += sampleLoss(w1, b1, w2, b2, d.x[trainOrder[q]], d.y[trainOrder[q]], grid, hidden, in);
-                tr /= trainN;
-                double val = 0;
-                int vn = 0;
-                for (int q = trainN; q < n; q++) {
-                    int idx = order[q];
-                    val += sampleLoss(w1, b1, w2, b2, d.x[idx], d.y[idx], grid, hidden, in);
-                    vn++;
+                double tr = evaluate(w1, b1, w2, b2, w3, b3, d, trainOrder, 0, trainN);
+                double val = evaluate(w1, b1, w2, b2, w3, b3, d, order, trainN, n);
+                if (val < bestVal - 1e-7) {
+                    bestVal = val;
+                    bestEp = ep;
+                    bw1 = copy(w1); bb1 = b1.clone();
+                    bw2 = copy(w2); bb2 = b2.clone();
+                    bw3 = copy(w3); bb3 = b3.clone();
                 }
-                if (vn > 0) val /= vn;
                 cb.onProgress(15 + (int) Math.round(ep * 83.0 / epochs),
                         "第 " + ep + "/" + epochs + " 轮 · 训练损失 " + fmt(tr)
                                 + " · 验证损失 " + fmt(val));
+                if (ep - bestEp >= 35) break;
             }
         }
+        if (bw1 != null) { w1 = bw1; b1 = bb1; w2 = bw2; b2 = bb2; w3 = bw3; b3 = bb3; }
 
-        double tr = 0;
-        for (int q = 0; q < trainN; q++) tr += sampleLoss(w1, b1, w2, b2, d.x[trainOrder[q]], d.y[trainOrder[q]], grid, hidden, in);
-        tr /= trainN;
-        double val = 0;
-        int vn = 0;
-        for (int q = trainN; q < n; q++) {
-            int idx = order[q];
-            val += sampleLoss(w1, b1, w2, b2, d.x[idx], d.y[idx], grid, hidden, in);
-            vn++;
-        }
-        if (vn > 0) val /= vn;
+        double tr = evaluate(w1, b1, w2, b2, w3, b3, d, trainOrder, 0, trainN);
+        double val = evaluate(w1, b1, w2, b2, w3, b3, d, order, trainN, n);
         if (cb != null) cb.onProgress(99, "已保存模型");
-        return new NeuralSpectrum(d.known, grid, mean, w1, b1, w2, b2,
+        return new NeuralSpectrum(d.known, grid, mean, w1, b1, w2, b2, w3, b3,
                 kind, bankCount, n, tr, val, false);
     }
 
-    private static double sampleLoss(float[][] w1, float[] b1, float[][] w2, float[] b2,
-                                     float[] x, float[] y, int grid, int hid, int in) {
-        float[] h = new float[hid];
-        for (int j = 0; j < hid; j++) {
-            double z = b1[j];
-            for (int i = 0; i < in; i++) z += w1[j][i] * x[i];
-            h[j] = (float) Math.tanh(z);
-        }
+    private static double evaluate(float[][] w1, float[] b1, float[][] w2, float[] b2,
+                                   float[][] w3, float[] b3, Data d, int[] idx, int from, int to) {
+        if (to <= from) return 0;
         double sum = 0;
-        for (int k = 0; k < grid; k++) {
-            double z = b2[k];
-            for (int j = 0; j < hid; j++) z += w2[k][j] * h[j];
-            double dd = Math.tanh(z) - y[k];
-            sum += 0.5 * dd * dd;
+        for (int q = from; q < to; q++) {
+            int i = idx[q];
+            sum += sampleLoss(w1, b1, w2, b2, w3, b3, d.x[i], d.y[i]);
         }
-        return sum / grid;
+        return sum / (to - from);
+    }
+
+    private static double sampleLoss(float[][] w1, float[] b1, float[][] w2, float[] b2,
+                                     float[][] w3, float[] b3, float[] x, float[] y) {
+        float[] h1 = new float[w1.length];
+        for (int j = 0; j < h1.length; j++) {
+            double z = b1[j];
+            for (int i = 0; i < x.length; i++) z += w1[j][i] * x[i];
+            h1[j] = (float) Math.tanh(z);
+        }
+        float[] h2 = new float[w2.length];
+        for (int j = 0; j < h2.length; j++) {
+            double z = b2[j];
+            for (int i = 0; i < h1.length; i++) z += w2[j][i] * h1[i];
+            h2[j] = (float) Math.tanh(z);
+        }
+        double sum = 0, wsum = 0;
+        for (int k = 0; k < w3.length; k++) {
+            double z = b3[k];
+            for (int j = 0; j < h2.length; j++) z += w3[k][j] * h2[j];
+            double dd = Math.tanh(z) - y[k];
+            sum += BAND_W[k] * dd * dd;
+            wsum += BAND_W[k];
+        }
+        return 0.5 * sum / wsum;
+    }
+
+    /** Adam update of one row (or one bias vector) with optional L2-SP pull. */
+    private static void adamRow(float[] w, float[] g, float[] m, float[] v,
+                                double lr, double bc1, double bc2, int bn,
+                                float[] prior, double sp) {
+        for (int i = 0; i < w.length; i++) adamRow(w, g, m, v, i, lr, bc1, bc2, bn, prior, sp);
+    }
+
+    private static void adamRow(float[] w, float[] g, float[] m, float[] v, int i,
+                                double lr, double bc1, double bc2, int bn,
+                                float[] prior, double sp) {
+        double gg = g[i] / bn;
+        if (prior != null) gg += sp * (w[i] - prior[i]);
+        m[i] = (float) (0.9 * m[i] + 0.1 * gg);
+        v[i] = (float) (0.999 * v[i] + 0.001 * gg * gg);
+        w[i] -= (float) (lr * (m[i] / bc1) / (Math.sqrt(v[i] / bc2) + 1e-8));
     }
 
     // ------------------------------------------------------------------ persistence
@@ -584,13 +680,16 @@ public class NeuralSpectrum {
             out.writeInt(symbols.length);
             for (int s = 0; s < symbols.length; s++) out.writeUTF(symbols[s]);
             out.writeInt(hidden);
+            out.writeInt(hidden2);
             out.writeInt(gridLen);
             out.writeFloat((float) SCALE);
             for (int k = 0; k < gridLen; k++) out.writeFloat(meanDb[k]);
             for (int j = 0; j < hidden; j++) for (int i = 0; i < inputDim; i++) out.writeFloat(w1[j][i]);
             for (int j = 0; j < hidden; j++) out.writeFloat(b1[j]);
-            for (int k = 0; k < gridLen; k++) for (int j = 0; j < hidden; j++) out.writeFloat(w2[k][j]);
-            for (int k = 0; k < gridLen; k++) out.writeFloat(b2[k]);
+            for (int j = 0; j < hidden2; j++) for (int i = 0; i < hidden; i++) out.writeFloat(w2[j][i]);
+            for (int j = 0; j < hidden2; j++) out.writeFloat(b2[j]);
+            for (int k = 0; k < gridLen; k++) for (int j = 0; j < hidden2; j++) out.writeFloat(w3[k][j]);
+            for (int k = 0; k < gridLen; k++) out.writeFloat(b3[k]);
         } finally {
             out.close();
         }
@@ -602,6 +701,7 @@ public class NeuralSpectrum {
             if (in.readInt() != MAGIC) throw new IOException("不是神经声库文件");
             int version = in.readInt();
             if (version == VERSION_LEGACY) return loadLegacy(in);
+            if (version == VERSION_V2) return loadV2(in);
             if (version != VERSION) throw new IOException("神经声库版本不支持");
             int kind = in.readInt();
             int bankCount = in.readInt();
@@ -613,9 +713,11 @@ public class NeuralSpectrum {
             String[] syms = new String[ns];
             for (int s = 0; s < ns; s++) syms[s] = in.readUTF();
             int hid = in.readInt();
+            int hid2 = in.readInt();
             int grid = in.readInt();
             float scale = in.readFloat();
-            if (hid <= 0 || hid > 256 || grid <= 0 || grid > MAX_GRID || Math.abs(scale - SCALE) > 1e-3) {
+            if (hid <= 0 || hid > 256 || hid2 < 0 || hid2 > 256
+                    || grid <= 0 || grid > MAX_GRID || Math.abs(scale - SCALE) > 1e-3) {
                 throw new IOException("神经声库尺寸无效");
             }
             float[] mean = new float[grid];
@@ -624,17 +726,56 @@ public class NeuralSpectrum {
             for (int j = 0; j < hid; j++) for (int i = 0; i < FEATURE_DIM; i++) w1[j][i] = in.readFloat();
             float[] b1 = new float[hid];
             for (int j = 0; j < hid; j++) b1[j] = in.readFloat();
-            float[][] w2 = new float[grid][hid];
-            for (int k = 0; k < grid; k++) for (int j = 0; j < hid; j++) w2[k][j] = in.readFloat();
-            float[] b2 = new float[grid];
-            for (int k = 0; k < grid; k++) b2[k] = in.readFloat();
-            return new NeuralSpectrum(syms, grid, mean, w1, b1, w2, b2,
+            float[][] w2 = new float[hid2][hid];
+            for (int j = 0; j < hid2; j++) for (int i = 0; i < hid; i++) w2[j][i] = in.readFloat();
+            float[] b2 = new float[hid2];
+            for (int j = 0; j < hid2; j++) b2[j] = in.readFloat();
+            float[][] w3 = new float[grid][hid2];
+            for (int k = 0; k < grid; k++) for (int j = 0; j < hid2; j++) w3[k][j] = in.readFloat();
+            float[] b3 = new float[grid];
+            for (int k = 0; k < grid; k++) b3[k] = in.readFloat();
+            return new NeuralSpectrum(syms, grid, mean, w1, b1, w2, b2, w3, b3,
                     kind, bankCount, sampleCount, trainLoss, valLoss, false);
         } finally {
             in.close();
         }
     }
 
+    /** v9.1/v9.2 single-hidden-layer file (27 input features, 64-bin grid). */
+    private static NeuralSpectrum loadV2(DataInputStream in) throws IOException {
+        final int v2Features = 27;
+        int kind = in.readInt();
+        int bankCount = in.readInt();
+        int sampleCount = in.readInt();
+        float trainLoss = in.readFloat();
+        float valLoss = in.readFloat();
+        int ns = in.readInt();
+        if (ns < 0 || ns > MAX_SYMBOLS) throw new IOException("神经声库尺寸无效");
+        String[] syms = new String[ns];
+        for (int s = 0; s < ns; s++) syms[s] = in.readUTF();
+        int hid = in.readInt();
+        int grid = in.readInt();
+        float scale = in.readFloat();
+        if (hid <= 0 || hid > 256 || grid <= 0 || grid > MAX_GRID || Math.abs(scale - SCALE) > 1e-3) {
+            throw new IOException("神经声库尺寸无效");
+        }
+        float[] mean = new float[grid];
+        for (int k = 0; k < grid; k++) mean[k] = in.readFloat();
+        // widen the old 27-feature input to the new 33-feature layout with zero weights,
+        // which reproduces the old predictions exactly
+        float[][] w1 = new float[hid][FEATURE_DIM];
+        for (int j = 0; j < hid; j++) for (int i = 0; i < v2Features; i++) w1[j][i] = in.readFloat();
+        float[] b1 = new float[hid];
+        for (int j = 0; j < hid; j++) b1[j] = in.readFloat();
+        float[][] w3 = new float[grid][hid];
+        for (int k = 0; k < grid; k++) for (int j = 0; j < hid; j++) w3[k][j] = in.readFloat();
+        float[] b3 = new float[grid];
+        for (int k = 0; k < grid; k++) b3[k] = in.readFloat();
+        return new NeuralSpectrum(syms, grid, mean, w1, b1, new float[0][], new float[0],
+                w3, b3, kind, bankCount, sampleCount, trainLoss, valLoss, false);
+    }
+
+    /** v8.2.1 prototype file: per-symbol one-hot inputs. */
     private static NeuralSpectrum loadLegacy(DataInputStream in) throws IOException {
         int ns = in.readInt();
         int inputDim = in.readInt();
@@ -652,12 +793,12 @@ public class NeuralSpectrum {
         for (int j = 0; j < hid; j++) for (int i = 0; i < inputDim; i++) w1[j][i] = in.readFloat();
         float[] b1 = new float[hid];
         for (int j = 0; j < hid; j++) b1[j] = in.readFloat();
-        float[][] w2 = new float[grid][hid];
-        for (int k = 0; k < grid; k++) for (int j = 0; j < hid; j++) w2[k][j] = in.readFloat();
-        float[] b2 = new float[grid];
-        for (int k = 0; k < grid; k++) b2[k] = in.readFloat();
-        return new NeuralSpectrum(syms, grid, mean, w1, b1, w2, b2,
-                KIND_BANK, 1, 0, 0, 0, true);
+        float[][] w3 = new float[grid][hid];
+        for (int k = 0; k < grid; k++) for (int j = 0; j < hid; j++) w3[k][j] = in.readFloat();
+        float[] b3 = new float[grid];
+        for (int k = 0; k < grid; k++) b3[k] = in.readFloat();
+        return new NeuralSpectrum(syms, grid, mean, w1, b1, new float[0][], new float[0],
+                w3, b3, KIND_BANK, 1, 0, 0, 0, true);
     }
 
     // ------------------------------------------------------------------ helpers
@@ -667,6 +808,26 @@ public class NeuralSpectrum {
         double ratio = Math.log(GRID_HI / GRID_LO);
         for (int k = 0; k < GRID; k++) f[k] = GRID_LO * Math.exp(ratio * k / (GRID - 1.0));
         return f;
+    }
+
+    /** Energy above ~10 kHz carries little vowel identity, so the loss emphasises 80 Hz-5 kHz. */
+    private static double[] buildBandWeights() {
+        double[] w = new double[GRID];
+        double ratio = Math.log(GRID_HI / GRID_LO);
+        for (int k = 0; k < GRID; k++) {
+            double f = GRID_LO * Math.exp(ratio * k / (GRID - 1.0));
+            if (f < 80) w[k] = 1.0;
+            else if (f <= 5000) w[k] = 1.6;
+            else if (f <= 10000) w[k] = 1.15;
+            else w[k] = 0.7;
+        }
+        return w;
+    }
+
+    private static double meanOf(double[] a) {
+        double sum = 0;
+        for (double v : a) sum += v;
+        return a.length == 0 ? 1 : sum / a.length;
     }
 
     /** Log-frequency linear interpolation; -90 dB outside the source range. */

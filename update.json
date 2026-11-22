@@ -1,7 +1,7 @@
 {
-  "versionCode": 82,
-  "versionName": "9.3.1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v9.3.1/BriVoice-9.3.1.apk",
-  "sha256": "7019022e2bf251ab71850c3b5f13b6db3e24eff4bb95140468ee5974b646cba0",
-  "notes": "release 9.3.1: fixes the cursor trailing the sound on long projects. The live AudioTrack timestamp is now only allowed to fine-tune around the start-up measurement (-80..+120 ms) instead of drifting towards the 900 ms ceiling, the total correction is capped at 600 ms, and a legacy manual compensation value is cleared once on upgrade because it used to stack with the automatic value. While automatic measurement is active the manual slider is disabled. No audio, voice or export changes"
+  "versionCode": 83,
+  "versionName": "9.3.2",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v9.3.2/BriVoice-9.3.2.apk",
+  "sha256": "e696ec8c3cf1b5f4e1ddbe34fed48ddeaee19f652e9cb224b1070e91484dde9f",
+  "notes": "release 9.3.2: stronger BriNeting neural engine. Two-hidden-layer network, 33 articulatory input features, perceptually weighted spectral loss, L2-SP regularisation toward the universal base, validation-based best weights and early stop. New 神经混合 voice parameter keeps part of each singer's measured envelope (default 60%). No audio samples are read; training still uses only the measured .v4voice harmonic spectra."
 }

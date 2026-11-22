@@ -183,6 +183,7 @@ public final class VoicebankWizard {
                         w.neuralParams.put("vibrato", 0.5);
                         w.neuralParams.put("dynamics", 0.65);
                         w.neuralParams.put("pitch", 0.65);
+                        w.neuralParams.put("mix", 0.6);
                     }
                     out = new File(vdir, w.id + (neural ? ".v4neural" : ".v4voice"));
                     w.writeZip(out, null);
