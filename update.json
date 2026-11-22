@@ -1,7 +1,7 @@
 {
-  "versionCode": 86,
+  "versionCode": 87,
   "versionName": "10.0",
   "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v10.0/BriVoice-10.0.apk",
-  "sha256": "b6d4be030efe78a1451dcab5995f61e8281a0a6f492464a9edda61b562628614",
-  "notes": "release 10.0: on-device tuning model (BriTune-Net), 68-96-64-11 / 13,547 params, runs AI tuning locally and pulls its ~55 KB weights from aimodel/ on first use (sha256 checked). Version naming simplified to 10.0. Manual section 32."
+  "sha256": "37c85aae688d7f06d6af0ecdf5eede1f36769c8f6d70061db59c41fa0db1bf2b",
+  "notes": "release 10.0: restores the on-device BriTune-Net tuning entry (tools menu + AI quick sheet); 68-96-64-11 / 13,547 params, offline, weights pulled from aimodel/ with sha256 check."
 }
