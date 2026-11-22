@@ -32,6 +32,10 @@ import java.util.Random;
  *       colour while needing only a few hundred frames.</li>
  * </ol>
  *
+ * <p>v9.4 adds {@link #trainFusion(List, Progress)}: several installed voicebanks are fused into
+ * one wider network (112x72 hidden, 2x the parameters of the base) so the result blends their
+ * measured spectra instead of sounding like any single one of them.</p>
+ *
  * <p>The v9.3.2 network is a two-layer tanh MLP (64x48 hidden) predicting a 64-bin envelope.
  * Compared with the first version it adds articulation features (F1/F2/F3 spacing, voiced-noise
  * interaction, consonant place), a perceptual band weighting, early stopping on a held-out split
@@ -52,6 +56,8 @@ public class NeuralSpectrum {
     public static final int KIND_BANK = 0;
     public static final int KIND_UNIVERSAL = 1;
     public static final int KIND_FINE = 2;
+    /** 2..n voicebanks fused into one wider network */
+    public static final int KIND_FUSION = 3;
 
     private static final int GRID = 64;
     private static final double GRID_LO = 60.0;
@@ -66,13 +72,20 @@ public class NeuralSpectrum {
     private static final int HID2_BANK = 24;
     private static final int HID2_UNIVERSAL = 48;
     private static final int HID2_FINE = 48;
+    /** fused model is deliberately wider: ~2x the parameters of the universal base */
+    private static final int HID1_FUSION = 112;
+    private static final int HID2_FUSION = 72;
 
     private static final int EPOCHS_BANK = 160;
     private static final int EPOCHS_UNIVERSAL = 130;
     private static final int EPOCHS_FINE = 100;
+    private static final int EPOCHS_FUSION = 170;
+    /** fusion frames are capped lower than the base so training stays under a couple of minutes */
+    private static final int MAX_FUSION_SAMPLES = 26000;
     private static final int BATCH = 16;
     private static final double LR = 0.008;
     private static final double LR_FINE = 0.0035;
+    private static final double LR_FUSION = 0.006;
     private static final double SCALE = 12.0;
     /** L2-SP pull towards the universal weights during per-singer fine-tuning. */
     private static final double SP_LAMBDA = 0.0025;
@@ -270,9 +283,17 @@ public class NeuralSpectrum {
         String base;
         if (kind == KIND_UNIVERSAL) base = "BriNeting 基座";
         else if (kind == KIND_FINE) base = "当前歌手模型";
+        else if (kind == KIND_FUSION) base = "融合模型";
         else base = "单声库模型";
         return base + " · " + Math.max(1, bankCount) + " 声库 · " + sampleCount + " 帧"
-                + " · 验证 " + fmt(valLoss);
+                + " · 验证 " + fmt(valLoss) + " · 参数 " + paramCount();
+    }
+
+    /** number of trainable weights and biases in this network */
+    public int paramCount() {
+        return hidden * inputDim + hidden
+                + hidden2 * hidden + hidden2
+                + gridLen * hidden2 + gridLen;
     }
 
     // ------------------------------------------------------------------ training
@@ -329,6 +350,22 @@ public class NeuralSpectrum {
                 prior, cb);
     }
 
+    /**
+     * Fuse 2..n voicebanks into one wider neural acoustic model. Every selected bank contributes
+     * an equal share of frames, so a bank with a huge measured set cannot drown the others; the
+     * result predicts a blended spectral envelope and is installed as a {@code .v4neural} singer.
+     */
+    public static NeuralSpectrum trainFusion(List<VoiceModel> banks, Progress cb)
+            throws IOException {
+        List<VoiceModel> usable = usableBanks(banks);
+        if (usable.size() < 2) throw new IOException("融合训练至少需要 2 个含实测谐波的声库");
+        if (cb != null) cb.onProgress(2, "读取 " + usable.size() + " 个声库的频谱…");
+        Data data = collect(usable, true, MAX_FUSION_SAMPLES, cb);
+        if (data.count < 8) throw new IOException("实测帧太少，无法融合训练");
+        return fit(data, KIND_FUSION, usable.size(), HID1_FUSION, HID2_FUSION,
+                EPOCHS_FUSION, LR_FUSION, null, cb);
+    }
+
     private static List<VoiceModel> usableBanks(List<VoiceModel> banks) {
         ArrayList<VoiceModel> out = new ArrayList<VoiceModel>();
         if (banks == null) return out;
@@ -352,8 +389,14 @@ public class NeuralSpectrum {
     }
 
     private static Data collect(List<VoiceModel> banks, boolean universal, Progress cb) {
+        return collect(banks, universal, MAX_SAMPLES, cb);
+    }
+
+    private static Data collect(List<VoiceModel> banks, boolean universal, int maxSamples,
+                                Progress cb) {
         final int nb = Math.max(1, banks.size());
-        final int perBank = universal ? Math.max(96, MAX_SAMPLES / nb) : MAX_SAMPLES;
+        final int cap = Math.max(8, maxSamples);
+        final int perBank = universal ? Math.max(96, cap / nb) : cap;
         final Random rnd = new Random(20261121L);
         ArrayList<float[]> xs = new ArrayList<float[]>();
         ArrayList<float[]> ys = new ArrayList<float[]>();
@@ -396,12 +439,12 @@ public class NeuralSpectrum {
             }
             totalSeen += bx.size();
             for (int i = 0; i < bx.size(); i++) {
-                if (xs.size() < MAX_SAMPLES) {
+                if (xs.size() < cap) {
                     xs.add(bx.get(i));
                     ys.add(by.get(i));
                 } else {
                     int j = rnd.nextInt(totalSeen + 1);
-                    if (j < MAX_SAMPLES) { xs.set(j, bx.get(i)); ys.set(j, by.get(i)); }
+                    if (j < cap) { xs.set(j, bx.get(i)); ys.set(j, by.get(i)); }
                 }
             }
         }

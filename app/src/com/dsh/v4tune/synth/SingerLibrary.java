@@ -110,6 +110,22 @@ public class SingerLibrary {
         if (packs != null) userPacks.addAll(packs);
     }
 
+    /**
+     * Registers a pack that was just written to disk (the multi-bank fusion result) without
+     * re-reading every installed voicebank. Replaces an entry with the same id.
+     */
+    public static void upsertUserPack(VoiceModel vm) {
+        if (vm == null || vm.id == null || vm.id.trim().isEmpty()) return;
+        for (int i = 0; i < userPacks.size(); i++) {
+            VoiceModel v = userPacks.get(i);
+            if (v != null && vm.id.equals(v.id)) {
+                userPacks.set(i, vm);
+                return;
+            }
+        }
+        userPacks.add(vm);
+    }
+
     public static int userPackCount() { return userPacks.size(); }
 
     public static boolean isUserPack(VoiceModel vm) {

@@ -1354,7 +1354,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
     private String singerName(VoiceModel v) {
         if (v == null) return "";
-        String n = bvName(v.nameFor(L.lang()));
+        // legacy packs are named after the voicebank they were converted from; fusion results
+        // carry their own combined name, so do not rewrite them into a single singer's name.
+        String n = isFusionBank(v) ? v.nameFor(L.lang()) : bvName(v.nameFor(L.lang()));
         if (SingerLibrary.isBuiltin(v)) {
             return n + " " + L.t("singer.tag.builtin");
         }
@@ -1454,9 +1456,14 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             for (java.util.Map.Entry<String, VoiceModel.HarmonicBand[]> e2 : v.harmonics.entrySet()) {
                 bands += e2.getValue().length;
             }
-            String info = (v.harmonics.size() > 0)
-                    ? L.t("dlg.singer.stats", v.harmonics.size(), bands)
-                    : L.t("dlg.singer.legacy");
+            String info;
+            if (isFusionBank(v) && v.neural != null) {
+                info = "融合声库 · " + v.neural.bankCount + " 声库 · 参数 " + v.neural.paramCount();
+            } else {
+                info = (v.harmonics.size() > 0)
+                        ? L.t("dlg.singer.stats", v.harmonics.size(), bands)
+                        : L.t("dlg.singer.legacy");
+            }
             String engine;
             if (v.neuralBank) {
                 engine = v.neuralEnabled ? "BriNeting 神经声库" : "BriNeting 神经声库（需训练基座）";
@@ -2151,7 +2158,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 L.t("menu.tools.tutorial"),
                 L.t("menu.tools.guide"),
                 "角色立绘（左下角）",
-                "BriNeting 神经声学模型（v9.3.2）"
+                "BriNeting 神经声学模型（v9.4）"
         };
         menu(L.t("menu.tools"), null, items, -1, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, int which) {
@@ -2449,6 +2456,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                                 .setPositiveButton(L.t("dlg.delete"), new DialogInterface.OnClickListener() {
                                     public void onClick(DialogInterface dd, int w) {
                                         boolean ok = packStore.delete(m.id);
+                                        neuralFile(m).delete();   // fused/normalised weights, if any
                                         reloadPacks(false);
                                         if (currentVoice != null && currentVoice.id != null
                                                 && currentVoice.id.equals(m.id)) {
@@ -4359,6 +4367,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             b.append("未训练");
         } else if ("_brineting".equals(currentVoice.id)) {
             b.append("神经歌手（基座直出）");
+        } else if (isFusionBank(currentVoice)) {
+            b.append("融合声库 · ").append(currentVoice.neural.describe());
         } else {
             b.append(currentVoice.neuralBank ? "神经声库" : "传统声库");
             b.append(" · ").append(currentVoice.neuralFromUniversal ? "BriNeting 基座（尚未微调）" : "已微调");
@@ -4600,6 +4610,289 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     }
 
     /** dedicated sheet: train the BriNeting base, fine-tune the current singer, then enable it */
+    // ---------------------------------------------- multi-bank fusion (v9.4)
+
+    /** true for a singer produced by multi-bank fusion (a .v4neural pack with a fusion_ id) */
+    static boolean isFusionBank(VoiceModel v) {
+        return v != null && v.id != null && v.id.startsWith("fusion_");
+    }
+
+    /** display name of one source bank without the local "my voicebank" suffix */
+    private static String shortBankName(VoiceModel vm) {
+        if (vm == null) return "声库";
+        String n = vm.nameFor(L.lang());
+        if (n == null || n.trim().isEmpty()) n = vm.name;
+        if (n == null) return "声库";
+        return n.replace("（我的声库）", "").replace("(installed)", "")
+                .replace("（内置）", "").replace("(built-in)", "").trim();
+    }
+
+    private static String fusionSourceText(java.util.List<VoiceModel> picks) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < picks.size(); i++) {
+            if (i > 0) b.append("、");
+            b.append(shortBankName(picks.get(i)));
+        }
+        return b.toString();
+    }
+
+    private static String defaultFusionName(java.util.List<VoiceModel> picks) {
+        StringBuilder b = new StringBuilder("融合·");
+        for (int i = 0; i < picks.size() && i < 2; i++) {
+            if (i > 0) b.append(" + ");
+            b.append(shortBankName(picks.get(i)));
+        }
+        if (picks.size() > 2) b.append(" 等").append(picks.size()).append("库");
+        return b.toString();
+    }
+
+    /**
+     * Multi-bank fusion: pick 2+ installed voicebanks, blend their measured harmonic frames into a
+     * wider neural model (112x72, about twice the base parameters) and install the result as a new
+     * {@code .v4neural} singer, so it can be selected, compared and deleted like any imported pack.
+     */
+    private void fusionDialog() {
+        final java.util.List<VoiceModel> banks = neuralBanks();
+        if (banks.size() < 2) {
+            toast("至少要有 2 个带实测谐波的声库才能融合（当前 " + banks.size() + " 个）");
+            return;
+        }
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(6), dp(18), dp(4));
+
+        TextView help = new TextView(this);
+        help.setText("勾选 2 个以上声库，把它们的实测谐波一起训练成一个更宽的神经声库"
+                + "（112×72，约单库模型的 2 倍参数）。\n"
+                + "融合结果会作为新的 .v4neural 声库出现在「歌手」列表，可随时切换、删除，"
+                + "不会改动原来的声库；每个声库参与训练的比例相同。");
+        help.setTextColor(Theme.TEXT_DIM);
+        help.setTextSize(11.5f);
+        box.addView(help);
+
+        final java.util.List<CheckBox> checks = new java.util.ArrayList<CheckBox>();
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        for (int i = 0; i < banks.size(); i++) {
+            final VoiceModel vm = banks.get(i);
+            int bands = 0;
+            for (java.util.Map.Entry<String, VoiceModel.HarmonicBand[]> e : vm.harmonics.entrySet()) {
+                bands += e.getValue().length;
+            }
+            CheckBox cb = new CheckBox(this);
+            cb.setText(singerName(vm) + " · " + vm.harmonics.size() + " 音素 / " + bands + " 频段");
+            cb.setTextColor(Theme.TEXT);
+            cb.setTextSize(12.5f);
+            cb.setChecked(i < 2);
+            checks.add(cb);
+            list.addView(cb);
+        }
+        android.widget.ScrollView sc = new android.widget.ScrollView(this);
+        sc.addView(list);
+        box.addView(sc, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(190)));
+
+        TextView nameLbl = new TextView(this);
+        nameLbl.setText("融合声库名称（留空自动命名）");
+        nameLbl.setTextColor(Theme.TEXT_DIM);
+        nameLbl.setTextSize(12f);
+        nameLbl.setPadding(0, dp(6), 0, 0);
+        box.addView(nameLbl);
+        final EditText name = field("", false);
+        name.setHint("例如：融合·洛天依 + Miku");
+        box.addView(name);
+
+        LinearLayout actions = row();
+        Button cancel = small("取消");
+        Button start = small("开始融合");
+        actions.addView(cancel);
+        actions.addView(start);
+        box.addView(actions);
+
+        final AlertDialog dlg = new AlertDialog.Builder(this)
+                .setTitle("多声库融合（BriNeting）")
+                .setView(box)
+                .create();
+        cancel.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { dlg.dismiss(); }
+        });
+        start.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                java.util.ArrayList<VoiceModel> picks = new java.util.ArrayList<VoiceModel>();
+                for (int i = 0; i < checks.size(); i++) {
+                    if (checks.get(i).isChecked()) picks.add(banks.get(i));
+                }
+                if (picks.size() < 2) { toast("请至少勾选 2 个声库"); return; }
+                String nm = name.getText().toString().trim();
+                if (nm.isEmpty()) nm = defaultFusionName(picks);
+                dlg.dismiss();
+                trainFusion(picks, nm);
+            }
+        });
+        dlg.show();
+    }
+
+    /** trains the fused model off the UI thread, then installs it as a .v4neural voicebank */
+    private void trainFusion(final java.util.List<VoiceModel> picks, final String requestedName) {
+        final android.app.ProgressDialog pd = neuralProgress("多声库融合训练");
+        new Thread(new Runnable() {
+            public void run() {
+                try {
+                    final long t0 = System.currentTimeMillis();
+                    final NeuralSpectrum model = NeuralSpectrum.trainFusion(picks,
+                            new NeuralSpectrum.Progress() {
+                                public void onProgress(final int percent, final String message) {
+                                    runOnUiThread(new Runnable() {
+                                        public void run() {
+                                            pd.setProgress(percent);
+                                            pd.setMessage(message);
+                                        }
+                                    });
+                                }
+                            });
+                    final String name = uniqueFusionName(requestedName);
+                    final VoiceModel fused = buildFusionVoice(name, picks, model);
+                    model.save(neuralFile(fused));
+                    File pack = new File(packStore.directory(), fused.id + VoicePack.EXT_NEURAL);
+                    File dir = pack.getParentFile();
+                    if (dir != null && !dir.isDirectory()) dir.mkdirs();
+                    VoicePack.write(pack, fused, fusionLicense(picks));
+                    final VoicePack.Result back = VoicePack.load(pack);
+                    final int seconds = (int) Math.max(1, (System.currentTimeMillis() - t0) / 1000);
+                    runOnUiThread(new Runnable() {
+                        public void run() {
+                            pd.dismiss();
+                            if (back == null || !back.ok() || back.model == null) {
+                                toast("融合声库写入失败：" + (back == null ? "未知错误" : back.error));
+                                return;
+                            }
+                            VoiceModel v = back.model;
+                            v.neural = model;
+                            v.neuralFromUniversal = false;
+                            v.neuralEnabled = true;
+                            saveNeuralEnabled(v, true);
+                            SingerLibrary.upsertUserPack(v);
+                            beginEdit();
+                            currentVoice = v;
+                            applyVoiceToPart(v);
+                            clearRenderCache();
+                            commitEdit();
+                            refreshAll();
+                            refreshNeuralWidgets();
+                            toast("融合完成：" + v.name + " · " + model.paramCount() + " 参数");
+                            status("已安装融合声库 " + v.name + "（" + picks.size() + " 个声库 · "
+                                    + seconds + " 秒）");
+                        }
+                    });
+                } catch (final Throwable t) {
+                    android.util.Log.e("V4Tune", "neural fusion failed", t);
+                    runOnUiThread(new Runnable() {
+                        public void run() {
+                            pd.dismiss();
+                            toast("融合训练失败：" + t.getMessage());
+                            status("融合训练失败：" + t.getMessage());
+                        }
+                    });
+                }
+            }
+        }, "neural-fusion").start();
+    }
+
+    private String uniqueFusionName(String wanted) {
+        String base = wanted == null ? "" : wanted.trim();
+        if (base.isEmpty()) base = "融合声库";
+        if (base.length() > 36) base = base.substring(0, 36);
+        String name = base;
+        int n = 2;
+        boolean clash = true;
+        while (clash) {
+            clash = false;
+            for (VoiceModel m : SingerLibrary.all()) {
+                if (m != null && name.equalsIgnoreCase(m.nameFor(L.lang()))) { clash = true; break; }
+            }
+            if (clash) name = base + " · " + (n++);
+        }
+        return name;
+    }
+
+    /** builds the singer record: averaged acoustic metadata + averaged perceptual controls */
+    private VoiceModel buildFusionVoice(String name, java.util.List<VoiceModel> picks,
+                                        NeuralSpectrum model) {
+        VoiceModel v = new VoiceModel();
+        v.id = "fusion_" + Long.toString(System.currentTimeMillis(), 36)
+                + "_" + Integer.toHexString((name + picks.size()).hashCode());
+        v.name = name;
+        v.nameEn = "Fusion · " + shortBankName(picks.get(0));
+        v.nameJa = name;
+        v.compID = "BriNetingFusion";
+        int[] langCount = new int[8];
+        for (VoiceModel p : picks) {
+            if (p.lang >= 0 && p.lang < langCount.length) langCount[p.lang]++;
+        }
+        int best = 0;
+        for (int i = 1; i < langCount.length; i++) if (langCount[i] > langCount[best]) best = i;
+        v.lang = best;
+
+        VoiceModel first = picks.get(0);
+        v.formantScale = first.formantScale;
+        v.f1Mul = first.f1Mul;
+        v.f2Mul = first.f2Mul;
+        v.f3Mul = first.f3Mul;
+        v.f4Mul = first.f4Mul;
+        v.f5Mul = first.f5Mul;
+        v.tiltBias = first.tiltBias;
+        v.breathBias = first.breathBias;
+        v.oqBias = first.oqBias;
+        v.vibratoRate = first.vibratoRate;
+        v.vibratoDepthCents = first.vibratoDepthCents;
+        v.vibratoDelayMs = first.vibratoDelayMs;
+        v.gain = first.gain;
+        v.consonantGain = first.consonantGain;
+
+        if (v.neuralParams == null) v.neuralParams = new VoiceModel.NeuralParams();
+        double[] avg = new double[9];
+        for (VoiceModel p : picks) {
+            VoiceModel.NeuralParams q = p.neuralParams;
+            if (q == null) q = new VoiceModel.NeuralParams();
+            avg[0] += q.breath;
+            avg[1] += q.tension;
+            avg[2] += q.brightness;
+            avg[3] += q.nasality;
+            avg[4] += q.clarity;
+            avg[5] += q.vibrato;
+            avg[6] += q.dynamics;
+            avg[7] += q.pitch;
+            avg[8] += q.mix;
+        }
+        for (int i = 0; i < avg.length; i++) avg[i] /= picks.size();
+        v.neuralParams.breath = avg[0];
+        v.neuralParams.tension = avg[1];
+        v.neuralParams.brightness = avg[2];
+        v.neuralParams.nasality = avg[3];
+        v.neuralParams.clarity = avg[4];
+        v.neuralParams.vibrato = avg[5];
+        v.neuralParams.dynamics = avg[6];
+        v.neuralParams.pitch = avg[7];
+        v.neuralParams.mix = avg[8];
+        v.neuralParams.clampAll();
+
+        v.neuralBank = true;
+        v.neural = model;
+        v.neuralEnabled = true;
+        v.neuralFromUniversal = false;
+        v.harmonicFreqs = NeuralSpectrum.canonicalGrid();
+        v.description = "多声库融合：" + fusionSourceText(picks);
+        return v;
+    }
+
+    private static String fusionLicense(java.util.List<VoiceModel> picks) {
+        return "BriVoice multi-bank fusion model\n"
+                + "Sources: " + fusionSourceText(picks) + "\n"
+                + "Trained on this device from the harmonic spectra already measured into each "
+                + "voicebank; no audio samples were decoded.\n"
+                + "Original voicebanks remain the property of their respective rights holders.\n";
+    }
+
     private void neuralDialog() {
         ensureUniversalNeural();
         LinearLayout box = new LinearLayout(this);
@@ -4609,7 +4902,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         TextView help = new TextView(this);
         help.setText("① BriNeting 基座：用本机声库已测量的谐波学习共享频谱规律（不读取音频采样）\n"
                 + "② 声库类型决定引擎：.v4voice 走传统合成，.v4neural 固定走 BriNeting；传统声库也可以手动启用\n"
-                + "③ 神经声库可以调声线参数（气息、张力、明亮、鼻音、吐字、颤音、DYN/PIT 响应）。");
+                + "③ 神经声库可以调声线参数（气息、张力、明亮、鼻音、吐字、颤音、DYN/PIT 响应）。\n"
+                + "④ 多声库融合：勾选 2 个以上声库，训练一个更宽的神经声库（约 2 倍参数）并安装成新声库。");
         help.setTextColor(Theme.TEXT_DIM);
         help.setTextSize(12f);
         box.addView(help);
@@ -4625,6 +4919,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         row1.addView(bUniv);
         row1.addView(bFine);
         box.addView(row1);
+
+        LinearLayout rowF = row();
+        Button bFuse = small("多声库融合（2 个以上声库）");
+        rowF.addView(bFuse);
+        box.addView(rowF);
 
         LinearLayout row2 = row();
         Button bDelCur = small("删除当前歌手模型");
@@ -4661,6 +4960,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         bFine.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { fineTuneNeural(); }
         });
+        bFuse.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { fusionDialog(); }
+        });
         bDelCur.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { deleteCurrentNeural(); }
         });
@@ -4673,7 +4975,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
         refreshNeuralWidgets();
         new AlertDialog.Builder(this)
-                .setTitle("BriNeting 神经声学模型（v9.3.2）")
+                .setTitle("BriNeting 神经声学模型（v9.4）")
                 .setView(box)
                 .setNegativeButton("关闭", null)
                 .show();
@@ -5034,7 +5336,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         });
 
         // neural acoustic model: universal prior + optional per-singer fine-tune
-        box.addView(label("BriNeting 神经声学模型（v9.3.2）"));
+        box.addView(label("BriNeting 神经声学模型（v9.4）"));
         neuralChk = null;
         TextView nnDesc = new TextView(this);
         neuralDesc = nnDesc;
