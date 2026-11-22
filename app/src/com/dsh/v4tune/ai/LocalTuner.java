@@ -7,6 +7,7 @@ import com.dsh.v4tune.model.Song;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -38,7 +39,7 @@ public final class LocalTuner {
     public static final String[] OUT_PARAM = {"DYN", "BRE", "BRI", "CLE", "OPE", "POR", "VIB", "PIT", "PIT", "VEL", "GEN"};
 
     /** parameter defaults, same table the piano-roll parameter lane uses */
-    private static final double[] PARAM_DEF = {64, 64, 64, 64, 64, 64, 64, 0, 2, 64, 64, 64};
+    static final double[] PARAM_DEF = {64, 64, 64, 64, 64, 64, 64, 0, 2, 64, 64, 64};
 
     private static final int N_FEAT = 12;
     private static final int CTX = 2;
@@ -113,6 +114,43 @@ public final class LocalTuner {
         return a;
     }
 
+    /** writes the exact same layout {@link #load(File)} reads; used by self-learning */
+    public static void save(Model m, File f) throws IOException {
+        int bytes = 24 + 4 * (m.inDim * 2 + m.inDim * m.h1 + m.h1 + m.h1 * m.h2 + m.h2
+                + m.h2 * m.outDim + m.outDim + m.outDim);
+        ByteBuffer bb = ByteBuffer.allocate(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        bb.put(new byte[]{'B', 'R', 'T', 'N'});
+        bb.putInt(1);
+        bb.putInt(m.inDim);
+        bb.putInt(m.h1);
+        bb.putInt(m.h2);
+        bb.putInt(m.outDim);
+        put(bb, m.mu); put(bb, m.sd);
+        put(bb, m.w1); put(bb, m.b1);
+        put(bb, m.w2); put(bb, m.b2);
+        put(bb, m.w3); put(bb, m.b3);
+        put(bb, m.outScale);
+        File tmp = new File(f.getAbsolutePath() + ".tmp");
+        FileOutputStream out = new FileOutputStream(tmp);
+        try {
+            out.write(bb.array());
+        } finally {
+            try { out.close(); } catch (Throwable ignored) { }
+        }
+        if (f.exists()) f.delete();
+        if (!tmp.renameTo(f)) {
+            FileOutputStream direct = new FileOutputStream(f);
+            try { direct.write(bb.array()); } finally {
+                try { direct.close(); } catch (Throwable ignored) { }
+            }
+            tmp.delete();
+        }
+    }
+
+    private static void put(ByteBuffer bb, float[] a) {
+        for (int i = 0; i < a.length; i++) bb.putFloat(a[i]);
+    }
+
     /** "流行" etc -> index into {@link #STYLES}; unknown text falls back to pop */
     public static int styleIndex(String s) {
         if (s != null) {
@@ -163,8 +201,21 @@ public final class LocalTuner {
         out[at + 11] = (float) Math.min(1.0, lyricLen / 8.0);
     }
 
-    /** forward pass for a single note; returns the 11 physical deltas (already un-scaled) */
-    private static float[] infer(Model m, float[] x, double tempo, int style, double intensity, int noteCount) {
+    /** the full 68-dim input for note {@code i}: 12 features x 5 context slots */
+    static float[] features(List<Note> ns, int i, int inDim) {
+        float[] x = new float[inDim];
+        int ctxSpan = CTX * 2 + 1;
+        for (int c = 0; c < ctxSpan; c++) {
+            int j = i + c - CTX;
+            if (j < 0) j = 0;
+            if (j > ns.size() - 1) j = ns.size() - 1;
+            noteFeatures(ns, j, x, c * N_FEAT);
+        }
+        return x;
+    }
+
+    /** input vector after per-feature mean/std normalisation, with the globals written in */
+    static float[] normInput(Model m, float[] x, double tempo, int style, double intensity, int noteCount) {
         int in = m.inDim;
         float[] buf = new float[in];
         for (int i = 0; i < in; i++) {
@@ -180,6 +231,15 @@ public final class LocalTuner {
         buf[g + 6] = (float) intensity;
         buf[g + 7] = noteCount / 64f;
 
+        return buf;
+    }
+
+    /**
+     * Forward pass on an already normalised input. Returns the raw network output, i.e. the value
+     * before the per-parameter output scale; self-learning trains against exactly this.
+     */
+    static float[] forwardRaw(Model m, float[] buf) {
+        int in = m.inDim;
         // weights are stored row-major as written by numpy: W1[in][h1], W2[h1][h2], W3[h2][out]
         float[] h1 = new float[m.h1];
         for (int i = 0; i < in; i++) {
@@ -204,10 +264,15 @@ public final class LocalTuner {
             int row = k * m.outDim;
             for (int o = 0; o < m.outDim; o++) out[o] += hv * m.w3[row + o];
         }
-        for (int o = 0; o < m.outDim; o++) {
-            float v = out[o] + m.b3[o];
-            out[o] = v * (o < m.outScale.length ? m.outScale[o] : 1f);
-        }
+        for (int o = 0; o < m.outDim; o++) out[o] += m.b3[o];
+        return out;
+    }
+
+    /** forward pass for a single note; returns the 11 physical deltas (already un-scaled) */
+    static float[] infer(Model m, float[] x, double tempo, int style, double intensity, int noteCount) {
+        float[] out = forwardRaw(m, normInput(m, x, tempo, style, intensity, noteCount));
+        for (int o = 0; o < out.length; o++)
+            out[o] = out[o] * (o < m.outScale.length ? m.outScale[o] : 1f);
         return out;
     }
 
@@ -263,9 +328,9 @@ public final class LocalTuner {
             addPoint(curves.get("BRI"), p, 2, start, d[2] * mul);
             addPoint(curves.get("CLE"), p, 3, start, d[3] * mul);
             addPoint(curves.get("OPE"), p, 4, start, d[4] * mul);
-            addPoint(curves.get("POR"), p, 5, start, d[5] * mul);
-            addPoint(curves.get("VIB"), p, 6, start, d[6] * mul);
-            addPoint(curves.get("GEN"), p, 10, start, d[10] * mul);
+            addPoint(curves.get("POR"), p, 6, start, d[5] * mul);
+            addPoint(curves.get("VIB"), p, 9, start, d[6] * mul);
+            addPoint(curves.get("GEN"), p, 5, start, d[10] * mul);
             // pitch: a scoop into the note and a release at its tail
             addPoint(curves.get("PIT"), p, 7, start, d[7] * mul);
             addPoint(curves.get("PIT"), p, 7, end, d[8] * mul);

@@ -1,7 +1,9 @@
 {
-  "versionCode": 87,
-  "versionName": "10.0",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v10.0/BriVoice-10.0.apk",
-  "sha256": "37c85aae688d7f06d6af0ecdf5eede1f36769c8f6d70061db59c41fa0db1bf2b",
-  "notes": "release 10.0: restores the on-device BriTune-Net tuning entry (tools menu + AI quick sheet); 68-96-64-11 / 13,547 params, offline, weights pulled from aimodel/ with sha256 check."
+  "versionCode": 88,
+  "versionName": "10.0.1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v10.0.1/BriVoice-10.0.1.apk",
+  "sha256": "8a8a07b4fc9dabca47b82690adb87068c0bf248a25e5aae3971fffeeb6ccb2c2",
+  "size": 641479,
+  "notes": "release 10.0.1: 导出 WAV 后询问是否满意，满意则把本次参数加入本机自学习数据集并增量训练 BriTune-Net（只在本机，权重存 files/model/britune-v1.user.bin，可用「清空自学习数据」回到发布版）；修复长工程 / 片段不在 0 位置时末尾音符不唱、导出时长偏长的问题（渲染、混音、片段预览、工程总长统一按绝对 tick）。",
+  "publishedAt": "2026-11-22 18:32:27"
 }

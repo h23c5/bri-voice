@@ -57,27 +57,60 @@ public final class LocalModelStore {
 
     public static File file(Context ctx) { return new File(dir(ctx), "britune-v1.bin"); }
 
-    public static boolean installed(Context ctx) { return file(ctx).length() > 1024; }
+    /** weights retrained on-device by {@link SelfLearn}; preferred over the shipped file */
+    public static File userFile(Context ctx) { return SelfLearn.userModelFile(ctx); }
 
-    /** Loads the on-disk model once and keeps it for the rest of the session. */
+    public static boolean installed(Context ctx) {
+        return file(ctx).length() > 1024 || userFile(ctx).length() > 1024;
+    }
+
+    public static boolean selfTrained(Context ctx) { return userFile(ctx).length() > 1024; }
+
+    /**
+     * Loads the on-disk model once and keeps it for the rest of the session. The self-learning file
+     * wins when it exists, so the app keeps using what the user taught it.
+     */
     public static synchronized LocalTuner.Model load(Context ctx) throws IOException {
         if (cached != null) return cached;
+        File u = userFile(ctx);
+        if (u.exists() && u.length() > 1024) {
+            try {
+                cached = LocalTuner.load(u);
+                return cached;
+            } catch (Throwable ignored) {
+                // a half written or stale self-learning file must never lock the user out
+                u.delete();
+            }
+        }
         File f = file(ctx);
         if (!f.exists()) throw new IOException("本地调音模型还没下载");
         cached = LocalTuner.load(f);
         return cached;
     }
 
+    /** throws the retrained weights away and goes back to the shipped model */
+    public static synchronized void dropUser(Context ctx) {
+        userFile(ctx).delete();
+        forget();
+    }
+
     public static synchronized void forget() { cached = null; }
 
     public static String installedInfo(Context ctx) {
         File f = file(ctx);
-        if (!f.exists()) return "未下载";
-        return String.format(java.util.Locale.US, "%.1f KB", f.length() / 1024.0);
+        int self = SelfLearn.count(SelfLearn.dataFile(ctx));
+        String base = f.exists()
+                ? String.format(java.util.Locale.US, "%.1f KB", f.length() / 1024.0) : "未下载";
+        if (selfTrained(ctx))
+            return base + " · 自学习模型（" + self + " 条样本）";
+        if (self > 0) return base + " · 待重新训练（" + self + " 条样本）";
+        return base;
     }
 
     public static void delete(Context ctx) {
         file(ctx).delete();
+        userFile(ctx).delete();
+        SelfLearn.clear(SelfLearn.dataFile(ctx));
         forget();
     }
 

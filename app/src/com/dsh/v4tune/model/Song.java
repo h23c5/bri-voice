@@ -56,7 +56,9 @@ public class Song {
                 // inside it actually occupy. Taking only p.end() therefore under-reported the end of
                 // the song, and everything past it was never rendered - the last few notes of a long
                 // song simply never sounded. The notes are the truth; keep the declared end too.
-                for (Note n : p.notes) m = Math.max(m, p.pos + n.end());
+                // note ticks are absolute already; adding the part start made the song
+                // part.pos ticks longer than it is (trailing silence, wrong export length)
+                for (Note n : p.notes) m = Math.max(m, n.end());
             }
         }
         return m;

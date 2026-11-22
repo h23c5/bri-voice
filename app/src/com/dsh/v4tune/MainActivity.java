@@ -100,6 +100,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private String aiLastError;
     private String aiLastReply;
     private int aiLastApplied;
+    /** BriTune-Net quick settings, persisted in the brivoice preferences */
+    private int localStyle, localIntensity = 85, localStrength = 90;
     private final com.dsh.v4tune.ai.ExtApi.Handler extHandler = new com.dsh.v4tune.ai.ExtApi.Handler() {
         public String statusJson() {
             try {
@@ -213,6 +215,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         Renderer.webSynth = webSynth;
         Renderer.voiceColor = voiceColor;
         renderAccel = getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("renderaccel", true);
+        localStyle = getSharedPreferences("brivoice", MODE_PRIVATE).getInt("localStyle", 0);
+        localIntensity = getSharedPreferences("brivoice", MODE_PRIVATE).getInt("localIntensity", 85);
+        localStrength = getSharedPreferences("brivoice", MODE_PRIVATE).getInt("localStrength", 90);
         engine.cursorOffsetMs = cursorOffsetMs;
         engine.outputLatencyMs = Math.max(0, latencyMeasuredMs);
         engine.autoLatency = latencyAuto && latencyMeasuredMs >= 0;
@@ -1048,14 +1053,15 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                             if (cancelled) return;
                             VoiceModel vm2 = com.dsh.v4tune.audio.AudioEngine.modelFor(sng.voice(p.bs, p.pc), fallback);
                             if (vm2 == null) vm2 = fallback;
-                            int at = (int) Math.round(TimeUtil.tickToSec(sng, p.pos) * cfg.sampleRate);
-                            int room = limit - at;
-                            if (room <= 0) continue;
-                            float[] mono = Renderer.renderPart(sng, p, vm2, cfg, room);
-                            int n = Math.min(mono.length, room);
+                            // renderPart writes at absolute times, so the slice starts at frame 0; adding
+                            // the part start here shifted late parts by part.pos seconds (the tail then
+                            // fell outside the slice and was dropped, which is why long songs lost their
+                            // last notes while the cursor kept running).
+                            float[] mono = Renderer.renderPart(sng, p, vm2, cfg, limit);
+                            int n = Math.min(mono.length, limit);
                             for (int i = 0; i < n; i++) {
-                                mixL[at + i] += (float) (mono[i] * gl);
-                                mixR[at + i] += (float) (mono[i] * gr);
+                                mixL[i] += (float) (mono[i] * gl);
+                                mixR[i] += (float) (mono[i] * gr);
                             }
                         }
                     }
@@ -2158,7 +2164,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 L.t("menu.tools.tutorial"),
                 L.t("menu.tools.guide"),
                 "角色立绘（左下角）",
-                "BriNeting 神经声学模型（v9.4）"
+                "BriNeting 神经声学模型（v10.0）",
+                "本地调音模型（BriTune-Net）"
         };
         menu(L.t("menu.tools"), null, items, -1, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, int which) {
@@ -2178,7 +2185,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 else if (which == 13) showTutorial();
                 else if (which == 14) showOnboarding();
                 else if (which == 15) characterDialog();
-                else neuralDialog();
+                else if (which == 16) neuralDialog();
+                else localTuneDialog();
             }
         });
     }
@@ -2749,10 +2757,13 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     r.song = song;
                     applyPostDsp(r);
                     rendered = r;
+                    // the render starts at song tick 0, so auditioning from the part start skips the
+                    // silence in front of a part that does not begin at 0
+                    final long previewFrom = (long) (TimeUtil.tickToSec(song, p.pos) * 44100);
                     ui.post(new Runnable() {
                         public void run() {
                             playBtn.setText(L.t("transport.stop"));
-                            engine.play(r, new AudioEngine.Callback() {
+                            engine.play(r, previewFrom, new AudioEngine.Callback() {
                                 public void onProgress(long tick) { }
                                 public void onDone() {
                                     ui.post(new Runnable() {
@@ -3546,10 +3557,16 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                             new AlertDialog.Builder(MainActivity.this)
                                     .setTitle("导出成功")
                                     .setMessage("文件: " + f.getAbsolutePath() + "\n\n时长 " +
-                                            String.format(java.util.Locale.US, "%.1f", r.left.length / (double) r.sampleRate) + " 秒")
+                                            String.format(java.util.Locale.US, "%.1f", r.left.length / (double) r.sampleRate) + " 秒" +
+                                            "\n\n这次听着满意吗？满意的话把当前参数加入本地模型的自学习数据集（只存在本机）。")
                                     .setPositiveButton("分享", new DialogInterface.OnClickListener() {
                                         public void onClick(DialogInterface d, int w) {
                                             ProjectIO.share(MainActivity.this, f, ProjectIO.MIME_WAV);
+                                        }
+                                    })
+                                    .setNeutralButton("满意，加入训练", new DialogInterface.OnClickListener() {
+                                        public void onClick(DialogInterface d, int w) {
+                                            startSelfLearn();
                                         }
                                     })
                                     .setNegativeButton("关闭", null)
@@ -4037,6 +4054,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         svc3.addView(fillJson);
         svc3.addView(exportJson);
         box.addView(svc3);
+        LinearLayout svc4 = row();
+        Button localTune = small("本地模型调音");
+        Button localModel = small("本地模型…");
+        svc4.addView(localTune);
+        svc4.addView(localModel);
+        box.addView(svc4);
 
         copyNow.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { quickCopyPrompt(input.getText().toString()); }
@@ -4055,6 +4078,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         });
         exportJson.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { exportAiJson(aiLastReply == null ? "" : aiLastReply); }
+        });
+        localTune.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { localTuneDialog(); }
+        });
+        localModel.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { localModelDialog(); }
         });
 
         final TextView quickResult = new TextView(this);
@@ -4207,6 +4236,359 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 });
             }
         }, "brivoice-ai").start();
+    }
+
+    // ------------------------------------------------- local tuning model (v10.0, BriTune-Net)
+
+    private static final String[] LOCAL_STYLE_NAMES = {"流行", "抒情", "摇滚", "电子", "国风"};
+
+    private String localModelState() {
+        try {
+            if (!com.dsh.v4tune.ai.LocalModelStore.installed(this))
+                return "模型未下载 · 首次调音时自动下载（约 55 KB）";
+            return "模型已就绪 · " + com.dsh.v4tune.ai.LocalModelStore.installedInfo(this);
+        } catch (Throwable t) {
+            return "模型状态未知：" + t.getMessage();
+        }
+    }
+
+    private String selfLearnState() {
+        try {
+            int n = com.dsh.v4tune.ai.SelfLearn.count(com.dsh.v4tune.ai.SelfLearn.dataFile(this));
+            String where = com.dsh.v4tune.ai.LocalModelStore.selfTrained(this)
+                    ? "已用于当前模型" : "尚未训练成模型";
+            return "自学习：数据集 " + n + " 条 · " + where;
+        } catch (Throwable t) {
+            return "自学习：状态未知（" + t.getMessage() + "）";
+        }
+    }
+
+    /** style + intensity sheet for the on-device tuning model */
+    private void localTuneDialog() {
+        final Part p = currentPart();
+        if (p == null) { status("请先选择一个音轨"); return; }
+        if (p.notes.isEmpty()) { status("当前音轨没有音符"); return; }
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(8), dp(18), dp(8));
+        box.addView(label("用本机模型按风格给出 DYN/BRE/BRI/CLE/OPE/POR/VIB/PIT/GEN 曲线，完全离线，可撤销。"));
+        box.addView(label(localModelState()));
+
+        final int[] style = {Math.max(0, Math.min(LOCAL_STYLE_NAMES.length - 1, localStyle))};
+        final Button[] styleBtns = new Button[LOCAL_STYLE_NAMES.length];
+        LinearLayout styleRow1 = row();
+        LinearLayout styleRow2 = row();
+        for (int i = 0; i < styleBtns.length; i++) {
+            final int idx = i;
+            styleBtns[i] = small(LOCAL_STYLE_NAMES[i]);
+            styleBtns[i].setOnClickListener(new View.OnClickListener() {
+                public void onClick(View v) {
+                    style[0] = idx;
+                    for (int j = 0; j < styleBtns.length; j++)
+                        styleBtns[j].setText((j == idx ? "● " : "") + LOCAL_STYLE_NAMES[j]);
+                }
+            });
+            if (i < 3) styleRow1.addView(styleBtns[i]); else styleRow2.addView(styleBtns[i]);
+        }
+        styleBtns[style[0]].setText("● " + LOCAL_STYLE_NAMES[style[0]]);
+        box.addView(label("风格"));
+        box.addView(styleRow1);
+        box.addView(styleRow2);
+
+        final int[] intensity = {Math.max(35, Math.min(100, localIntensity))};
+        final TextView intLabel = label("强度 " + intensity[0] + "%");
+        box.addView(intLabel);
+        SeekBar intBar = new SeekBar(this);
+        intBar.setMax(65);
+        intBar.setProgress(intensity[0] - 35);
+        intBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar sb, int pr, boolean u) {
+                intensity[0] = 35 + pr;
+                intLabel.setText("强度 " + intensity[0] + "%");
+            }
+            public void onStartTrackingTouch(SeekBar sb) { }
+            public void onStopTrackingTouch(SeekBar sb) { }
+        });
+        box.addView(intBar);
+
+        final int[] strength = {Math.max(10, Math.min(150, localStrength))};
+        final TextView strLabel = label("应用幅度 " + strength[0] + "%");
+        box.addView(strLabel);
+        SeekBar strBar = new SeekBar(this);
+        strBar.setMax(140);
+        strBar.setProgress(strength[0] - 10);
+        strBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar sb, int pr, boolean u) {
+                strength[0] = 10 + pr;
+                strLabel.setText("应用幅度 " + strength[0] + "%");
+            }
+            public void onStartTrackingTouch(SeekBar sb) { }
+            public void onStopTrackingTouch(SeekBar sb) { }
+        });
+        box.addView(strBar);
+
+        box.addView(label("输出会写成参数曲线（每音符一点，PIT 两点），保存后可随时撤销。"));
+
+        ScrollView sc = new ScrollView(this);
+        sc.addView(box);
+        new AlertDialog.Builder(this)
+                .setTitle("本地模型调音 · " + p.notes.size() + " 音符")
+                .setView(sc)
+                .setPositiveButton("开始调音", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) {
+                        startLocalTune(style[0], intensity[0], strength[0]);
+                    }
+                })
+                .setNeutralButton("模型管理", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) { localModelDialog(); }
+                })
+                .setNegativeButton(L.t("dlg.cancel"), null)
+                .show();
+    }
+
+    /** runs the on-device model with a live progress dialog */
+    private void startLocalTune(final int style, final int intensityPct, final int strengthPct) {
+        final Part p = currentPart();
+        if (p == null) return;
+        final int total = p.notes.size();
+        if (total == 0) { status("当前音轨没有音符"); return; }
+        final String styleName = LOCAL_STYLE_NAMES[Math.max(0, Math.min(LOCAL_STYLE_NAMES.length - 1, style))];
+        final android.app.ProgressDialog pd = new android.app.ProgressDialog(this);
+        pd.setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL);
+        pd.setMax(total + 100);
+        pd.setProgress(0);
+        pd.setMessage("准备本地调音…");
+        pd.setCancelable(false);
+        pd.show();
+        getSharedPreferences("brivoice", MODE_PRIVATE).edit()
+                .putInt("localStyle", style)
+                .putInt("localIntensity", intensityPct)
+                .putInt("localStrength", strengthPct).apply();
+        new Thread(new Runnable() {
+            public void run() {
+                String err = null;
+                com.dsh.v4tune.ai.Tuning res = null;
+                try {
+                    com.dsh.v4tune.ai.LocalTuner.Model model =
+                            com.dsh.v4tune.ai.LocalModelStore.ensureBlocking(MainActivity.this,
+                                    new com.dsh.v4tune.ai.LocalModelStore.P() {
+                                        public void onProgress(int pm, final String stage) {
+                                            ui.post(new Runnable() {
+                                                public void run() {
+                                                    try {
+                                                        pd.setProgress(Math.max(0, Math.min(100, pm / 10)));
+                                                        pd.setMessage(stage + "…");
+                                                    } catch (Throwable ignored) { }
+                                                }
+                                            });
+                                        }
+                                    });
+                    res = com.dsh.v4tune.ai.LocalTuner.tune(p, song, trackIndex, model,
+                            com.dsh.v4tune.ai.LocalTuner.STYLES[style],
+                            intensityPct / 100f, strengthPct / 100f,
+                            new com.dsh.v4tune.ai.LocalTuner.Progress() {
+                                public void onProgress(final int done, final int tot, String stage) {
+                                    ui.post(new Runnable() {
+                                        public void run() {
+                                            try {
+                                                pd.setProgress(100 + done * 900 / Math.max(1, tot));
+                                                pd.setMessage("本地模型推理 " + done + "/" + tot);
+                                            } catch (Throwable ignored) { }
+                                        }
+                                    });
+                                }
+                            });
+                } catch (Throwable t) {
+                    err = t.getMessage() == null ? t.toString() : t.getMessage();
+                }
+                final String fe = err;
+                final com.dsh.v4tune.ai.Tuning ft = res;
+                ui.post(new Runnable() {
+                    public void run() {
+                        try { pd.dismiss(); } catch (Throwable ignored) { }
+                        if (fe != null) {
+                            String m = "本地调音失败：" + fe;
+                            status(m);
+                            setQuickAiStatus(m);
+                            return;
+                        }
+                        int n = applyTuning(ft, 1f);
+                        aiLastApplied = n;
+                        aiLastReply = com.dsh.v4tune.ai.LocalTuner.toJson(ft);
+                        String msg = "本地调音完成（" + styleName + "）：" + ft.summary() + " · " + n + " 处";
+                        status(msg);
+                        setQuickAiStatus(msg);
+                    }
+                });
+            }
+        }, "britune-local").start();
+    }
+
+    /**
+     * "满意，加入训练" in the export dialog: the tuning now on the curves becomes training data and
+     * the network is retrained on-device; nothing leaves the phone.
+     */
+    private void startSelfLearn() {
+        if (song == null) { status("没有可学习的工程"); return; }
+        final android.app.ProgressDialog pd = new android.app.ProgressDialog(this);
+        pd.setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL);
+        pd.setMax(1000);
+        pd.setProgress(0);
+        pd.setMessage("准备自学习…");
+        pd.setCancelable(false);
+        pd.show();
+        new Thread(new Runnable() {
+            public void run() {
+                String err = null;
+                int added = 0, total = 0;
+                try {
+                    final com.dsh.v4tune.ai.LocalTuner.Model base =
+                            com.dsh.v4tune.ai.LocalModelStore.ensureBlocking(MainActivity.this,
+                                    new com.dsh.v4tune.ai.LocalModelStore.P() {
+                                        public void onProgress(int pm, final String stage) {
+                                            ui.post(new Runnable() {
+                                                public void run() {
+                                                    try { pd.setMessage(stage + "…"); } catch (Throwable ignored) { }
+                                                }
+                                            });
+                                        }
+                                    });
+                    ui.post(new Runnable() {
+                        public void run() {
+                            try { pd.setProgress(60); pd.setMessage("整理本次调音数据…"); } catch (Throwable ignored) { }
+                        }
+                    });
+                    added = com.dsh.v4tune.ai.SelfLearn.record(MainActivity.this, song, base,
+                            localStyle, localIntensity);
+                    if (added > 0) {
+                        final java.util.List<float[]> xs = new java.util.ArrayList<float[]>();
+                        final java.util.List<float[]> ys = new java.util.ArrayList<float[]>();
+                        com.dsh.v4tune.ai.SelfLearn.load(
+                                com.dsh.v4tune.ai.SelfLearn.dataFile(MainActivity.this), xs, ys);
+                        total = xs.size();
+                        com.dsh.v4tune.ai.LocalTuner.Model tuned = com.dsh.v4tune.ai.SelfLearn.fit(
+                                base, xs, ys, new com.dsh.v4tune.ai.LocalTuner.Progress() {
+                                    public void onProgress(final int done, final int tot, String stage) {
+                                        ui.post(new Runnable() {
+                                            public void run() {
+                                                try {
+                                                    pd.setProgress(100 + done * 880 / Math.max(1, tot));
+                                                    pd.setMessage("自学习微调 " + done + "/" + tot + " 轮");
+                                                } catch (Throwable ignored) { }
+                                            }
+                                        });
+                                    }
+                                });
+                        com.dsh.v4tune.ai.LocalTuner.save(tuned,
+                                com.dsh.v4tune.ai.SelfLearn.userModelFile(MainActivity.this));
+                        com.dsh.v4tune.ai.LocalModelStore.forget();
+                    }
+                } catch (Throwable t) {
+                    err = t.getMessage() == null ? t.toString() : t.getMessage();
+                }
+                final String fe = err;
+                final int fa = added, ft2 = total;
+                ui.post(new Runnable() {
+                    public void run() {
+                        try { pd.dismiss(); } catch (Throwable ignored) { }
+                        String m;
+                        if (fe != null) m = "自学习失败：" + fe;
+                        else if (fa == 0) m = "本次没有可学习的改动：工程参数都还是默认值";
+                        else m = "已加入自学习：" + fa + " 条 · 数据集 " + ft2 + " 条 · 模型已更新";
+                        status(m);
+                        setQuickAiStatus(m);
+                        toast(m);
+                    }
+                });
+            }
+        }, "britune-self").start();
+    }
+
+    /** where the weights live, how big they are, re-download and delete */
+    private void localModelDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(8), dp(18), dp(8));
+        box.addView(label("BriTune-Net：68-96-64-11 全连接网络（13,547 参数），纯 Java 在本机推理，不联网也能调音。"));
+        box.addView(label("训练数据：按公开的通用中文调音策略合成的 125,456 条参数偏移样本；输入为 12 维音符特征（前后各 2 个音符上下文）+ 8 维全局特征（速度、风格、强度、规模）。"));
+        final TextView state = label(localModelState());
+        box.addView(state);
+        final TextView selfLabel = label(selfLearnState());
+        box.addView(selfLabel);
+        box.addView(label("存放：" + com.dsh.v4tune.ai.LocalModelStore.file(this).getAbsolutePath()));
+        LinearLayout selfRow = row();
+        Button clearSelf = small("清空自学习数据");
+        clearSelf.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                com.dsh.v4tune.ai.SelfLearn.clear(
+                        com.dsh.v4tune.ai.SelfLearn.dataFile(MainActivity.this));
+                com.dsh.v4tune.ai.LocalModelStore.dropUser(MainActivity.this);
+                selfLabel.setText(selfLearnState());
+                state.setText(localModelState());
+                status("自学习数据已清空，模型回到发布版本");
+                toast("自学习数据已清空");
+            }
+        });
+        selfRow.addView(clearSelf);
+        Button learnAgain = small("用全部数据重训");
+        learnAgain.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { startSelfLearn(); }
+        });
+        selfRow.addView(learnAgain);
+        box.addView(selfRow);
+        new AlertDialog.Builder(this)
+                .setTitle("本地调音模型 BriTune-Net")
+                .setView(box)
+                .setPositiveButton("下载更新", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) { downloadLocalModel(state); }
+                })
+                .setNeutralButton("删除模型", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) {
+                        com.dsh.v4tune.ai.LocalModelStore.delete(MainActivity.this);
+                        state.setText(localModelState());
+                        status("本地调音模型已删除");
+                        toast("本地调音模型已删除");
+                    }
+                })
+                .setNegativeButton(L.t("dlg.close"), null)
+                .show();
+    }
+
+    private void downloadLocalModel(final TextView state) {
+        final android.app.ProgressDialog pd = new android.app.ProgressDialog(this);
+        pd.setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL);
+        pd.setMax(1000);
+        pd.setProgress(0);
+        pd.setMessage("准备下载模型…");
+        pd.setCancelable(false);
+        pd.show();
+        com.dsh.v4tune.ai.LocalModelStore.ensure(this, true, new com.dsh.v4tune.ai.LocalModelStore.Cb() {
+            public void progress(final int permille, final String stage) {
+                ui.post(new Runnable() {
+                    public void run() {
+                        try {
+                            pd.setProgress(Math.max(0, Math.min(1000, permille)));
+                            pd.setMessage(stage);
+                        } catch (Throwable ignored) { }
+                    }
+                });
+            }
+            public void done(com.dsh.v4tune.ai.LocalTuner.Model model, final String error) {
+                ui.post(new Runnable() {
+                    public void run() {
+                        try { pd.dismiss(); } catch (Throwable ignored) { }
+                        if (state != null) state.setText(localModelState());
+                        if (error != null) {
+                            status("模型下载失败：" + error);
+                            toast("模型下载失败：" + error);
+                        } else {
+                            status("本地调音模型已就绪");
+                            toast("本地调音模型已就绪");
+                        }
+                    }
+                });
+            }
+        });
     }
 
     // ------------------------------------------------------------------ settings
@@ -4975,7 +5357,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
         refreshNeuralWidgets();
         new AlertDialog.Builder(this)
-                .setTitle("BriNeting 神经声学模型（v9.4）")
+                .setTitle("BriNeting 神经声学模型（v10.0）")
                 .setView(box)
                 .setNegativeButton("关闭", null)
                 .show();
@@ -5336,7 +5718,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         });
 
         // neural acoustic model: universal prior + optional per-singer fine-tune
-        box.addView(label("BriNeting 神经声学模型（v9.4）"));
+        box.addView(label("BriNeting 神经声学模型（v10.0）"));
         neuralChk = null;
         TextView nnDesc = new TextView(this);
         neuralDesc = nnDesc;

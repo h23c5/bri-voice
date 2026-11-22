@@ -159,10 +159,13 @@ public class AudioEngine {
                     if (cb != null) cb.onError("没有可用的声库，请先安装声库");
                     return r;
                 }
+                // renderPart already writes at absolute times (its buffer starts at song tick 0), so the
+                // mix position is 0. Adding the part start here shifted every part that begins late by
+                // part.pos seconds: on a project whose parts start at 8 s the whole song played 8 s
+                // behind the cursor and the tail ran past the end of the buffer.
                 float[] mono = Renderer.renderPart(song, p, vm, cfg);
-                long startSample = (long) (TimeUtil.tickToSec(song, p.pos) * cfg.sampleRate);
                 for (int i = 0; i < mono.length; i++) {
-                    long k = startSample + i;
+                    long k = i;
                     if (k < 0 || k >= n) continue;
                     r.left[(int) k] += (float) (mono[i] * gl);
                     r.right[(int) k] += (float) (mono[i] * gr);

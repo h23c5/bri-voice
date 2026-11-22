@@ -91,16 +91,22 @@ public class Renderer {
      */
     public static float[] renderPart(Song song, Part part, VoiceModel vm, Cfg cfg, int limitFrames) {
         final int fs = cfg.sampleRate;
-        final double partStartSec = TimeUtil.tickToSec(song, part.pos);
+        // The synthesis writes at ABSOLUTE times: buffer index 0 is song tick 0, and every segment,
+        // control-curve lookup and note comparison below works in absolute ticks. Mixing in the part
+        // start here (as an earlier version did) shifted the control curves and the pitch read by
+        // part.pos, and the caller then shifted the audio by part.pos a second time - long parts
+        // started late and everything past the end of the buffer was cut off.
         // The stored duration is only a hint: a part created in the editor (or written by another
         // program) can hold notes past its own dur, and sizing the buffer from dur alone made every
         // write past the end throw ArrayIndexOutOfBoundsException. Cover the notes too.
-        long endTick = part.end();                       // already absolute: pos + dur
+        long endTick = part.end();                       // part start + declared length
         // Note positions are relative to the part, so part.pos has to be added back. Without it the
         // end was under-reported by exactly part.pos - measured on HUG, where the notes really end
         // at 150.3 s but p.end() only says 142.3 s (pos = 7680 ticks = 8 s), the last eight seconds
         // of every part were never rendered and both playback and WAV export went silent there.
-        for (Note nt : part.notes) endTick = Math.max(endTick, part.pos + nt.pos + nt.dur);
+        // Model note ticks are already absolute (the readers add the part offset, the writers
+        // subtract it), so adding part.pos again here only allocated extra silent tail frames.
+        for (Note nt : part.notes) endTick = Math.max(endTick, nt.end());
         final double partEndSec = TimeUtil.tickToSec(song, endTick);
         // The buffer must cover the absolute end of the part. Note times in a vsqx are absolute
         // ticks (a part's notes can start well after its own pos and the synthesis writes them at
@@ -119,7 +125,7 @@ public class Renderer {
         });
         if (notes.isEmpty()) return out;
 
-        ArrayList<Seg> segs = buildSegments(song, part, notes, vm, fs, partStartSec);
+        ArrayList<Seg> segs = buildSegments(song, part, notes, vm, fs);
         if (segs.isEmpty()) return out;
 
         final int ctlStep = Math.max(1, (int) (fs * CTRL_MS / 1000.0));
@@ -127,7 +133,7 @@ public class Renderer {
         float[] f0c = new float[ctlN];
         for (int ci = 0; ci < ctlN; ci++) {
             int s = Math.min(n - 1, ci * ctlStep);
-            f0c[ci] = (float) pitchHz(song, part, notes, vm, s / (double) fs, partStartSec);
+            f0c[ci] = (float) pitchHz(song, part, notes, vm, s / (double) fs);
         }
 
         VoiceSource src = new VoiceSource();
@@ -221,8 +227,8 @@ public class Renderer {
             if (i - lastCtl >= ctlStep) {
                 lastCtl = i;
                 double sec = i / (double) fs;
-                long absTick = TimeUtil.secToTick(song, partStartSec + sec);
-                sampleParams(part, absTick - part.pos, pv, vm);
+                long absTick = TimeUtil.secToTick(song, sec);
+                sampleParams(part, absTick, pv, vm);
                 PhonemeDef next = segIdx + 1 < segs.size() ? segs.get(segIdx + 1).ph : null;
                 int trans = (int) (0.035 * fs);
                 int remain = sg.s1 - i;
@@ -463,7 +469,7 @@ public class Renderer {
     // ------------------------------------------------------------- segmenting
 
     static ArrayList<Seg> buildSegments(Song song, Part part, List<Note> notes, VoiceModel vm,
-                                        int fs, double partStartSec) {
+                                        int fs) {
         ArrayList<Seg> segs = new ArrayList<Seg>();
         for (int i = 0; i < notes.size(); i++) {
             Note nt = notes.get(i);
@@ -797,9 +803,10 @@ public class Renderer {
 
     // ------------------------------------------------------------------ pitch
 
-    static double pitchHz(Song song, Part part, List<Note> notes, VoiceModel vm, double sec, double partStartSec) {
-        long absTick = TimeUtil.secToTick(song, partStartSec + sec);
-        long localTick = absTick - part.pos;
+    static double pitchHz(Song song, Part part, List<Note> notes, VoiceModel vm, double sec) {
+        long absTick = TimeUtil.secToTick(song, sec);
+        // control curves are stored in absolute track ticks, so this is the same value
+        long localTick = absTick;
         Note cur = null;
         int ci = -1;
         for (int i = 0; i < notes.size(); i++) {
