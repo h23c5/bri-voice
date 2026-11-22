@@ -2,6 +2,6 @@
   "versionCode": 85,
   "versionName": "10_26H1.0",
   "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v10_26H1.0/BriVoice-10_26H1.0.apk",
-  "sha256": "cd7a5936ab738fa00131512faf6b2de4693b7c2d62770c3efe3efff1d5ac1a9f",
+  "sha256": "5083cf02e347fc9a315fede6ceff00ee45d656c8269ccbc1e492d9b778530c43",
   "notes": "release v10_26H1.0: on-device tuning model (BriTune-Net). A 13,547-parameter 68-96-64-11 network distilled from general Chinese vocal-tuning practice now runs AI tuning locally: the part JSON goes in, tuning curves and velocity come out, and nothing leaves the phone. Weights live outside the APK and are pulled from this repo on first use (aimodel/, ~55 KB, sha256 checked). Tools > local tuning model, or the AI quick sheet, has style/intensity/strength and per-note progress. Manual section 32. Cloud AI tuning is unchanged."
 }
