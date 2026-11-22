@@ -1,7 +1,7 @@
 {
-  "versionCode": 83,
-  "versionName": "9.3.2",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v9.3.2/BriVoice-9.3.2.apk",
-  "sha256": "e696ec8c3cf1b5f4e1ddbe34fed48ddeaee19f652e9cb224b1070e91484dde9f",
-  "notes": "release 9.3.2: stronger BriNeting neural engine. Two-hidden-layer network, 33 articulatory input features, perceptually weighted spectral loss, L2-SP regularisation toward the universal base, validation-based best weights and early stop. New 神经混合 voice parameter keeps part of each singer's measured envelope (default 60%). No audio samples are read; training still uses only the measured .v4voice harmonic spectra."
+  "versionCode": 84,
+  "versionName": "9.4",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v9.4/BriVoice-9.4.apk",
+  "sha256": "ea399ae47587f83d637c14809c3716c03dfa72307015dd033559f09c89eb37f9",
+  "notes": "release 9.4: multi-bank fusion. Tool > BriNeting neural model > multi-bank fusion lets you pick 2 or more installed voices and train a shared fusion model (16616 params vs 8432 base). Fusion voices always use BriNeting neural synthesis, appear in the singer list and can be saved, rendered and deleted. Training reads only the measured .v4voice harmonic spectra, never audio samples. See manual section 31."
 }
