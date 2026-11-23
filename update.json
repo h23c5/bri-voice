@@ -1,9 +1,9 @@
 {
-  "versionCode": 88,
-  "versionName": "10.0.1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v10.0.1/BriVoice-10.0.1.apk",
-  "sha256": "8a8a07b4fc9dabca47b82690adb87068c0bf248a25e5aae3971fffeeb6ccb2c2",
-  "size": 641479,
-  "notes": "release 10.0.1: 导出 WAV 后询问是否满意，满意则把本次参数加入本机自学习数据集并增量训练 BriTune-Net（只在本机，权重存 files/model/britune-v1.user.bin，可用「清空自学习数据」回到发布版）；修复长工程 / 片段不在 0 位置时末尾音符不唱、导出时长偏长的问题（渲染、混音、片段预览、工程总长统一按绝对 tick）。",
-  "publishedAt": "2026-11-22 18:33:22"
+  "versionCode": 89,
+  "versionName": "10.1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v10.1/BriVoice-10.1.apk",
+  "sha256": "aecc319b693da9a686ae1d0941387370bb5afef3b9f22d85173950992e43498e",
+  "size": 649671,
+  "notes": "release 10.1: 新增「从音频分析表情」（YIN 追音高 + RMS 追力度，写 PIT/DYN/VIB，离线可撤销）；本地调音模型升级 BriTune-Net v2（68-192-96-11 / 32,843 参数 / 167,151 样本，修正音高单位、滑音毫秒、颤音音分换算）；导入模型立即生效、升级基座时作废旧自学习权重但保留数据集。",
+  "publishedAt": "2026-11-23 18:59:51"
 }

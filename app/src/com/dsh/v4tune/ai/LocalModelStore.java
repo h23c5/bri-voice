@@ -57,6 +57,67 @@ public final class LocalModelStore {
 
     public static File file(Context ctx) { return new File(dir(ctx), "britune-v1.bin"); }
 
+    /** which manifest version produced the file above; "imported" means the user supplied it */
+    public static File versionFile(Context ctx) { return new File(dir(ctx), "local-model.version"); }
+
+    public static String storedVersion(Context ctx) {
+        try {
+            File f = versionFile(ctx);
+            if (!f.exists()) return "";
+            byte[] b = new byte[(int) f.length()];
+            java.io.FileInputStream in = new java.io.FileInputStream(f);
+            try { int off = 0; while (off < b.length) { int n = in.read(b, off, b.length - off); if (n <= 0) break; off += n; } }
+            finally { try { in.close(); } catch (Throwable ignored) { } }
+            return new String(b, "UTF-8").trim();
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
+    private static void writeVersion(Context ctx, String v) {
+        try {
+            FileOutputStream out = new FileOutputStream(versionFile(ctx));
+            try { out.write(v.getBytes("UTF-8")); } finally { try { out.close(); } catch (Throwable ignored) { } }
+        } catch (Throwable ignored) { }
+    }
+
+    /**
+     * Replaces the downloaded weights with a file the user picked in the system file manager. The
+     * bytes are validated by {@link LocalTuner#load(File)} before they may replace a working model,
+     * and the version marker becomes "imported" so the automatic update check leaves it alone.
+     */
+    public static synchronized LocalTuner.Model importFrom(Context ctx, InputStream in) throws IOException {
+        File tmp = new File(dir(ctx), "britune-import.tmp");
+        FileOutputStream os = new FileOutputStream(tmp);
+        try {
+            byte[] buf = new byte[16 * 1024];
+            int n;
+            while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+        } finally {
+            try { os.close(); } catch (Throwable ignored) { }
+        }
+        LocalTuner.Model m;
+        try {
+            m = LocalTuner.load(tmp);
+        } catch (IOException e) {
+            tmp.delete();
+            throw e;
+        }
+        File out = file(ctx);
+        if (out.exists()) out.delete();
+        if (!tmp.renameTo(out)) {
+            copy(tmp, out);
+            tmp.delete();
+        }
+        writeVersion(ctx, "imported");
+        // the imported weights must actually be used: self-learning weights belong to the previous
+        // base model (possibly a different architecture), so they are dropped while the dataset
+        // stays around for the next retrain
+        userFile(ctx).delete();
+        forget();
+        return m;
+    }
+
     /** weights retrained on-device by {@link SelfLearn}; preferred over the shipped file */
     public static File userFile(Context ctx) { return SelfLearn.userModelFile(ctx); }
 
@@ -123,15 +184,41 @@ public final class LocalModelStore {
         new Thread(new Runnable() {
             public void run() {
                 try {
-                    if (!force && installed(ctx)) {
+                    if (!force && "imported".equals(storedVersion(ctx)) && installed(ctx)) {
+                        // the user's own weights outrank whatever the repository publishes
                         LocalTuner.Model m = load(ctx);
                         cb.progress(1000, "已就绪");
                         cb.done(m, null);
                         return;
                     }
+                    String prevVersion = storedVersion(ctx);
                     cb.progress(0, "读取模型清单");
-                    Entry e = parse(fetch(MANIFEST_URL + "?t=" + System.currentTimeMillis()));
-                    if (e == null || e.url.length() == 0) { cb.done(null, "模型清单不可用"); return; }
+                    Entry e = null;
+                    String listError = null;
+                    try {
+                        e = parse(fetch(MANIFEST_URL + "?t=" + System.currentTimeMillis()));
+                    } catch (Throwable t) {
+                        listError = t.getMessage() == null ? t.toString() : t.getMessage();
+                    }
+                    // a published version is only worth downloading when it differs from what is on
+                    // disk; otherwise every start would pull the same 130 KB again
+                    if (!force && installed(ctx) && (e == null || e.version.length() == 0
+                            || e.version.equals(storedVersion(ctx)))) {
+                        LocalTuner.Model m = load(ctx);
+                        cb.progress(1000, "已就绪");
+                        cb.done(m, null);
+                        return;
+                    }
+                    if (e == null || e.url.length() == 0) {
+                        if (installed(ctx)) {
+                            LocalTuner.Model m = load(ctx);
+                            cb.progress(1000, "离线，使用已下载的模型");
+                            cb.done(m, null);
+                            return;
+                        }
+                        cb.done(null, listError == null ? "模型清单不可用" : ("模型清单不可用：" + listError));
+                        return;
+                    }
                     File tmp = new File(dir(ctx), "britune-download.tmp");
                     cb.progress(20, "下载模型 " + (e.size > 0 ? (e.size / 1024) + " KB" : ""));
                     download(e, tmp, cb);
@@ -149,6 +236,10 @@ public final class LocalModelStore {
                         copy(tmp, out);
                         tmp.delete();
                     }
+                    writeVersion(ctx, e.version);
+                    // a new base version invalidates weights self-trained on the old architecture;
+                    // the sample dataset is kept so the user can retrain on the new base
+                    if (!e.version.equals(prevVersion)) userFile(ctx).delete();
                     forget();
                     LocalTuner.Model m = load(ctx);
                     cb.progress(1000, "已就绪");

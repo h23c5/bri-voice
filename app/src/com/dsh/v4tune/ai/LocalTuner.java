@@ -20,9 +20,9 @@ import java.util.Map;
 /**
  * BriTune-Net (v10_26H1): the tuning assistant that runs entirely on the phone.
  *
- * <p>It is a small dense network (68 -> 96 -> 64 -> 11, about 13.5k weights, 55 KB) distilled from a
- * rule teacher that encodes common Chinese vocal-tuning practice, so no request ever leaves the
- * device. The structured part JSON is the input; the tuning strategy that the cloud prompt describes
+ * <p>It is a small dense network distilled from a rule teacher that encodes common Chinese
+ * vocal-tuning practice, so no request ever leaves the device (v2: 68 -> 192 -> 96 -> 11, about
+ * 33k weights / 130 KB; the header carries the real shape, so older weight files keep loading). The structured part JSON is the input; the tuning strategy that the cloud prompt describes
  * in words is baked into the model as five style profiles plus an intensity axis. The output is the
  * same JSON the cloud assistant returns, so {@link AiTuner#parseTuning} and the normal apply path
  * handle it unchanged.
@@ -331,9 +331,22 @@ public final class LocalTuner {
             addPoint(curves.get("POR"), p, 6, start, d[5] * mul);
             addPoint(curves.get("VIB"), p, 9, start, d[6] * mul);
             addPoint(curves.get("GEN"), p, 5, start, d[10] * mul);
-            // pitch: a scoop into the note and a release at its tail
-            addPoint(curves.get("PIT"), p, 7, start, d[7] * mul);
-            addPoint(curves.get("PIT"), p, 7, end, d[8] * mul);
+            // pitch: a scoop into the note, back to the note's own pitch, then a release at the
+            // tail. The two zero points in between matter: PIT is a continuous curve, so writing
+            // only the two ends would smear one long slide across the whole note (audible drift)
+            // instead of a short portamento that settles on pitch.
+            double lead = d[7] * mul, tail = d[8] * mul;
+            long scoopT = Math.max(24, Math.min(96, n.dur / 8));
+            long relT = Math.max(24, Math.min(120, n.dur / 6));
+            boolean room = n.dur > scoopT + relT + 24;
+            if (Math.abs(lead) >= 40) {
+                addPoint(curves.get("PIT"), p, 7, start, lead);
+                if (room) addPoint(curves.get("PIT"), p, 7, start + scoopT, 0);
+            }
+            if (Math.abs(tail) >= 40) {
+                if (room) addPoint(curves.get("PIT"), p, 7, end - relT, 0);
+                addPoint(curves.get("PIT"), p, 7, end, tail);
+            }
 
             float dv = d[9] * mul;
             if (Math.abs(dv) >= 0.5f) {

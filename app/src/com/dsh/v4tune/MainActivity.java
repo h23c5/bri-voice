@@ -60,7 +60,7 @@ import java.util.ArrayDeque;
 public class MainActivity extends Activity implements PianoRollView.Listener {
 
     private static final int REQ_OPEN = 1001, REQ_SAVE = 1002, REQ_PACK = 1003, REQ_PACK_DIR = 1004,
-            REQ_WAV = 1005, REQ_CHAR = 1007;
+            REQ_WAV = 1005, REQ_CHAR = 1007, REQ_TUNE = 1008, REQ_MODEL = 1009;
     private com.dsh.v4tune.io.PackStore packStore;
 
     private Song song;
@@ -1822,6 +1822,108 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         }
     }
 
+    // ------------------------------------------- audio-driven expression (v10.1, AudioTune)
+
+    /** Menu entry: explains the analysis, then picks a dry vocal take. */
+    private void audioTuneMenu() {
+        new AlertDialog.Builder(this)
+                .setTitle("从音频分析表情")
+                .setMessage("选一段和当前轨道对齐的干声演唱（WAV，最多 3 分钟）。\n"
+                        + "本机用 YIN 追音高、RMS 追力度，把音准偏差、句首滑音、句尾释放和长音颤音写回 PIT / DYN / VIB。\n"
+                        + "只读音频、不联网，写入后可撤销。")
+                .setPositiveButton("选择 WAV…", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) { pickTuneWav(); }
+                })
+                .setNegativeButton(L.t("dlg.cancel"), null)
+                .show();
+    }
+
+    private void pickTuneWav() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("audio/*");
+        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"audio/wav", "audio/x-wav", "audio/wave",
+                "audio/vnd.wave", "audio/*", "application/octet-stream"});
+        startActivityForResult(i, REQ_TUNE);
+    }
+
+    /** reads the take, aligns it with the notes of the current part and previews the result */
+    private void audioTuneFrom(Uri uri) {
+        final Part part = currentPart();
+        if (part == null || part.notes.isEmpty()) { status("当前轨道没有音符，先画几个音"); return; }
+        final WavReader.AudioData d;
+        try {
+            java.io.InputStream in = ProjectIO.openAny(this, uri);
+            d = WavReader.read(in, 44100 * 180);          // same limit as the clip import
+            try { in.close(); } catch (Throwable ignored) { }
+        } catch (Throwable t) {
+            status("读取音频失败：" + t.getMessage());
+            toast("读取音频失败：" + t.getMessage());
+            return;
+        }
+        if (d == null || !d.ok()) {
+            String m = "读取音频失败：" + (d == null ? "?" : d.error);
+            status(m);
+            toast(m);
+            return;
+        }
+        final float[] mono = new float[d.frames];
+        for (int i = 0; i < mono.length; i++) {
+            mono[i] = d.right == null ? d.left[i] : (d.left[i] + d.right[i]) * 0.5f;
+        }
+        final android.app.ProgressDialog pd = new android.app.ProgressDialog(this);
+        pd.setMessage("正在分析音频…");
+        pd.setCancelable(false);
+        pd.show();
+        new Thread(new Runnable() {
+            public void run() {
+                final com.dsh.v4tune.ai.AudioTune.Result r =
+                        com.dsh.v4tune.ai.AudioTune.analyze(song, part, mono, d.sampleRate);
+                ui.post(new Runnable() {
+                    public void run() {
+                        try { pd.dismiss(); } catch (Throwable ignored) { }
+                        if (r == null || r.error != null) {
+                            String m = "音频分析：" + (r == null ? "?" : r.error);
+                            status(m);
+                            toast(m);
+                            return;
+                        }
+                        new AlertDialog.Builder(MainActivity.this)
+                                .setTitle("音频分析完成")
+                                .setMessage(r.summary + "\n\n把这些表情写进当前轨道吗？（可撤销）")
+                                .setPositiveButton("写入调音", new DialogInterface.OnClickListener() {
+                                    public void onClick(DialogInterface dlg, int w) {
+                                        int n = applyTuning(r.tuning, 1.0f);
+                                        aiLastApplied = n;
+                                        String msg = "音频分析调音：" + r.summary + " · " + n + " 处";
+                                        status(msg);
+                                        toast("已按音频写入 " + n + " 处表情");
+                                    }
+                                })
+                                .setNegativeButton(L.t("dlg.cancel"), null)
+                                .show();
+                    }
+                });
+            }
+        }, "audio-tune").start();
+    }
+
+    /** imports a BRTN model file, the offline path for models built outside the app */
+    private void importModelFrom(Uri uri) {
+        try {
+            java.io.InputStream in = ProjectIO.openAny(this, uri);
+            com.dsh.v4tune.ai.LocalModelStore.importFrom(this, in);
+            try { in.close(); } catch (Throwable ignored) { }
+            toast("模型已导入");
+            status("本地调音模型已导入：" + localModelState());
+            localModelDialog();
+        } catch (Throwable t) {
+            String m = "模型导入失败：" + t.getMessage();
+            status(m);
+            toast(m);
+        }
+    }
+
     private void clipMenu() {
         while (clips.size() <= trackIndex) clips.add(new java.util.ArrayList<AudioClip>());
         final java.util.ArrayList<AudioClip> list = clips.get(trackIndex);
@@ -2165,7 +2267,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 L.t("menu.tools.guide"),
                 "角色立绘（左下角）",
                 "BriNeting 神经声学模型（v10.0）",
-                "本地调音模型（BriTune-Net）"
+                "本地调音模型（BriTune-Net）",
+                "从音频分析表情（WAV，实验）"
         };
         menu(L.t("menu.tools"), null, items, -1, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, int which) {
@@ -2186,7 +2289,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 else if (which == 14) showOnboarding();
                 else if (which == 15) characterDialog();
                 else if (which == 16) neuralDialog();
-                else localTuneDialog();
+                else if (which == 17) localTuneDialog();
+                else audioTuneMenu();
             }
         });
     }
@@ -3264,6 +3368,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             importTree(data.getData());
         } else if (req == REQ_WAV && data != null && data.getData() != null) {
             addWavFrom(data.getData());
+        } else if (req == REQ_TUNE) {
+            audioTuneFrom(uri);
+        } else if (req == REQ_MODEL) {
+            importModelFrom(uri);
         }
     }
 
@@ -4509,8 +4617,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(18), dp(8), dp(18), dp(8));
-        box.addView(label("BriTune-Net：68-96-64-11 全连接网络（13,547 参数），纯 Java 在本机推理，不联网也能调音。"));
-        box.addView(label("训练数据：按公开的通用中文调音策略合成的 125,456 条参数偏移样本；输入为 12 维音符特征（前后各 2 个音符上下文）+ 8 维全局特征（速度、风格、强度、规模）。"));
+        box.addView(label("BriTune-Net v2：68-192-96-11 全连接网络（32,843 参数），纯 Java 在本机推理，不联网也能调音。"));
+        box.addView(label("训练数据：按通用中文调音策略合成的 167,151 条参数偏移样本；输入为 12 维音符特征（前后各 2 个音符上下文）+ 8 维全局特征（速度、风格、强度、规模）。"));
+        box.addView(label("v2 修正了音高表情的单位（旧模型写进去的音分被当成 14-bit PIT 值，几乎听不出来），滑音按真实毫秒换算，颤音按目标音分深度换算。"));
         final TextView state = label(localModelState());
         box.addView(state);
         final TextView selfLabel = label(selfLearnState());
@@ -4536,6 +4645,19 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         });
         selfRow.addView(learnAgain);
         box.addView(selfRow);
+        LinearLayout importRow = row();
+        Button importModel = small("导入模型文件…");
+        importModel.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                i.addCategory(Intent.CATEGORY_OPENABLE);
+                i.setType("*/*");
+                i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/octet-stream", "*/*"});
+                startActivityForResult(i, REQ_MODEL);
+            }
+        });
+        importRow.addView(importModel);
+        box.addView(importRow);
         new AlertDialog.Builder(this)
                 .setTitle("本地调音模型 BriTune-Net")
                 .setView(box)
