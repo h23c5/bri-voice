@@ -2,6 +2,7 @@ package com.dsh.v4tune;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.graphics.Color;
@@ -54,13 +55,18 @@ import com.dsh.v4tune.ui.ParamView;
 import com.dsh.v4tune.ui.PianoRollView;
 import com.dsh.v4tune.ui.Theme;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.util.ArrayDeque;
 
 public class MainActivity extends Activity implements PianoRollView.Listener {
 
     private static final int REQ_OPEN = 1001, REQ_SAVE = 1002, REQ_PACK = 1003, REQ_PACK_DIR = 1004,
-            REQ_WAV = 1005, REQ_CHAR = 1007, REQ_TUNE = 1008, REQ_MODEL = 1009;
+            REQ_WAV = 1005, REQ_CHAR = 1007, REQ_TUNE = 1008, REQ_MODEL = 1009,
+            REQ_CUSTOM_SAMPLES = 1010, REQ_CUSTOM_ART = 1011;
     private com.dsh.v4tune.io.PackStore packStore;
 
     private Song song;
@@ -75,6 +81,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private Button aiBtn;
     /** live result line inside the AI quick sheet (so failures are visible without closing it) */
     private TextView quickAiResult;
+    /** 11.0 custom voicebank: takes picked in the sheet, and the artwork bytes to embed in the pack */
+    private final ArrayList<com.dsh.v4tune.voicebank.CustomBankBuilder.Sample> customSamples =
+            new ArrayList<com.dsh.v4tune.voicebank.CustomBankBuilder.Sample>();
+    private byte[] customArt;
+    private TextView customStatus;
     /** settings widgets for the experimental neural voicebank (updated after training) */
     private CheckBox neuralChk;
     private TextView neuralDesc;
@@ -1465,6 +1476,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             String info;
             if (isFusionBank(v) && v.neural != null) {
                 info = "融合声库 · " + v.neural.bankCount + " 声库 · 参数 " + v.neural.paramCount();
+            } else if (v.neuralEmbedded) {
+                info = "自制声库 · " + v.sampleWavs.size() + " 个采样 · "
+                        + (v.neural != null ? ("神经参数 " + v.neural.paramCount()) : "传统合成");
             } else {
                 info = (v.harmonics.size() > 0)
                         ? L.t("dlg.singer.stats", v.harmonics.size(), bands)
@@ -1489,6 +1503,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                             cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
                             commitEdit();
                             refreshAll();
+                            if (v.characterPng != null) applyPackCharacter(v.characterPng);
                             status(v.neuralBank && currentVoice.neural == null
                                     ? "这是神经声库，请先训练 BriNeting 基座"
                                     : L.t("status.singer", singerName(v)));
@@ -2266,9 +2281,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 L.t("menu.tools.tutorial"),
                 L.t("menu.tools.guide"),
                 "角色立绘（左下角）",
-                "BriNeting 神经声学模型（v10.0）",
+                "BriNeting 神经声学模型（v11.0）",
                 "本地调音模型（BriTune-Net）",
-                "从音频分析表情（WAV，实验）"
+                "从音频分析表情（WAV，实验）",
+                "自制声库（用采样训练）(v11.0)"
         };
         menu(L.t("menu.tools"), null, items, -1, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, int which) {
@@ -2290,7 +2306,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 else if (which == 15) characterDialog();
                 else if (which == 16) neuralDialog();
                 else if (which == 17) localTuneDialog();
-                else audioTuneMenu();
+                else if (which == 18) audioTuneMenu();
+                else customBankDialog();
             }
         });
     }
@@ -3330,8 +3347,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
-        if (res != RESULT_OK || data == null || data.getData() == null) return;
+        if (res != RESULT_OK || data == null) return;
+        if (req == REQ_CUSTOM_SAMPLES) { addCustomSamples(data); return; }
         Uri uri = data.getData();
+        if (uri == null) return;
         if (req == REQ_CHAR) {
             loadCharacter(uri);
         } else if (req == REQ_OPEN) {
@@ -3372,6 +3391,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             audioTuneFrom(uri);
         } else if (req == REQ_MODEL) {
             importModelFrom(uri);
+        } else if (req == REQ_CUSTOM_ART) {
+            loadCustomArt(uri);
         }
     }
 
@@ -4841,9 +4862,13 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         }
         // v9.2: engine follows the pack type. A .v4neural bank is always BriNeting; a normal
         // .v4voice bank uses the traditional engine unless the user explicitly turned neural on.
-        vm.neuralEnabled = vm.neural != null && (vm.neuralBank
-                || getSharedPreferences("brivoice", MODE_PRIVATE)
-                        .getBoolean("neuralOn_" + neuralKey(vm), false));
+        // v11.0: a self-made bank ships its own neural link weights, so BriNeting is its default
+        // engine. The user can still switch it off explicitly (the pref then wins).
+        android.content.SharedPreferences pref = getSharedPreferences("brivoice", MODE_PRIVATE);
+        String nk = "neuralOn_" + neuralKey(vm);
+        boolean on = pref.getBoolean(nk, false);
+        if (!on && vm.neuralEmbedded && !pref.contains(nk)) on = true;
+        vm.neuralEnabled = vm.neural != null && (vm.neuralBank || on);
     }
 
     /** every installed voicebank that actually carries measured harmonic frames */
@@ -4876,7 +4901,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         } else if (isFusionBank(currentVoice)) {
             b.append("融合声库 · ").append(currentVoice.neural.describe());
         } else {
-            b.append(currentVoice.neuralBank ? "神经声库" : "传统声库");
+            b.append(currentVoice.neuralBank ? "神经声库" : (currentVoice.neuralEmbedded ? "自制声库" : "传统声库"));
             b.append(" · ").append(currentVoice.neuralFromUniversal ? "BriNeting 基座（尚未微调）" : "已微调");
             b.append(" · ").append(currentVoice.neural.describe());
         }
@@ -5399,6 +5424,390 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 + "Original voicebanks remain the property of their respective rights holders.\n";
     }
 
+    // -------------------------------------------------- custom voicebank (v11.0)
+
+    /** sheet: pick takes + artwork, then train everything on the phone */
+    private void customBankDialog() {
+        customSamples.clear();
+        customArt = null;
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(8), dp(18), dp(8));
+        TextView desc = new TextView(this);
+        desc.setText("用你自己唱的 WAV 采样训练一个专属声库。文件名就是发音：la.wav、ma.wav、a.wav、tian.wav…，"
+                + "同一发音可以录多条（la_1.wav、la_2.wav）。BriVoice 只在本机测量谐波、帧序列和首辅音噪声，"
+                + "再训练神经链接模型。包内会同时带上立绘、采样和神经参数。");
+        desc.setTextColor(Theme.TEXT_DIM);
+        desc.setTextSize(12.5f);
+        box.addView(desc);
+
+        final EditText name = new EditText(this);
+        name.setHint("声库名称（默认：我的声库）");
+        name.setSingleLine(true);
+        box.addView(name);
+
+        final int[] lang = {2};
+        final String[] langNames = {"中文", "日文", "英文"};
+        final Button[] langBtns = new Button[3];
+        LinearLayout langs = row();
+        for (int i = 0; i < 3; i++) {
+            final int idx = i;
+            langBtns[i] = small(langNames[i]);
+            langBtns[i].setOnClickListener(new View.OnClickListener() {
+                public void onClick(View v) {
+                    lang[0] = idx;
+                    for (int j = 0; j < 3; j++) langBtns[j].setText((j == idx ? "● " : "") + langNames[j]);
+                }
+            });
+            langs.addView(langBtns[i]);
+        }
+        langBtns[2].setText("● 英文");
+        lang[0] = 2;
+        box.addView(langs);
+
+        customStatus = label("已选采样：0 个 · 立绘：未选择");
+        box.addView(customStatus);
+
+        LinearLayout btns = row();
+        Button picks = small("选择采样 WAV…");
+        Button picka = small("选择立绘…");
+        btns.addView(picks);
+        btns.addView(picka);
+        box.addView(btns);
+        picks.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { pickCustomSamples(); }
+        });
+        picka.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { pickCustomArt(); }
+        });
+
+        TextView tip = new TextView(this);
+        tip.setText("建议：每个发音 1 秒以上、干声、不要伴奏；音高尽量覆盖你要唱的音域。"
+                + "训练完成后会自动把新声库并入 BriNeting 基座。");
+        tip.setTextColor(Theme.TEXT_DIM);
+        tip.setTextSize(12f);
+        box.addView(tip);
+
+        ScrollView sc = new ScrollView(this);
+        sc.addView(box);
+        new AlertDialog.Builder(this)
+                .setTitle("自制声库（v11.0）")
+                .setView(sc)
+                .setPositiveButton("开始训练", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) { startCustomTraining(name.getText().toString(), lang[0]); }
+                })
+                .setNegativeButton(L.t("dlg.cancel"), null)
+                .show();
+    }
+
+    private void pickCustomSamples() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("audio/*");
+        i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"audio/wav", "audio/x-wav", "audio/wave",
+                "audio/vnd.wave", "audio/*", "application/octet-stream"});
+        try {
+            startActivityForResult(i, REQ_CUSTOM_SAMPLES);
+        } catch (Throwable t) {
+            status("无法打开文件选择器: " + t.getMessage());
+        }
+    }
+
+    private void pickCustomArt() {
+        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+        i.setType("image/*");
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        try {
+            startActivityForResult(i, REQ_CUSTOM_ART);
+        } catch (Throwable t) {
+            status("无法打开图片选择器: " + t.getMessage());
+        }
+    }
+
+    /** read every picked WAV once: bytes stay for the pack, float mono is used for measuring */
+    private void addCustomSamples(Intent data) {
+        final ArrayList<Uri> uris = new ArrayList<Uri>();
+        ClipData cd = data.getClipData();
+        if (cd != null) {
+            for (int i = 0; i < cd.getItemCount(); i++) uris.add(cd.getItemAt(i).getUri());
+        } else if (data.getData() != null) {
+            uris.add(data.getData());
+        }
+        if (uris.isEmpty()) return;
+        final android.app.ProgressDialog pd = new android.app.ProgressDialog(this);
+        pd.setMessage("正在读取采样…");
+        pd.setCancelable(false);
+        pd.show();
+        new Thread(new Runnable() {
+            public void run() {
+                int added = 0;
+                StringBuilder bad = new StringBuilder();
+                long total = 0;
+                for (Uri u : uris) {
+                    if (customSamples.size() >= 64) break;
+                    try {
+                        InputStream in = getContentResolver().openInputStream(u);
+                        byte[] bytes = readAllStream(in, 48 * 1024 * 1024);
+                        total += bytes.length;
+                        if (total > 160L * 1024 * 1024) { bad.append("、总大小超过 160MB"); break; }
+                        WavReader.AudioData ad = WavReader.read(new ByteArrayInputStream(bytes), WavReader.OUT_RATE * 60);
+                        if (ad == null || ad.error != null) {
+                            if (bad.length() < 200) bad.append(bad.length() > 0 ? "、" : "").append(baseName(u)).append("（").append(ad == null ? "读不出" : ad.error).append("）");
+                            continue;
+                        }
+                        float[] mono = new float[ad.left.length];
+                        for (int i = 0; i < mono.length; i++) {
+                            mono[i] = ad.right == null ? ad.left[i] : (ad.left[i] + ad.right[i]) * 0.5f;
+                        }
+                        customSamples.add(new com.dsh.v4tune.voicebank.CustomBankBuilder.Sample(
+                                baseName(u), mono, WavReader.OUT_RATE, bytes));
+                        added++;
+                    } catch (Throwable t) {
+                        if (bad.length() < 200) bad.append(bad.length() > 0 ? "、" : "").append(baseName(u));
+                    }
+                }
+                final int fadd = added;
+                final String fbad = bad.toString();
+                ui.post(new Runnable() {
+                    public void run() {
+                        try { pd.dismiss(); } catch (Throwable ignored) { }
+                        updateCustomStatus();
+                        toast(fadd > 0 ? ("已加入 " + fadd + " 个采样") : "没有读到可用的 WAV 采样");
+                        if (fbad.length() > 0) status("部分采样未加入：" + fbad);
+                    }
+                });
+            }
+        }, "custom-samples").start();
+    }
+
+    private void loadCustomArt(final Uri uri) {
+        final android.app.ProgressDialog pd = new android.app.ProgressDialog(this);
+        pd.setMessage("正在处理立绘（自动去白底）…");
+        pd.setCancelable(false);
+        pd.show();
+        new Thread(new Runnable() {
+            public void run() {
+                String err = null;
+                byte[] png = null;
+                try {
+                    android.graphics.Bitmap bm = com.dsh.v4tune.ui.CharacterArt.fromUri(MainActivity.this, uri);
+                    if (bm == null) throw new IllegalStateException("图片解码失败");
+                    ByteArrayOutputStream bo = new ByteArrayOutputStream();
+                    bm.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bo);
+                    png = bo.toByteArray();
+                } catch (Throwable t) {
+                    err = t.getMessage() == null ? t.toString() : t.getMessage();
+                }
+                final String fe = err;
+                final byte[] fp = png;
+                ui.post(new Runnable() {
+                    public void run() {
+                        try { pd.dismiss(); } catch (Throwable ignored) { }
+                        if (fe != null) { toast("立绘处理失败：" + fe); return; }
+                        customArt = fp;
+                        updateCustomStatus();
+                        toast("立绘已加入声库（会自动去白底）");
+                    }
+                });
+            }
+        }, "custom-art").start();
+    }
+
+    private void updateCustomStatus() {
+        if (customStatus == null) return;
+        customStatus.setText("已选采样：" + customSamples.size() + " 个"
+                + (customArt != null ? " · 立绘：已选择" : " · 立绘：未选择"));
+    }
+
+    /** measure + train + write the pack + register it; heavy work on a background thread */
+    private void startCustomTraining(final String rawName, final int lang) {
+        if (customSamples.isEmpty()) {
+            toast("请先选择至少一个 WAV 采样");
+            return;
+        }
+        final String nm = (rawName == null || rawName.trim().isEmpty()) ? "我的声库" : rawName.trim();
+        final android.app.ProgressDialog pd = new android.app.ProgressDialog(this);
+        pd.setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL);
+        pd.setMax(100);
+        pd.setMessage("正在测量采样…");
+        pd.setCancelable(false);
+        pd.show();
+        new Thread(new Runnable() {
+            public void run() {
+                String err = null;
+                String detail = "";
+                com.dsh.v4tune.synth.VoiceModel result = null;
+                try {
+                    final com.dsh.v4tune.voicebank.CustomBankBuilder.Report rep =
+                            new com.dsh.v4tune.voicebank.CustomBankBuilder.Report();
+                    final com.dsh.v4tune.voicebank.VoicebankWriter w =
+                            com.dsh.v4tune.voicebank.CustomBankBuilder.build(
+                                    new ArrayList<com.dsh.v4tune.voicebank.CustomBankBuilder.Sample>(customSamples),
+                                    nm, lang, rep);
+                    pd.setMessage("正在写入声库包…");
+                    File tmp = new File(getCacheDir(), "custom_" + System.currentTimeMillis() + VoicePack.EXT);
+                    w.writeZip(tmp, null);
+                    VoicePack.Result pr = VoicePack.load(tmp);
+                    if (pr.error != null || pr.model == null) throw new IllegalStateException(pr.error == null ? "声库包读不回来" : pr.error);
+                    final com.dsh.v4tune.synth.VoiceModel vm = pr.model;
+                    vm.sampleWavs.clear();
+                    for (com.dsh.v4tune.voicebank.CustomBankBuilder.Sample s : customSamples) {
+                        vm.sampleWavs.put(baseName(s.fileName), s.wavBytes);
+                    }
+                    vm.characterPng = customArt;
+
+                    // 1) the samples get their own neural link model (falls back to fine-tuning
+                    //    the shared base when there are too few frames)
+                    pd.setMessage("正在训练采样神经参数…");
+                    NeuralSpectrum model = null;
+                    try {
+                        model = NeuralSpectrum.train(vm, new NeuralSpectrum.Progress() {
+                            public void onProgress(final int percent, final String message) {
+                                runOnUiThread(new Runnable() {
+                                    public void run() {
+                                        pd.setProgress(Math.max(2, Math.min(80, percent * 8 / 10)));
+                                        pd.setMessage("训练采样神经参数 · " + message);
+                                    }
+                                });
+                            }
+                        });
+                    } catch (Throwable first) {
+                        NeuralSpectrum prior = null;
+                        try { prior = NeuralSpectrum.load(universalNeuralFile()); } catch (Throwable ignored) { }
+                        if (prior != null) {
+                            final NeuralSpectrum pr2 = prior;
+                            model = NeuralSpectrum.fineTune(pr2, vm, new NeuralSpectrum.Progress() {
+                                public void onProgress(final int percent, final String message) {
+                                    runOnUiThread(new Runnable() {
+                                        public void run() {
+                                            pd.setProgress(Math.max(20, Math.min(80, 20 + percent * 6 / 10)));
+                                            pd.setMessage("用 BriNeting 基座微调采样 · " + message);
+                                        }
+                                    });
+                                }
+                            });
+                        }
+                        if (model == null) throw first;
+                    }
+                    pd.setProgress(84);
+                    pd.setMessage("正在写神经模型与采样…");
+                    model.save(neuralFile(vm));
+                    vm.neural = model;
+                    vm.neuralEmbedded = true;
+                    vm.neuralFromUniversal = false;
+                    vm.neuralEnabled = true;
+
+                    // 2) rewrite the pack with art + raw takes + neural weights embedded
+                    File dir = packStore.directory();
+                    if (!dir.isDirectory()) dir.mkdirs();
+                    File target = new File(dir, vm.id + VoicePack.EXT);
+                    VoicePack.write(target, vm, "本声库的采样与立绘由用户提供，版权归用户所有；"
+                            + "BriVoice 只在本机分析与训练，不上传任何音频。");
+                    VoicePack.Result check = VoicePack.load(target);
+                    if (check.error != null || check.model == null) throw new IllegalStateException(check.error == null ? "声库包校验失败" : check.error);
+                    result = check.model;
+                    pd.setProgress(94);
+                    detail = "采样 " + rep.takes + " 个 · 符号 " + rep.symbols + " 个 · 频段 " + rep.bands + " 条"
+                            + (rep.f0Max > 0 ? " · 音域 " + Math.round(rep.f0Min) + "–" + Math.round(rep.f0Max) + " Hz" : "")
+                            + " · 参数 " + model.paramCount()
+                            + " · " + (target.length() / 1024) + " KB";
+                    if (rep.skipped.length() > 0) detail += "\n跳过的文件：" + rep.skipped;
+                    if (tmp.exists()) tmp.delete();
+                } catch (Throwable t) {
+                    err = t.getMessage() == null ? t.toString() : t.getMessage();
+                    android.util.Log.e("V4Tune", "custom voicebank failed", t);
+                }
+                final String fe = err;
+                final String fd = detail;
+                final com.dsh.v4tune.synth.VoiceModel fv = result;
+                ui.post(new Runnable() {
+                    public void run() {
+                        try { pd.dismiss(); } catch (Throwable ignored) { }
+                        if (fe != null || fv == null) {
+                            toast("自制声库失败：" + fe);
+                            status("自制声库失败：" + fe);
+                            return;
+                        }
+                        SingerLibrary.upsertUserPack(fv);
+                    saveNeuralEnabled(fv, true);
+                        beginEdit();
+                        currentVoice = fv;
+                        attachNeural(currentVoice);
+                        applyVoiceToPart(currentVoice);
+                        cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
+                        commitEdit();
+                        refreshAll();
+                        if (fv.characterPng != null) applyPackCharacter(fv.characterPng);
+                        toast("自制声库完成：" + fd);
+                        status("已安装自制声库 " + fv.name + " · " + fd);
+                        new AlertDialog.Builder(MainActivity.this)
+                                .setTitle("自制声库已生成")
+                                .setMessage(fd + "\n\n已包含：立绘" + (fv.characterPng != null ? "✓" : "—")
+                                        + " · 采样 " + fv.sampleWavs.size() + " 个 · 神经参数"
+                                        + (fv.neural != null ? "✓" : "—")
+                                        + "\n\n下一步自动把新声库并入 BriNeting 基座训练（会重新训练共享基座，约几分钟）。")
+                                .setPositiveButton("并入基座训练", new DialogInterface.OnClickListener() {
+                                    public void onClick(DialogInterface d, int w) { trainUniversalNeural(); }
+                                })
+                                .setNegativeButton("稍后", null)
+                                .show();
+                    }
+                });
+            }
+        }, "custom-voicebank").start();
+    }
+
+    /** write the artwork embedded in a voicebank into the private slot and show it */
+    private void applyPackCharacter(byte[] png) {
+        if (png == null || png.length == 0) return;
+        try {
+            File f = com.dsh.v4tune.ui.CharacterArt.savedFile(this);
+            FileOutputStream fo = new FileOutputStream(f);
+            fo.write(png);
+            fo.flush();
+            fo.close();
+            android.graphics.Bitmap bm = android.graphics.BitmapFactory.decodeByteArray(png, 0, png.length);
+            if (bm == null) return;
+            charBitmap = bm;
+            charView.setImageBitmap(bm);
+            charView.setVisibility(View.VISIBLE);
+            updateCharacterOverlay();
+        } catch (Throwable t) {
+            android.util.Log.w("V4Tune", "pack character apply failed: " + t);
+        }
+    }
+
+    private static byte[] readAllStream(InputStream in, int limit) throws java.io.IOException {
+        if (in == null) throw new java.io.IOException("读不到文件");
+        try {
+            ByteArrayOutputStream bo = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n, total = 0;
+            while ((n = in.read(buf)) > 0) {
+                total += n;
+                if (total > limit) throw new java.io.IOException("文件太大");
+                bo.write(buf, 0, n);
+            }
+            return bo.toByteArray();
+        } finally {
+            try { in.close(); } catch (Throwable ignored) { }
+        }
+    }
+
+    /** last path segment, cleaned up, used both as the pack entry name and the phoneme hint */
+    private static String baseName(Uri uri) {
+        return baseName(uri == null ? "" : String.valueOf(uri.getLastPathSegment()));
+    }
+
+    private static String baseName(String path) {
+        String n = path == null ? "" : path;
+        int k = Math.max(n.lastIndexOf('/'), n.lastIndexOf(':'));
+        if (k >= 0) n = n.substring(k + 1);
+        if (n.trim().isEmpty()) n = "sample.wav";
+        return n;
+    }
+
     private void neuralDialog() {
         ensureUniversalNeural();
         LinearLayout box = new LinearLayout(this);
@@ -5409,7 +5818,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         help.setText("① BriNeting 基座：用本机声库已测量的谐波学习共享频谱规律（不读取音频采样）\n"
                 + "② 声库类型决定引擎：.v4voice 走传统合成，.v4neural 固定走 BriNeting；传统声库也可以手动启用\n"
                 + "③ 神经声库可以调声线参数（气息、张力、明亮、鼻音、吐字、颤音、DYN/PIT 响应）。\n"
-                + "④ 多声库融合：勾选 2 个以上声库，训练一个更宽的神经声库（约 2 倍参数）并安装成新声库。");
+                + "④ 多声库融合：勾选 2 个以上声库，训练一个更宽的神经声库（约 2 倍参数）并安装成新声库。\n"
+                + "⑤ 自制声库：用你自己的 WAV 采样训练专属声库（工具 → 自制声库），包内带立绘/采样/神经参数，训练完可一键并入基座。");
         help.setTextColor(Theme.TEXT_DIM);
         help.setTextSize(12f);
         box.addView(help);
@@ -5481,7 +5891,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
         refreshNeuralWidgets();
         new AlertDialog.Builder(this)
-                .setTitle("BriNeting 神经声学模型（v10.0）")
+                .setTitle("BriNeting 神经声学模型（v11.0）")
                 .setView(box)
                 .setNegativeButton("关闭", null)
                 .show();
@@ -5842,7 +6252,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         });
 
         // neural acoustic model: universal prior + optional per-singer fine-tune
-        box.addView(label("BriNeting 神经声学模型（v10.0）"));
+        box.addView(label("BriNeting 神经声学模型（v11.0）"));
         neuralChk = null;
         TextView nnDesc = new TextView(this);
         neuralDesc = nnDesc;

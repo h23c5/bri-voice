@@ -1,9 +1,9 @@
 {
-  "versionCode": 90,
-  "versionName": "10.1.1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v10.1.1/BriVoice-10.1.1.apk",
-  "sha256": "244f0faaf2c307d34cbfe979149f2fb6ed66931a5792945040ab4fe9fdd2a898",
-  "size": 653767,
-  "notes": "release 10.1.1: 本地调音模型升级 BriTune-Net v3（88-256-128-13 / 57,357 参数 / 约 225 KB），输入加入拍点位置/强拍/弱拍/同音重复四维，输出加入音符内力度的第二点（dynShape）与延迟颤音起点（vibOnset）；验证集改为按歌切分。同歌同教师对比 v2：力度 MAE 1.82→0.64、清晰度 0.53→0.33、力度响应 0.70→0.34，音高前滑 56.33→68.79 unit（约 0.3 音分，听感不可闻）。保留 v2/v3 两种权重格式的加载与导入。",
-  "publishedAt": "2026-11-24 10:42:24"
+  "versionCode": 91,
+  "versionName": "11.0",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v11.0/BriVoice-11.0.apk",
+  "sha256": "c3f5e37dba76ea5af64c88cde7cd1401d8392d0a749428548fd38bc172fe5310",
+  "size": 666055,
+  "notes": "release 11.0: 新增「自制声库」——导入自己唱的 WAV 采样（文件名即发音，可多音高多 take），本机测量谐波/帧序列/首辅音噪声并训练神经连接模型，打包成 .v4voice（包含角色立绘、采样数据、神经参数三样内容）；生成后可一键把新声库的帧并入 BriNeting 基座重训。顺带修正：声库谐波曲线按对数频率插值（此前所有 v4voice 谐波曲线都是常量 0 dB）、VoicePack 导出漏写 harmonics、f0 估计八度错误、帧序列密度不足导致单 band。",
+  "publishedAt": "2026-11-24 13:30:43"
 }

@@ -129,8 +129,10 @@ public class VoicePack {
 
             boolean isZip = (head[0] == 'P' && head[1] == 'K');
             byte[] json = null;
+            Archive ar = null;
             if (isZip) {
-                json = readVoiceJson(pin);
+                ar = readArchive(pin);
+                json = (ar == null) ? null : ar.json;
                 if (json == null) {
                     return fail(hint + "是个 ZIP 但里面没有 voice.json。实际条目：" + lastEntryNames());
                 }
@@ -146,7 +148,7 @@ public class VoicePack {
             }
             JsonReader reader = new JsonReader(new String(json, StandardCharsets.UTF_8));
             Object root = reader.parse();
-            return build(root, hint);
+            return build(root, hint, ar);
         } catch (Exception e) {
             return fail(hint + msg(e));
         } catch (StackOverflowError e) {
@@ -222,21 +224,80 @@ public class VoicePack {
             if (licenseText != null && licenseText.trim().length() > 0) {
                 putEntry(zos, "LICENSE.txt", licenseText.getBytes(StandardCharsets.UTF_8));
             }
+            // custom voicebank payload: character art, the raw takes and the neural weights that
+            // link those takes. Normal packs leave all three empty, so their bytes are unchanged.
+            if (m.characterPng != null && m.characterPng.length > 0) {
+                putEntry(zos, "art/character.png", m.characterPng);
+            }
+            for (Map.Entry<String, byte[]> en : m.sampleWavs.entrySet()) {
+                String n = cleanText(en.getKey(), 120);
+                if (n == null || n.trim().isEmpty()) continue;
+                n = n.replace('\\', '/').replace('/', '_');
+                putStoredEntry(zos, "samples/" + n, en.getValue());
+            }
+            if (m.neuralEmbedded && m.neural != null) {
+                File tmp = null;
+                try {
+                    tmp = File.createTempFile("v4voice-neural", ".bin");
+                    m.neural.save(tmp);
+                    putEntry(zos, "neural/model.v4neural", readAll(tmp));
+                } finally {
+                    if (tmp != null) tmp.delete();
+                }
+            }
         } finally {
             zos.close();
         }
     }
 
+    private static byte[] readAll(File f) throws IOException {
+        FileInputStream in = new FileInputStream(f);
+        try {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream((int) Math.min(f.length(), 8 * 1024 * 1024));
+            byte[] buf = new byte[8192];
+            int r;
+            while ((r = in.read(buf)) > 0) bos.write(buf, 0, r);
+            return bos.toByteArray();
+        } finally {
+            closeQuietly(in);
+        }
+    }
+
+    /** raw takes are already compressed audio: storing them saves minutes on a phone */
+    private static void putStoredEntry(ZipOutputStream zos, String name, byte[] data) throws IOException {
+        ZipEntry e = new ZipEntry(name);
+        e.setTime(FIXED_ZIP_TIME);
+        e.setMethod(ZipEntry.STORED);
+        e.setSize(data.length);
+        e.setCompressedSize(data.length);
+        java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+        crc.update(data);
+        e.setCrc(crc.getValue());
+        zos.putNextEntry(e);
+        zos.write(data);
+        zos.closeEntry();
+    }
+
     // ------------------------------------------------------------ zip in / out
 
-    /** @return the bytes of voice.json, or null when the archive has no such entry. */
-    private static byte[] readVoiceJson(InputStream in) throws IOException {
+    /** payload of a pack: voice.json plus the optional art / sample / neural entries */
+    private static final class Archive {
+        byte[] json;
+        final LinkedHashMap<String, byte[]> extras = new LinkedHashMap<String, byte[]>();
+    }
+
+    /** bytes of optional extras kept in memory while parsing (art, samples, neural weights) */
+    private static final int MAX_EXTRA_BYTES = 96 * 1024 * 1024;
+
+    /** @return voice.json plus extras, or null when the archive has no voice.json. */
+    private static Archive readArchive(InputStream in) throws IOException {
         ZipInputStream zip = new ZipInputStream(new BufferedInputStream(new NonClosingInputStream(in), 8192));
         try {
-            byte[] best = null;
+            Archive ar = new Archive();
             boolean bestExact = false;
             byte[] buf = new byte[8192];
             StringBuilder seen = new StringBuilder();
+            long extraTotal = 0;
             for (int entry = 0; entry < MAX_ZIP_ENTRIES; entry++) {
                 ZipEntry e = zip.getNextEntry();
                 if (e == null) break;
@@ -249,21 +310,67 @@ public class VoicePack {
                 String lower = name.toLowerCase(Locale.ROOT);
                 boolean exact = lower.equals("voice.json");
                 boolean nested = lower.endsWith("/voice.json");
-                if (!exact && !nested) continue;
-                if (best != null && bestExact && !exact) continue;
+                boolean wantedJson = exact || nested;
+                boolean wantedExtra = !wantedJson && !lower.endsWith(".txt") && !lower.endsWith(".md")
+                        && !name.endsWith("/") && lower.length() > 0;
+                if (!wantedJson && !wantedExtra) { continue; }
                 ByteArrayOutputStream bos = new ByteArrayOutputStream(16384);
                 int total = 0, r;
                 while ((r = zip.read(buf)) > 0) {
                     total += r;
-                    if (total > MAX_JSON_BYTES) throw new IOException("voice.json is larger than 256 MB");
+                    if (wantedJson && total > MAX_JSON_BYTES) throw new IOException("voice.json is larger than 256 MB");
+                    if (wantedExtra && total > MAX_EXTRA_BYTES) break;
                     bos.write(buf, 0, r);
                 }
-                best = bos.toByteArray();
-                bestExact = exact;
+                byte[] data = bos.toByteArray();
+                if (wantedJson) {
+                    if (ar.json != null && bestExact && !exact) continue;
+                    ar.json = data;
+                    bestExact = exact;
+                } else {
+                    extraTotal += data.length;
+                    if (extraTotal <= MAX_EXTRA_BYTES) ar.extras.put(name, data);
+                }
             }
-            return best;
+            return ar;
         } finally {
             closeQuietly(zip);
+        }
+    }
+
+    /** attach character art, raw takes and the embedded neural weights found in the zip */
+    private static void applyExtras(VoiceModel vm, Archive ar) {
+        if (vm == null || ar == null || ar.extras.isEmpty()) return;
+        for (Map.Entry<String, byte[]> en : ar.extras.entrySet()) {
+            String name = en.getKey();
+            String lower = name.toLowerCase(Locale.ROOT);
+            byte[] data = en.getValue();
+            if (data == null || data.length == 0) continue;
+            if (lower.endsWith(".wav") || lower.endsWith(".wave")) {
+                int slash = Math.max(lower.lastIndexOf('/'), lower.lastIndexOf('\\'));
+                String base = (slash >= 0) ? name.substring(slash + 1) : name;
+                if (vm.sampleWavs.size() < 64) vm.sampleWavs.put(base, data);
+                continue;
+            }
+            if (vm.characterPng == null && (lower.endsWith(".png") || lower.endsWith(".webp") || lower.endsWith(".jpg"))
+                    && data.length <= 12 * 1024 * 1024) {
+                vm.characterPng = data;
+                continue;
+            }
+            if (lower.endsWith(".bin") || lower.endsWith(".v4neural")) {
+                java.io.File tmp = null;
+                try {
+                    tmp = java.io.File.createTempFile("v4n", ".bin");
+                    java.io.FileOutputStream fo = new java.io.FileOutputStream(tmp);
+                    try { fo.write(data); } finally { fo.close(); }
+                    vm.neural = NeuralSpectrum.load(tmp);
+                    vm.neuralEmbedded = true;
+                } catch (Throwable t) {
+                    // keep the pack usable: the measured harmonics still drive the traditional engine
+                } finally {
+                    if (tmp != null) tmp.delete();
+                }
+            }
         }
     }
 
@@ -289,7 +396,7 @@ public class VoicePack {
 
     // ------------------------------------------------------------ model build
 
-    private static Result build(Object root, String hint) {
+    private static Result build(Object root, String hint, Archive ar) {
         Map<String, Object> m = asObj(root);
         if (m == null) return fail(hint + "voice.json must contain a JSON object");
         Object fmt = m.get("format");
@@ -334,6 +441,7 @@ public class VoicePack {
         readShelf(m.get("shelf"), vm);
         readFormants(m.get("formants"), vm);
         readHarmonics(m.get("harmonics"), vm);
+        applyExtras(vm, ar);
 
         Result r = new Result();
         r.model = vm;
@@ -816,6 +924,101 @@ public class VoicePack {
                     clamp(t[1], MIN_FMT_HZ, MAX_FMT_HZ),
                     clamp(t[2], MIN_FMT_HZ, MAX_FMT_HZ)});
         }
+        // measured harmonics: without this a re-exported singer would lose its spectral colour
+        // (and a custom bank would ship an unplayable shell). Bands are written as measured:
+        // the frame sequence wins over the mean curve exactly like the loader expects.
+        if (!m.harmonics.isEmpty() && m.harmonicFreqs != null
+                && m.harmonicFreqs.length >= MIN_HARM_POINTS) {
+            sb.append("  \"harmonics\": {\n");
+            sb.append("    \"freqs\": [");
+            for (int i = 0; i < m.harmonicFreqs.length; i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(numStr(m.harmonicFreqs[i]));
+            }
+            sb.append("],\n    \"phonemes\": {");
+            TreeMap<String, VoiceModel.HarmonicBand[]> ph =
+                    new TreeMap<String, VoiceModel.HarmonicBand[]>(m.harmonics);
+            boolean firstSym = true;
+            for (Map.Entry<String, VoiceModel.HarmonicBand[]> en : ph.entrySet()) {
+                String sym = cleanText(en.getKey(), MAX_SYM);
+                VoiceModel.HarmonicBand[] bands = en.getValue();
+                if (sym.isEmpty() || bands == null || bands.length == 0) continue;
+                if (!firstSym) sb.append(',');
+                firstSym = false;
+                sb.append("\n      ").append(quote(sym)).append(": [");
+                int wrote = 0;
+                for (VoiceModel.HarmonicBand b : bands) {
+                    if (b == null || !finite(b.f0) || b.f0 < MIN_HARM_F0 || b.f0 > MAX_HARM_F0) continue;
+                    if (wrote++ > 0) sb.append(", ");
+                    sb.append("{\"f0\": ").append(numStr(b.f0));
+                    if (b.db != null && b.db.length == m.harmonicFreqs.length) {
+                        sb.append(", \"db\": [");
+                        for (int i = 0; i < b.db.length; i++) {
+                            if (i > 0) sb.append(", ");
+                            sb.append(numStr(b.db[i]));
+                        }
+                        sb.append(']');
+                    }
+                    sb.append(", \"dyn\": ").append(numStr(b.dyn));
+                    if (b.seq != null && b.seq.length >= 2) {
+                        int m2 = m.harmonicFreqs.length;
+                        boolean okSeq = true;
+                        for (double[] fr : b.seq) if (fr == null || fr.length != m2) { okSeq = false; break; }
+                        if (okSeq) {
+                            byte[] q = new byte[b.seq.length * m2];
+                            for (int fi = 0; fi < b.seq.length; fi++) {
+                                double rowMax = -Double.MAX_VALUE;
+                                for (double v : b.seq[fi]) if (v > rowMax) rowMax = v;
+                                for (int k = 0; k < m2; k++) {
+                                    double v = b.seq[fi][k] - rowMax;
+                                    if (v < -60.0) v = -60.0;
+                                    if (v > 0.0) v = 0.0;
+                                    long qv = Math.round(v / 0.5);
+                                    if (qv < -128) qv = -128;
+                                    if (qv > 0) qv = 0;
+                                    q[fi * m2 + k] = (byte) qv;
+                                }
+                            }
+                            sb.append(", \"seqB64\": ").append(quote(b64(q)));
+                            sb.append(", \"seqN\": ").append(b.seq.length);
+                            sb.append(", \"seqQ\": 0.5");
+                            if (b.lvl != null && b.lvl.length == b.seq.length) {
+                                sb.append(", \"lvl\": [");
+                                for (int i = 0; i < b.lvl.length; i++) {
+                                    if (i > 0) sb.append(", ");
+                                    sb.append(numStr(b.lvl[i]));
+                                }
+                                sb.append(']');
+                            }
+                        }
+                    }
+                    sb.append('}');
+                }
+                sb.append(']');
+            }
+            sb.append("\n    }");
+            if (!m.noiseDb.isEmpty()) {
+                sb.append(",\n    \"noise\": {");
+                TreeMap<String, double[]> nz = new TreeMap<String, double[]>(m.noiseDb);
+                boolean firstN = true;
+                for (Map.Entry<String, double[]> en : nz.entrySet()) {
+                    String sym = cleanText(en.getKey(), MAX_SYM);
+                    double[] db = en.getValue();
+                    if (sym.isEmpty() || db == null || db.length < MIN_HARM_POINTS) continue;
+                    if (!firstN) sb.append(',');
+                    firstN = false;
+                    sb.append("\n      ").append(quote(sym)).append(": {\"db\": [");
+                    for (int i = 0; i < db.length; i++) {
+                        if (i > 0) sb.append(", ");
+                        sb.append(numStr(db[i]));
+                    }
+                    sb.append("]}");
+                }
+                sb.append("\n    }");
+            }
+            sb.append("\n  },\n");
+        }
+
         sb.append("  \"formants\": {");
         boolean firstFmt = true;
         for (Map.Entry<String, double[]> e : fm.entrySet()) {
@@ -829,6 +1032,21 @@ public class VoicePack {
         }
         if (!firstFmt) sb.append(' ');
         sb.append("}\n}\n");
+        return sb.toString();
+    }
+
+    private static String b64(byte[] data) {
+        final char[] a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toCharArray();
+        StringBuilder sb = new StringBuilder((data.length + 2) / 3 * 4);
+        for (int i = 0; i < data.length; i += 3) {
+            int b0 = data[i] & 0xff;
+            int b1 = i + 1 < data.length ? (data[i + 1] & 0xff) : 0;
+            int b2 = i + 2 < data.length ? (data[i + 2] & 0xff) : 0;
+            sb.append(a[b0 >> 2]);
+            sb.append(a[((b0 & 3) << 4) | (b1 >> 4)]);
+            sb.append(i + 1 < data.length ? a[((b1 & 15) << 2) | (b2 >> 6)] : '=');
+            sb.append(i + 2 < data.length ? a[b2 & 63] : '=');
+        }
         return sb.toString();
     }
 

@@ -115,6 +115,13 @@ public class VoiceModel {
     public boolean neuralFromUniversal;
     /** true for a .v4neural pack: this singer is always driven by the BriNeting engine */
     public boolean neuralBank;
+    /** true when the neural weights travelled inside the .v4voice zip (custom voicebanks) */
+    public boolean neuralEmbedded;
+
+    /** optional character art carried by a custom voicebank (PNG bytes), null when absent */
+    public byte[] characterPng;
+    /** raw WAV takes carried by a custom voicebank: file name -> bytes, empty for normal packs */
+    public final LinkedHashMap<String, byte[]> sampleWavs = new LinkedHashMap<String, byte[]>();
 
     /** XStudio-style voicebank controls, all 0..1 with 0.5 neutral */
     public NeuralParams neuralParams = new NeuralParams();

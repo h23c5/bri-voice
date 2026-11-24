@@ -42,9 +42,13 @@ public final class VoicebankPack {
         return VoicebankCluster.geomspace(HARM_F_LO, HARM_F_HI, nPoints);
     }
 
-    public static double[] frameHarmCurve(double[] freqs, double[] mags, double[] logGrid) {
+    public static double[] frameHarmCurve(double[] freqs, double[] mags, double[] gridHz) {
         double[] logF = new double[freqs.length];
         for (int i = 0; i < freqs.length; i++) logF[i] = Math.log(freqs[i]);
+        // gridHz is in Hz: interpolate in log-frequency space or every grid point lands past the
+        // last harmonic (which flattened every measured curve to a single floor value).
+        double[] logGrid = new double[gridHz.length];
+        for (int i = 0; i < gridHz.length; i++) logGrid[i] = Math.log(gridHz[i]);
         double[] y = VoicebankCluster.interp(logGrid, logF, mags);
         double max = -Double.MAX_VALUE;
         for (double v : y) if (v > max) max = v;
