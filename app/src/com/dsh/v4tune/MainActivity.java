@@ -4353,7 +4353,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private String localModelState() {
         try {
             if (!com.dsh.v4tune.ai.LocalModelStore.installed(this))
-                return "模型未下载 · 首次调音时自动下载（约 55 KB）";
+                return "模型未下载 · 首次调音时自动下载（约 225 KB）";
             return "模型已就绪 · " + com.dsh.v4tune.ai.LocalModelStore.installedInfo(this);
         } catch (Throwable t) {
             return "模型状态未知：" + t.getMessage();
@@ -4362,7 +4362,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
     private String selfLearnState() {
         try {
-            int n = com.dsh.v4tune.ai.SelfLearn.count(com.dsh.v4tune.ai.SelfLearn.dataFile(this));
+            com.dsh.v4tune.ai.LocalTuner.Model m = null;
+            try { m = com.dsh.v4tune.ai.LocalModelStore.load(this); } catch (Throwable ignored) { }
+            int n = com.dsh.v4tune.ai.SelfLearn.count(
+                    com.dsh.v4tune.ai.SelfLearn.dataFile(this, m), m);
             String where = com.dsh.v4tune.ai.LocalModelStore.selfTrained(this)
                     ? "已用于当前模型" : "尚未训练成模型";
             return "自学习：数据集 " + n + " 条 · " + where;
@@ -4572,7 +4575,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         final java.util.List<float[]> xs = new java.util.ArrayList<float[]>();
                         final java.util.List<float[]> ys = new java.util.ArrayList<float[]>();
                         com.dsh.v4tune.ai.SelfLearn.load(
-                                com.dsh.v4tune.ai.SelfLearn.dataFile(MainActivity.this), xs, ys);
+                                com.dsh.v4tune.ai.SelfLearn.dataFile(MainActivity.this, base), base, xs, ys);
                         total = xs.size();
                         com.dsh.v4tune.ai.LocalTuner.Model tuned = com.dsh.v4tune.ai.SelfLearn.fit(
                                 base, xs, ys, new com.dsh.v4tune.ai.LocalTuner.Progress() {
@@ -4617,9 +4620,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(18), dp(8), dp(18), dp(8));
-        box.addView(label("BriTune-Net v2：68-192-96-11 全连接网络（32,843 参数），纯 Java 在本机推理，不联网也能调音。"));
-        box.addView(label("训练数据：按通用中文调音策略合成的 167,151 条参数偏移样本；输入为 12 维音符特征（前后各 2 个音符上下文）+ 8 维全局特征（速度、风格、强度、规模）。"));
-        box.addView(label("v2 修正了音高表情的单位（旧模型写进去的音分被当成 14-bit PIT 值，几乎听不出来），滑音按真实毫秒换算，颤音按目标音分深度换算。"));
+        box.addView(label("BriTune-Net v3：88-256-128-13 全连接网络（57,357 参数），纯 Java 在本机推理，不联网也能调音。"));
+        box.addView(label("训练数据：按通用中文调音策略合成的参数偏移样本，按歌切分验证集；每槽 16 维音符特征（含小节拍点/强拍/反拍/同音重复）+ 8 维全局特征（速度、风格、强度、规模）。"));
+        box.addView(label("v3 新增音符内的力度走向与延迟颤音（VIB 起点 0 → 目标深度），并把拍点信息喂给网络；v2 修正了音高表情单位（音分不再被当成 14-bit PIT 值）。"));
         final TextView state = label(localModelState());
         box.addView(state);
         final TextView selfLabel = label(selfLearnState());
@@ -4629,8 +4632,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         Button clearSelf = small("清空自学习数据");
         clearSelf.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
-                com.dsh.v4tune.ai.SelfLearn.clear(
-                        com.dsh.v4tune.ai.SelfLearn.dataFile(MainActivity.this));
+                com.dsh.v4tune.ai.SelfLearn.clearAll(MainActivity.this);
                 com.dsh.v4tune.ai.LocalModelStore.dropUser(MainActivity.this);
                 selfLabel.setText(selfLearnState());
                 state.setText(localModelState());

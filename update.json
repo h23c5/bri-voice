@@ -1,9 +1,9 @@
 {
-  "versionCode": 89,
-  "versionName": "10.1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v10.1/BriVoice-10.1.apk",
-  "sha256": "aecc319b693da9a686ae1d0941387370bb5afef3b9f22d85173950992e43498e",
-  "size": 649671,
-  "notes": "release 10.1: 新增「从音频分析表情」（YIN 追音高 + RMS 追力度，写 PIT/DYN/VIB，离线可撤销）；本地调音模型升级 BriTune-Net v2（68-192-96-11 / 32,843 参数 / 167,151 样本，修正音高单位、滑音毫秒、颤音音分换算）；导入模型立即生效、升级基座时作废旧自学习权重但保留数据集。",
-  "publishedAt": "2026-11-23 18:59:51"
+  "versionCode": 90,
+  "versionName": "10.1.1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v10.1.1/BriVoice-10.1.1.apk",
+  "sha256": "244f0faaf2c307d34cbfe979149f2fb6ed66931a5792945040ab4fe9fdd2a898",
+  "size": 653767,
+  "notes": "release 10.1.1: 本地调音模型升级 BriTune-Net v3（88-256-128-13 / 57,357 参数 / 约 225 KB），输入加入拍点位置/强拍/弱拍/同音重复四维，输出加入音符内力度的第二点（dynShape）与延迟颤音起点（vibOnset）；验证集改为按歌切分。同歌同教师对比 v2：力度 MAE 1.82→0.64、清晰度 0.53→0.33、力度响应 0.70→0.34，音高前滑 56.33→68.79 unit（约 0.3 音分，听感不可闻）。保留 v2/v3 两种权重格式的加载与导入。",
+  "publishedAt": "2026-11-24 10:42:24"
 }

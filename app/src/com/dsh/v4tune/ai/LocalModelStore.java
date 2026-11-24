@@ -159,7 +159,9 @@ public final class LocalModelStore {
 
     public static String installedInfo(Context ctx) {
         File f = file(ctx);
-        int self = SelfLearn.count(SelfLearn.dataFile(ctx));
+        LocalTuner.Model m = null;
+        try { m = load(ctx); } catch (Throwable ignored) { }
+        int self = SelfLearn.count(SelfLearn.dataFile(ctx, m), m);
         String base = f.exists()
                 ? String.format(java.util.Locale.US, "%.1f KB", f.length() / 1024.0) : "未下载";
         if (selfTrained(ctx))
@@ -171,7 +173,7 @@ public final class LocalModelStore {
     public static void delete(Context ctx) {
         file(ctx).delete();
         userFile(ctx).delete();
-        SelfLearn.clear(SelfLearn.dataFile(ctx));
+        SelfLearn.clearAll(ctx);
         forget();
     }
 

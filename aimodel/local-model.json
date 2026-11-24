@@ -1,10 +1,10 @@
 {
- "version": "2",
- "name": "BriTune-Net v2",
- "arch": "68-192-96-11",
- "params": 32843,
- "size": 131984,
- "sha256": "0950cf504eaa7740598c3ee8dfb472a308eb7aa41c0043774dc4779cc5a5ba03",
- "url": "https://gitee.com/h23c5/bri-voice/raw/main/aimodel/britune-v2.bin",
- "note": "Local tuning model for BriVoice v10.1; 68-192-96-11, beat-aware Chinese vocal tuning distilled from 167k note samples. Weights are downloaded on first use and checked with sha256."
+ "version": "3",
+ "name": "BriTune-Net v3",
+ "arch": "88-256-128-13",
+ "params": 57357,
+ "size": 230208,
+ "sha256": "06468af0e9ce38e032e36dfe7ef7f00b0ffab876f95f2a0b645417e05f2956b2",
+ "url": "https://gitee.com/h23c5/bri-voice/raw/main/aimodel/britune-v3.bin",
+ "note": "Local tuning model for BriVoice v10.1.1; 88-256-128-13. Adds beat-position/downbeat/repeat-note inputs, per-note DYN shape and delayed vibrato onset; song-level validation, 57,357 params. Weights are downloaded on first use and checked with sha256."
 }

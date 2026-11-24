@@ -1,0 +1,80 @@
+{
+ "version": 3,
+ "in": 88,
+ "h1": 256,
+ "h2": 128,
+ "out": 13,
+ "outName": [
+  "dyn",
+  "bre",
+  "bri",
+  "cle",
+  "ope",
+  "por",
+  "vib",
+  "pitLead",
+  "pitTail",
+  "vel",
+  "gen",
+  "dynShape",
+  "vibOnset"
+ ],
+ "outScale": [
+  20,
+  20,
+  15,
+  15,
+  15,
+  70,
+  30,
+  2600,
+  1600,
+  15,
+  8,
+  8,
+  0.55
+ ],
+ "styles": [
+  "pop",
+  "ballad",
+  "rock",
+  "electronic",
+  "guofeng"
+ ],
+ "valMae": [
+  0.641,
+  0.544,
+  0.428,
+  0.327,
+  0.352,
+  2.723,
+  1.307,
+  68.793,
+  30.486,
+  0.341,
+  0.243,
+  0.257,
+  0.195
+ ],
+ "params": 57357,
+ "split": "song-level, train-only normalisation",
+ "baseline": {
+  "name": "v2 architecture, same song split",
+  "arch": "68-192-96-11",
+  "params": 32843,
+  "valMae": [
+   1.82,
+   0.44,
+   0.32,
+   0.53,
+   0.29,
+   2.1,
+   1.21,
+   56.33,
+   27.9,
+   0.7,
+   0.22
+  ],
+  "note": "same songs, same teacher, same 44 epochs; v3 uses 16-dim note features and 13 outputs"
+ }
+}

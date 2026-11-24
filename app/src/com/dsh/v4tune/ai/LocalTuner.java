@@ -21,11 +21,14 @@ import java.util.Map;
  * BriTune-Net (v10_26H1): the tuning assistant that runs entirely on the phone.
  *
  * <p>It is a small dense network distilled from a rule teacher that encodes common Chinese
- * vocal-tuning practice, so no request ever leaves the device (v2: 68 -> 192 -> 96 -> 11, about
- * 33k weights / 130 KB; the header carries the real shape, so older weight files keep loading). The structured part JSON is the input; the tuning strategy that the cloud prompt describes
- * in words is baked into the model as five style profiles plus an intensity axis. The output is the
- * same JSON the cloud assistant returns, so {@link AiTuner#parseTuning} and the normal apply path
- * handle it unchanged.
+ * vocal-tuning practice, so no request ever leaves the device. v3 is 88 -> 256 -> 128 -> 13
+ * (about 57k weights / 225 KB): four extra beat/context features per slot and two extra outputs
+ * (note-internal DYN shape, delayed vibrato onset). The header carries the real shape and the
+ * number of features is derived from it, so v2 files (68 -> 192 -> 96 -> 11) still load and keep
+ * their old behaviour. The structured part JSON is the input; the tuning strategy that the cloud
+ * prompt describes in words is baked into the model as five style profiles plus an intensity
+ * axis. The output is the same JSON the cloud assistant returns, so
+ * {@link AiTuner#parseTuning} and the normal apply path handle it unchanged.
  *
  * <p>Weights live in a separate file pulled from the release page after the app itself updates
  * (see {@link LocalModelStore}), which keeps the APK small.
@@ -41,7 +44,9 @@ public final class LocalTuner {
     /** parameter defaults, same table the piano-roll parameter lane uses */
     static final double[] PARAM_DEF = {64, 64, 64, 64, 64, 64, 64, 0, 2, 64, 64, 64};
 
-    private static final int N_FEAT = 12;
+    private static final int N_FEAT = 12;          // v2 layout, kept for old weight files
+    private static final int N_FEAT_V3 = 16;       // + beat position / strong / off / repeated pitch
+    private static final int IN_DIM_V3 = (2 * 2 + 1) * N_FEAT_V3 + 8;
     private static final int CTX = 2;
     private static final int GLOBAL = 8;
 
@@ -165,6 +170,9 @@ public final class LocalTuner {
         return 0;
     }
 
+    /** true when the loaded file was trained with the v3 layout; features must match it exactly */
+    static boolean isV3(Model m) { return m != null && m.inDim == IN_DIM_V3; }
+
     /** one note's 12 features; kept identical to the training script, do not reorder */
     private static void noteFeatures(List<Note> ns, int i, float[] out, int at) {
         Note n = ns.get(i);
@@ -201,15 +209,37 @@ public final class LocalTuner {
         out[at + 11] = (float) Math.min(1.0, lyricLen / 8.0);
     }
 
-    /** the full 68-dim input for note {@code i}: 12 features x 5 context slots */
-    static float[] features(List<Note> ns, int i, int inDim) {
-        float[] x = new float[inDim];
+    /**
+     * v3 per-note features: the same 12 as v2 plus the metric grid the teacher actually accents
+     * (bar position, strong beat, off beat) and a repeated-pitch flag. The app is 4/4, so a bar is
+     * 1920 ticks and a beat 480; that matches the teacher. Kept identical to the training script.
+     */
+    private static void noteFeaturesV3(List<Note> ns, int i, float[] out, int at) {
+        noteFeatures(ns, i, out, at);
+        Note n = ns.get(i);
+        double beatInBar = (n.pos % 1920) / 480.0;
+        boolean onBeat = Math.abs(beatInBar - Math.round(beatInBar)) < 0.06;
+        boolean strongBeat = onBeat && ((int) Math.round(beatInBar)) % 2 == 0;
+        boolean offBeat = Math.abs(beatInBar - (Math.floor(beatInBar) + 0.5)) < 0.08;
+        int prevKey = i > 0 ? ns.get(i - 1).key : n.key;
+        out[at + 12] = (float) (beatInBar / 4.0);
+        out[at + 13] = strongBeat ? 1f : 0f;
+        out[at + 14] = offBeat ? 1f : 0f;
+        out[at + 15] = n.key == prevKey ? 1f : 0f;
+    }
+
+    /** the full input for note {@code i}: 12 (v2) or 16 (v3) features x 5 context slots */
+    static float[] features(List<Note> ns, int i, Model m) {
+        boolean v3 = isV3(m);
+        int nf = v3 ? N_FEAT_V3 : N_FEAT;
+        float[] x = new float[v3 ? IN_DIM_V3 : 5 * N_FEAT + GLOBAL];
         int ctxSpan = CTX * 2 + 1;
         for (int c = 0; c < ctxSpan; c++) {
             int j = i + c - CTX;
             if (j < 0) j = 0;
             if (j > ns.size() - 1) j = ns.size() - 1;
-            noteFeatures(ns, j, x, c * N_FEAT);
+            if (v3) noteFeaturesV3(ns, j, x, c * nf);
+            else noteFeatures(ns, j, x, c * nf);
         }
         return x;
     }
@@ -305,6 +335,7 @@ public final class LocalTuner {
         int st = styleIndex(style);
         float itn = Math.max(0.2f, Math.min(1.2f, intensity));
         float mul = Math.max(0f, Math.min(1.5f, strength));
+        boolean v3 = isV3(m);
 
         Map<String, List<double[]>> curves = new LinkedHashMap<String, List<double[]>>();
         for (int i = 0; i < CURVE_IDS.length; i++)
@@ -312,24 +343,41 @@ public final class LocalTuner {
 
         for (int i = 0; i < total; i++) {
             Note n = ns.get(i);
-            float[] x = new float[m.inDim];
-            int ctxSpan = CTX * 2 + 1;
-            for (int c = 0; c < ctxSpan; c++) {
-                int j = i + c - CTX;
-                if (j < 0) j = 0;
-                if (j > total - 1) j = total - 1;
-                noteFeatures(ns, j, x, c * N_FEAT);
-            }
+            float[] x = features(ns, i, m);
             float[] d = infer(m, x, tempo, st, itn, total);
             long start = n.pos, end = n.pos + n.dur;
 
-            addPoint(curves.get("DYN"), p, 0, start, d[0] * mul);
+            double dynDelta = d[0] * mul;
+            addPoint(curves.get("DYN"), p, 0, start, dynDelta);
             addPoint(curves.get("BRE"), p, 1, start, d[1] * mul);
             addPoint(curves.get("BRI"), p, 2, start, d[2] * mul);
             addPoint(curves.get("CLE"), p, 3, start, d[3] * mul);
             addPoint(curves.get("OPE"), p, 4, start, d[4] * mul);
             addPoint(curves.get("POR"), p, 6, start, d[5] * mul);
-            addPoint(curves.get("VIB"), p, 9, start, d[6] * mul);
+            if (v3) {
+                // note-internal dynamics: a second point near the end, so an accent can lean in
+                // and release inside the note instead of only stepping at the next note's onset
+                double dynShape = d[11] * mul;
+                long shapeTick = end - Math.max(12, Math.min(48, n.dur / 8));
+                if (Math.abs(dynShape) >= 0.5 && shapeTick > start + 24) {
+                    double startValue = Params.clamp(0, baseAt(p, 0, start) + dynDelta);
+                    addRaw(curves.get("DYN"), 0, shapeTick, startValue + dynShape);
+                }
+                // delayed vibrato: hold VIB at zero, then jump to the predicted depth at the
+                // onset. The first segment is the slow bloom a singer uses on a long note.
+                double vibDelta = d[6] * mul;
+                double onsetFrac = Math.max(0, Math.min(0.55, d[12]));
+                long onsetT = (long) (n.dur * onsetFrac);
+                double depth = Params.clamp(9, baseAt(p, 9, start) + vibDelta);
+                if (onsetFrac > 0.02 && onsetT > 24 && onsetT < n.dur - 24 && depth > 0.5) {
+                    addRaw(curves.get("VIB"), 9, start, 0);
+                    addRaw(curves.get("VIB"), 9, start + onsetT, depth);
+                } else {
+                    addPoint(curves.get("VIB"), p, 9, start, vibDelta);
+                }
+            } else {
+                addPoint(curves.get("VIB"), p, 9, start, d[6] * mul);
+            }
             addPoint(curves.get("GEN"), p, 5, start, d[10] * mul);
             // pitch: a scoop into the note, back to the note's own pitch, then a release at the
             // tail. The two zero points in between matter: PIT is a continuous curve, so writing
@@ -373,6 +421,12 @@ public final class LocalTuner {
         if (out == null) return;
         double v = Params.clamp(idx, baseAt(p, idx, tick) + delta);
         out.add(new double[]{tick, v});
+    }
+
+    /** absolute curve value, for the second point of a shaped curve (no base offset) */
+    private static void addRaw(List<double[]> out, int idx, long tick, double value) {
+        if (out == null) return;
+        out.add(new double[]{tick, Params.clamp(idx, value)});
     }
 
     /** the model's answer as printable JSON; this is what "导出 JSON" saves */

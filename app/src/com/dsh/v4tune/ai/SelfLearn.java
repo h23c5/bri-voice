@@ -20,35 +20,36 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * Self-learning for BriTune-Net (v10.0.1).
+ * Self-learning for BriTune-Net (v10.1.1).
  *
  * <p>Right after a WAV export the app asks whether the take sounds right. If the user says yes, the
- * tuning that is currently on the project's curves becomes a training sample: the same 68 features
- * the model sees for every note, plus the parameter offsets the user actually kept. Everything stays
- * on the phone - no audio, no project and no sample ever leaves the device.
+ * tuning that is currently on the project's curves becomes a training sample: the exact input
+ * vector the model sees for every note, plus the parameter offsets the user actually kept.
+ * Everything stays on the phone - no audio, no project and no sample ever leaves the device.
  *
- * <p>Samples accumulate in a small binary file (68 + 11 floats per note). Every "yes" then retrains
- * the network from the shipped weights with Adam for a few hundred epochs, pulling the weights back
- * towards the shipped ones so a handful of samples cannot erase what the model already knows. The
- * result is written next to the shipped file and {@link LocalModelStore#load(Context)} prefers it.
+ * <p>Samples accumulate in a small binary file ({@code inDim + outDim} floats per note). The file
+ * name carries the model generation, so upgrading to a wider base model cannot silently read v2
+ * rows as v3 rows; old samples stay on disk untouched. Every "yes" then retrains the network from
+ * the shipped weights with Adam for a few hundred epochs, pulling the weights back towards the
+ * shipped ones so a handful of samples cannot erase what the model already knows. The result is
+ * written next to the shipped file and {@link LocalModelStore#load(Context)} prefers it.
  */
 public final class SelfLearn {
 
-    /** outputs, same order as {@link LocalTuner#OUT_PARAM} */
-    public static final int N_OUT = 11;
-
     /** output index -> index into {@link Params#IDS} used for that output's label; -1 = not learnt */
-    private static final int[] LABEL_PARAM = {0, 1, 2, 3, 4, 6, 9, 7, 7, -1, 5};
+    private static final int[] LABEL_PARAM = {0, 1, 2, 3, 4, 6, 9, 7, 7, -1, 5, 0, -1};
 
     /** PIT release is read at the note end, everything else at its start */
     private static final int PIT_END_OUT = 8;
 
+    /** note-internal DYN shape is the difference between the end and the start value */
+    private static final int DYN_SHAPE_OUT = 11;
+
     /** one retrain never looks at more than this many samples, so it stays interactive */
     private static final int MAX_FIT = 200;
 
-    /** the dataset file is small (316 bytes per note) but it still should not grow forever */
+    /** the dataset file is small but it still should not grow forever */
     private static final int MAX_ROWS = 4000;
-    private static final int REC_BYTES = 4 * (68 + N_OUT);
 
     private static final float LR = 0.0018f;
     private static final int BASE_ITERS = 20000;
@@ -59,24 +60,34 @@ public final class SelfLearn {
 
     private SelfLearn() { }
 
+    /** legacy v2 dataset; new models write their own generation file, see {@link #dataFile(Context, LocalTuner.Model)} */
     public static File dataFile(Context ctx) {
         return new File(LocalModelStore.dir(ctx), "britune-self.dat");
+    }
+
+    /** dataset that belongs to the loaded model's feature/label layout */
+    public static File dataFile(Context ctx, LocalTuner.Model m) {
+        if (m == null || !LocalTuner.isV3(m)) return dataFile(ctx);
+        return new File(LocalModelStore.dir(ctx), "britune-self-v3.dat");
     }
 
     public static File userModelFile(Context ctx) {
         return new File(LocalModelStore.dir(ctx), "britune-v1.user.bin");
     }
 
-    /** how many notes have been learnt so far */
-    public static int count(File data) {
-        if (data == null || !data.exists()) return 0;
-        return (int) (data.length() / REC_BYTES);
+    /** how many notes have been learnt so far for this model layout */
+    public static int count(File data, LocalTuner.Model m) {
+        if (data == null || !data.exists() || m == null) return 0;
+        int rec = 4 * (m.inDim + m.outDim);
+        if (rec <= 0) return 0;
+        return (int) (data.length() / rec);
     }
 
     /** keeps the newest {@code keep} samples, dropping the oldest ones first */
-    private static void trim(File data, int keep) {
+    private static void trim(File data, int keep, int recBytes) {
         try {
-            int total = count(data);
+            int total = count(data, null) == 0 ? (int) (data.length() / recBytes) : 0;
+            total = (int) (data.length() / recBytes);
             if (total <= keep) return;
             byte[] all = new byte[(int) data.length()];
             FileInputStream in = new FileInputStream(data);
@@ -93,7 +104,7 @@ public final class SelfLearn {
             int drop = total - keep;
             FileOutputStream out = new FileOutputStream(data);
             try {
-                out.write(all, drop * REC_BYTES, all.length - drop * REC_BYTES);
+                out.write(all, drop * recBytes, all.length - drop * recBytes);
             } finally {
                 try { out.close(); } catch (Throwable ignored) { }
             }
@@ -104,15 +115,29 @@ public final class SelfLearn {
         if (data != null && data.exists()) data.delete();
     }
 
+    /** removes both the legacy and the current-generation dataset */
+    public static void clearAll(Context ctx) {
+        clear(dataFile(ctx));
+        File v3 = new File(LocalModelStore.dir(ctx), "britune-self-v3.dat");
+        if (v3.exists()) v3.delete();
+    }
+
     /** offsets currently on the curves, in the same normalised space the model was trained in */
     static float[] label(Part p, Note nt, LocalTuner.Model m) {
-        float[] y = new float[N_OUT];
+        int out = m.outDim;
+        float[] y = new float[out];
         long start = nt.pos, end = nt.pos + nt.dur;
-        for (int o = 0; o < N_OUT; o++) {
-            int idx = LABEL_PARAM[o];
+        for (int o = 0; o < out; o++) {
+            int idx = o < LABEL_PARAM.length ? LABEL_PARAM[o] : -1;
             if (idx < 0) continue;
-            double v = valueAt(p, idx, o == PIT_END_OUT ? end : start);
-            double d = v - LocalTuner.PARAM_DEF[idx];
+            double v, d;
+            if (o == DYN_SHAPE_OUT) {
+                v = valueAt(p, idx, end) - valueAt(p, idx, start);
+                d = v;
+            } else {
+                v = valueAt(p, idx, o == PIT_END_OUT ? end : start);
+                d = v - LocalTuner.PARAM_DEF[idx];
+            }
             float sc = o < m.outScale.length ? m.outScale[o] : 1f;
             if (sc <= 0) continue;
             float ny = (float) (d / sc);
@@ -139,19 +164,20 @@ public final class SelfLearn {
         List<float[]> ys = new ArrayList<float[]>();
         collect(song, m, style, intensityPct / 100f, xs, ys);
         if (xs.isEmpty()) return 0;
-        DataOutputStream out = new DataOutputStream(new FileOutputStream(dataFile(ctx), true));
+        int recBytes = 4 * (m.inDim + m.outDim);
+        DataOutputStream out = new DataOutputStream(new FileOutputStream(dataFile(ctx, m), true));
         try {
             for (int i = 0; i < xs.size(); i++) {
                 float[] x = xs.get(i);
                 for (int k = 0; k < x.length; k++) out.writeFloat(x[k]);
                 float[] y = ys.get(i);
-                for (int k = 0; k < N_OUT; k++) out.writeFloat(y[k]);
+                for (int k = 0; k < m.outDim; k++) out.writeFloat(y[k]);
             }
         } finally {
             try { out.close(); } catch (Throwable ignored) { }
         }
-        File f = dataFile(ctx);
-        if (count(f) > MAX_ROWS) trim(f, MAX_ROWS * 3 / 4);
+        File f = dataFile(ctx, m);
+        if ((int) (f.length() / recBytes) > MAX_ROWS) trim(f, MAX_ROWS * 3 / 4, recBytes);
         return xs.size();
     }
 
@@ -170,11 +196,11 @@ public final class SelfLearn {
                 for (int i = 0; i < ns.size(); i++) {
                     float[] y = label(p, ns.get(i), m);
                     boolean any = false;
-                    for (int o = 0; o < N_OUT; o++) {
+                    for (int o = 0; o < m.outDim; o++) {
                         if (Math.abs(y[o]) >= MIN_LABEL) { any = true; break; }
                     }
                     if (!any) continue;
-                    float[] x = LocalTuner.features(ns, i, m.inDim);
+                    float[] x = LocalTuner.features(ns, i, m);
                     xs.add(LocalTuner.normInput(m, x, tempo, style, intensity, ns.size()));
                     ys.add(y);
                 }
@@ -182,22 +208,22 @@ public final class SelfLearn {
         }
     }
 
-    /** all stored samples, ready for {@link #fit} */
-    public static void load(File data, List<float[]> xs, List<float[]> ys) throws IOException {
-        if (data == null || !data.exists()) return;
-        int inDim = 68;
-        int rec = inDim + N_OUT;
+    /** all stored samples for this model layout, ready for {@link #fit} */
+    public static void load(File data, LocalTuner.Model m, List<float[]> xs, List<float[]> ys)
+            throws IOException {
+        if (data == null || !data.exists() || m == null) return;
+        int inDim = m.inDim, outDim = m.outDim;
         DataInputStream in = new DataInputStream(new FileInputStream(data));
         try {
             while (true) {
                 float[] x = new float[inDim];
-                float[] y = new float[N_OUT];
+                float[] y = new float[outDim];
                 try {
                     for (int k = 0; k < inDim; k++) x[k] = in.readFloat();
                 } catch (java.io.EOFException eof) {
                     break;
                 }
-                for (int k = 0; k < N_OUT; k++) y[k] = in.readFloat();
+                for (int k = 0; k < outDim; k++) y[k] = in.readFloat();
                 xs.add(x);
                 ys.add(y);
             }
@@ -288,7 +314,6 @@ public final class SelfLearn {
                     double t = y[q];
                     err[q] = Math.abs(t) >= MIN_LABEL ? (o[q] - t) : 0d;
                 }
-                // w3 / b3
                 java.util.Arrays.fill(d2, 0d);
                 for (int k = 0; k < h2; k++) {
                     double av = act2[k];
@@ -300,7 +325,6 @@ public final class SelfLearn {
                 }
                 for (int q = 0; q < out; q++) g6[q] += err[q];
                 for (int k = 0; k < h2; k++) d2[k] = pre2[k] + b2[k] > 0 ? d2[k] : 0d;
-                // w2 / b2
                 java.util.Arrays.fill(d1, 0d);
                 for (int j = 0; j < h1; j++) {
                     double av = act1[j];
@@ -312,7 +336,6 @@ public final class SelfLearn {
                 }
                 for (int k = 0; k < h2; k++) g4[k] += d2[k];
                 for (int j = 0; j < h1; j++) d1[j] = pre1[j] + b1[j] > 0 ? d1[j] : 0d;
-                // w1 / b1
                 for (int i = 0; i < in; i++) {
                     double xv = x[i];
                     if (xv == 0d) continue;
@@ -340,10 +363,6 @@ public final class SelfLearn {
                 cb.onProgress(ep + 1, iters, "自学习微调");
         }
 
-        // How far the weights may travel in one session. A handful of notes teaches a handful of
-        // notes, not the whole model: without this shrink, 24 notes already moved every other note
-        // by 0.3 sigma (audible). The blend keeps the base behaviour dominant until the dataset has
-        // grown enough to deserve more trust.
         double alpha = Math.max(0.17, Math.min(0.45, 0.15 + ns / 500.0));
         blend(w1, B1, alpha); blend(b1, B2, alpha);
         blend(w2, B3, alpha); blend(b2, B4, alpha);
