@@ -238,6 +238,16 @@ public class VoicePack {
             if (m.recordJson != null && m.recordJson.trim().length() > 0 && m.recordJson.length() <= 256 * 1024) {
                 putEntry(zos, "record.json", m.recordJson.getBytes(StandardCharsets.UTF_8));
             }
+            if (m.sampleNet != null || (m.sampleNetBytes != null && m.sampleNetBytes.length > 0)) {
+                byte[] net = m.sampleNetBytes;
+                if (net == null || net.length == 0) {
+                    java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream(160 * 1024);
+                    SampleNet.write(m.sampleNet, bos);
+                    net = bos.toByteArray();
+                    m.sampleNetBytes = net;
+                }
+                putEntry(zos, "neural/samplenet.brsn", net);
+            }
             if (m.neuralEmbedded && m.neural != null) {
                 File tmp = null;
                 try {
@@ -362,6 +372,17 @@ public class VoicePack {
             if (vm.characterPng == null && (lower.endsWith(".png") || lower.endsWith(".webp") || lower.endsWith(".jpg"))
                     && data.length <= 12 * 1024 * 1024) {
                 vm.characterPng = data;
+                continue;
+            }
+            if (lower.indexOf("samplenet") >= 0) {
+                // sampled acoustic model: raw take frames -> harmonic envelope + noise
+                java.io.ByteArrayInputStream bis = new java.io.ByteArrayInputStream(data);
+                try {
+                    vm.sampleNet = SampleNet.read(bis);
+                    vm.sampleNetBytes = data;
+                } catch (Throwable t) {
+                    // keep the pack usable: measured harmonics still drive the traditional engine
+                }
                 continue;
             }
             if (lower.endsWith(".bin") || lower.endsWith(".v4neural")) {

@@ -1,9 +1,9 @@
 {
-  "versionCode": 92,
-  "versionName": "11.0.1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v11.0.1/BriVoice-11.0.1.apk",
-  "sha256": "c2d5d4fcb041f4f9e1ab4511704585ee4b438217f40784d9e6c3b8995052c7de",
-  "size": 682439,
-  "notes": "release 11.0.1: 按 VOCALOID / UTAU 的造库流程把自制声库做成引导式录音向导——先选发音清单（快速 5 元音 / 标准 16 音节）和参考音高（C3/C4/G4/C5，可试听），再逐条录（自动修剪、质检、不可用直接拒收并提示重录、可上一条重录/跳过、文件按 UTAU 规则自动命名 symbol_n.wav），检查页可逐条重录后一键训练；手机麦克风权限失败时仍可「从文件…」导入已有 WAV，走同一套质检。自制声库包内新增 record.json（录音清单/参考音高/每条 take 的时长、音高、峰值、RMS、静音比例、质检结论），旧版本读到会忽略。顺带修复：录音按钮状态、静音 take 被收进声库、录音音高显示八度错误（220 Hz 显示成 110 Hz）、选择立绘改用文档选择器（可从 Download 选 PNG）。",
-  "publishedAt": "2026-11-24 15:30:45"
+  "versionCode": 93,
+  "versionName": "11.1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v11.1/BriVoice-11.1.apk",
+  "sha256": "2e25410a85d50759339bd023f3a45844abb15178adfa5a857fe135c8e6d6ea31",
+  "size": 784914,
+  "notes": "release 11.1: 自制声库新增「采样直训」神经声学模型——用免费免授权的 UTAU 声库训练共享基座（30 音节 / 6,071 帧 / 23.6k 参数），用户造库时用他自己的原始 WAV 做针对性微调（约 95 KB），模型随 .v4voice 包内 neural/samplenet.brsn 一起分发，渲染时逐帧预测谐波包络；桌面同条件验证：基座直接用你的采样唱 MAE 13.775 dB，微调后 5.445 dB。同时保留 v11.0 的测量式合成作回退路径，电平按同声库测量包络对齐；训练完成弹窗显示采样模型帧数与参数。顺带修复：声库名称输入框首次点击不再把新名字拼到旧名字后面。",
+  "publishedAt": "2026-11-24 19:47:17"
 }

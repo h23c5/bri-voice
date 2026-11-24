@@ -63,6 +63,7 @@ public final class RecordWizard {
     private boolean recording;
     private boolean pendingPermission;
     private TextView statusView;
+    private TextView header;
     private Button recBtn;
 
     public RecordWizard(Activity activity, Host host) {
@@ -182,7 +183,7 @@ public final class RecordWizard {
     private void showTake() {
         page.removeAllViews();
         final RecordGuide.Item it = items.get(Math.max(0, Math.min(items.size() - 1, pos)));
-        text("步骤 2/3 · 第 " + (pos + 1) + "/" + items.size() + " 条 · 已完成 " + doneCount() + " 条", 12f, false);
+        header = text("步骤 2/3 · 第 " + (pos + 1) + "/" + items.size() + " 条 · 已完成 " + doneCount() + " 条", 12f, false);
         TextView big = new TextView(act);
         big.setText(it.label);
         big.setTextSize(44f);
@@ -340,6 +341,7 @@ public final class RecordWizard {
         samples.add(s);
         statusView.setText("✓ " + t.quality + " · " + (t.ms / 1000.0) + " 秒"
                 + (t.f0 > 0 ? " · " + t.f0 + " Hz" : "") + " · 已加入");
+        if (header != null) header.setText("步骤 2/3 · 第 " + (pos + 1) + "/" + items.size() + " 条 · 已完成 " + doneCount() + " 条");
         if (pos + 1 < items.size()) {
             ui.postDelayed(new Runnable() {
                 public void run() {
@@ -379,8 +381,11 @@ public final class RecordWizard {
             statusView.setText("✓ 已导入 " + fileName + " · " + (t.ms / 1000.0) + " 秒"
                     + (t.f0 > 0 ? " · " + t.f0 + " Hz" : "") + " · " + t.quality);
         }
+        if (header != null) header.setText("步骤 2/3 · 第 " + (pos + 1) + "/" + items.size() + " 条 · 已完成 " + doneCount() + " 条");
         if (pos + 1 < items.size()) {
             ui.postDelayed(new Runnable() { public void run() { pos++; showTake(); } }, 800);
+        } else {
+            ui.postDelayed(new Runnable() { public void run() { showReview(); } }, 900);
         }
     }
 
@@ -466,13 +471,14 @@ public final class RecordWizard {
         try { mic.cancel(); } catch (Throwable ignored) { }
     }
 
-    private void text(String s, float size, boolean dim) {
+    private TextView text(String s, float size, boolean dim) {
         TextView tv = new TextView(act);
         tv.setText(s);
         tv.setTextSize(size);
         tv.setPadding(0, dp(6), 0, dp(6));
         if (dim) tv.setTextColor(0xFFB9C6D4);
         page.addView(tv);
+        return tv;
     }
 
     private void sectionTitle(String s) {

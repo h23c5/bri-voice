@@ -51,6 +51,12 @@ public final class CustomBankBuilder {
         public int bands;
         public double f0Min = -1, f0Max = -1;
         public final StringBuilder skipped = new StringBuilder();
+        /** sampled neural model trained from the raw takes (v11.1), null when not requested */
+        public com.dsh.v4tune.synth.SampleNet.Model sampleNet;
+        public byte[] sampleNetBytes;
+        public int sampleNetFrames;
+        public int sampleNetParams;
+        public String sampleNetError;
     }
 
     private static final String[] VOWELS = {"a", "i", "u", "e", "o"};
@@ -65,6 +71,15 @@ public final class CustomBankBuilder {
      */
     public static VoicebankWriter build(List<Sample> samples, String name, int lang, Report report)
             throws Exception {
+        return build(samples, name, lang, report, null);
+    }
+
+    /**
+     * @param base sampled neural model to fine-tune on these takes (v11.1); null keeps the
+     *             measurement-only voicebank
+     */
+    public static VoicebankWriter build(List<Sample> samples, String name, int lang, Report report,
+                                        com.dsh.v4tune.synth.SampleNet.Model base) throws Exception {
         if (samples == null || samples.isEmpty()) throw new IllegalStateException("没有选择采样");
         VoicebankWriter w = new VoicebankWriter();
         w.id = "custom-" + Long.toString(System.currentTimeMillis(), 36) + "-" + Integer.toHexString(samples.size() * 131);
@@ -222,8 +237,65 @@ public final class CustomBankBuilder {
             report.bands = bands;
             report.f0Min = fmin == 1e9 ? -1 : fmin;
             report.f0Max = fmax;
+            if (base != null) {
+                try {
+                    trainSampleNet(samples, base, report);
+                } catch (Throwable t) {
+                    report.sampleNetError = String.valueOf(t);
+                }
+            }
         }
         return w;
+    }
+
+    // ------------------------------------------------------------------ sampled neural model (v11.1)
+
+    /**
+     * Fine-tunes the shared sampled model (trained on a free UTAU bank) on the user's own takes.
+     * The frames come straight from the WAV: no harmonic table, no measurement shortcut, so the
+     * model learns the singer's own spectrum, noise and time evolution.
+     */
+    private static void trainSampleNet(List<Sample> samples, com.dsh.v4tune.synth.SampleNet.Model base,
+                                       Report report) throws Exception {
+        // work on a private copy: the asset model must stay untouched for the next voicebank
+        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream(160 * 1024);
+        com.dsh.v4tune.synth.SampleNet.write(base, bos);
+        com.dsh.v4tune.synth.SampleNet.Model m =
+                com.dsh.v4tune.synth.SampleNet.read(new java.io.ByteArrayInputStream(bos.toByteArray()));
+        LinkedHashMap<String, ArrayList<float[]>> takes = new LinkedHashMap<String, ArrayList<float[]>>();
+        for (Sample s : samples) {
+            if (s == null || s.mono == null || s.sampleRate <= 0) continue;
+            List<String> ph = phonemesOf(stemOf(s.fileName));
+            if (ph == null || ph.isEmpty()) continue;
+            String vowel = ph.get(ph.size() - 1);
+            if (!PhonemeTable.isVowel(vowel)) vowel = lastVowel(ph);
+            if (vowel == null) continue;
+            ArrayList<float[]> l = takes.get(vowel);
+            if (l == null) { l = new ArrayList<float[]>(); takes.put(vowel, l); }
+            if (l.size() < 8) l.add(s.mono);
+        }
+        if (takes.isEmpty()) { report.sampleNetError = "没有可用的元音采样"; return; }
+        LinkedHashMap<String, java.util.List<float[]>> ds = new LinkedHashMap<String, java.util.List<float[]>>();
+        for (java.util.Map.Entry<String, ArrayList<float[]>> en : takes.entrySet()) {
+            ds.put(en.getKey(), new ArrayList<float[]>(en.getValue()));
+        }
+        com.dsh.v4tune.synth.SampleNet.Dataset data = com.dsh.v4tune.synth.SampleNet.build(ds, m);
+        if (data == null || data.x == null || data.x.length < 120) {
+            report.sampleNetError = "采样帧数太少（" + (data == null || data.x == null ? 0 : data.x.length) + " 帧）";
+            return;
+        }
+        com.dsh.v4tune.synth.SampleNet.fitTargetStats(m, data);
+        com.dsh.v4tune.synth.SampleNet.FitOptions o = new com.dsh.v4tune.synth.SampleNet.FitOptions();
+        o.epochs = 24;
+        o.batch = 64;
+        o.lr = 8e-4;
+        com.dsh.v4tune.synth.SampleNet.train(m, data, o, null);
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(160 * 1024);
+        com.dsh.v4tune.synth.SampleNet.write(m, out);
+        report.sampleNet = m;
+        report.sampleNetBytes = out.toByteArray();
+        report.sampleNetFrames = data.x.length;
+        report.sampleNetParams = m.paramCount();
     }
 
     // ------------------------------------------------------------------ measurement

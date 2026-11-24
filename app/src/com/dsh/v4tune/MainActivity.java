@@ -5486,6 +5486,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         final EditText name = new EditText(this);
         name.setHint("声库名称（默认：我的声库）");
         name.setSingleLine(true);
+        name.setSelectAllOnFocus(true);
         name.setText(customName);
         box.addView(name);
 
@@ -5758,10 +5759,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 try {
                     final com.dsh.v4tune.voicebank.CustomBankBuilder.Report rep =
                             new com.dsh.v4tune.voicebank.CustomBankBuilder.Report();
+                    pd.setMessage("正在用采样训练神经声学模型…");
                     final com.dsh.v4tune.voicebank.VoicebankWriter w =
                             com.dsh.v4tune.voicebank.CustomBankBuilder.build(
                                     new ArrayList<com.dsh.v4tune.voicebank.CustomBankBuilder.Sample>(customSamples),
-                                    nm, lang, rep);
+                                    nm, lang, rep, baseSampleNet());
                     pd.setMessage("正在写入声库包…");
                     File tmp = new File(getCacheDir(), "custom_" + System.currentTimeMillis() + VoicePack.EXT);
                     w.writeZip(tmp, null);
@@ -5776,6 +5778,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         vm.sampleWavs.put(baseName(s.fileName), s.wavBytes);
                     }
                     vm.characterPng = customArt;
+                    // the sampled model eats the raw takes frame by frame: this is the engine that
+                    // actually sings with the singer's own spectrum (v11.1)
+                    if (rep.sampleNet != null) {
+                        vm.sampleNet = rep.sampleNet;
+                        vm.sampleNetBytes = rep.sampleNetBytes;
+                    }
 
                     // 1) the samples get their own neural link model (falls back to fine-tuning
                     //    the shared base when there are too few frames)
@@ -5831,7 +5839,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     detail = "采样 " + rep.takes + " 个 · 符号 " + rep.symbols + " 个 · 频段 " + rep.bands + " 条"
                             + (rep.f0Max > 0 ? " · 音域 " + Math.round(rep.f0Min) + "–" + Math.round(rep.f0Max) + " Hz" : "")
                             + " · 参数 " + model.paramCount()
-                            + " · " + (target.length() / 1024) + " KB";
+                            + " · " + (target.length() / 1024) + " KB"
+                            + (rep.sampleNet != null
+                                ? "\n采样神经模型：" + rep.sampleNetFrames + " 帧 · "
+                                  + rep.sampleNetParams + " 参数（基座 + 你的采样微调）"
+                                : (rep.sampleNetError != null ? "\n采样神经模型：训练失败（" + rep.sampleNetError + "）" : ""));
                     if (rep.skipped.length() > 0) detail += "\n跳过的文件：" + rep.skipped;
                     if (tmp.exists()) tmp.delete();
                 } catch (Throwable t) {
@@ -5866,6 +5878,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                                 .setMessage(fd + "\n\n已包含：立绘" + (fv.characterPng != null ? "✓" : "—")
                                         + " · 采样 " + fv.sampleWavs.size() + " 个 · 神经参数"
                                         + (fv.neural != null ? "✓" : "—")
+                                        + " · 采样神经模型" + (fv.sampleNet != null ? "（" + fv.sampleNet.paramCount() + " 参数）" : "—")
                                         + " · 录音记录" + (fv.recordJson != null ? "✓" : "—")
                                         + "\n\n下一步自动把新声库并入 BriNeting 基座训练（会重新训练共享基座，约几分钟）。")
                                 .setPositiveButton("并入基座训练", new DialogInterface.OnClickListener() {
@@ -5927,6 +5940,24 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         if (k >= 0) n = n.substring(k + 1);
         if (n.trim().isEmpty()) n = "sample.wav";
         return n;
+    }
+
+    /** shared sampled model trained on a free UTAU bank; fine-tuned on the user's takes */
+    private static com.dsh.v4tune.synth.SampleNet.Model baseSampleNetCache;
+    private static boolean baseSampleNetTried;
+
+    private com.dsh.v4tune.synth.SampleNet.Model baseSampleNet() {
+        if (!baseSampleNetTried) {
+            baseSampleNetTried = true;
+            try {
+                java.io.InputStream in = getAssets().open("net/base-samplenet.bin");
+                try { baseSampleNetCache = com.dsh.v4tune.synth.SampleNet.read(in); }
+                finally { in.close(); }
+            } catch (Throwable t) {
+                baseSampleNetCache = null;
+            }
+        }
+        return baseSampleNetCache;
     }
 
     private void neuralDialog() {

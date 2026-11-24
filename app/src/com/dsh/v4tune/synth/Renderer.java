@@ -172,6 +172,7 @@ public class Renderer {
         double[] curveA = (hv != null) ? new double[vm.harmonicFreqs.length] : null;
         double[] curveB = (hv != null) ? new double[vm.harmonicFreqs.length] : null;
         double seqGain = 1.0;      // measured intra-note level swell of the stored frame sequence
+        double prevF0 = 0.0;       // previous frame pitch, the sampled model needs it as context
         // octaves above 1 kHz for every grid point, so BRI can tilt the measured spectrum
         double[] octAbove1k = null;
         if (hv != null) {
@@ -268,7 +269,35 @@ public class Renderer {
                     boolean voicedCur = isVoiced(cur);
                     double w2 = 0;
                     if (b2 != null && next != null && remain < trans) w2 = 1.0 - remain / (double) trans;
-                    if (b1 != null || b2 != null) {
+                    boolean sampled = voicedCur && vm.sampleNet != null && vm.sampleNet.indexOf(cur.sym) >= 0;
+                    if (sampled) {
+                        if (!SAMPLED_LOGGED) {
+                            SAMPLED_LOGGED = true;
+                            android.util.Log.i("V4Tune", "sampled voice active: " + vm.id + " sym=" + cur.sym);
+                        }
+                        // v11.1: the sampled acoustic model predicts this frame's harmonic envelope
+                        // straight from the user's own takes instead of the measured band table
+                        int slen = vm.harmonicFreqs.length;
+                        SampleNet.fillGrid(vm.sampleNet, cur.sym, f0, segPos, 0.8, prevF0,
+                                vm.harmonicFreqs, envMix);
+                        // the sampled model predicts shape only: match the measured band's level so
+                        // the sampled voice sits at the same loudness as the rest of the bank
+                        double[] ref = (b1 != null) ? b1.curveAt(segPos, curveA) : null;
+                        if (ref != null) {
+                            double mRef = 0, mPred = 0;
+                            for (int k = 0; k < slen; k++) { mRef += ref[k]; mPred += envMix[k]; }
+                            double shift = (mRef - mPred) / slen;
+                            for (int k = 0; k < slen; k++) envMix[k] += shift;
+                        }
+                        hTarget = 1.0;
+                        double stilt = (pv[2] - 0.5) * 12.0 + vm.tiltBias * 6.0 + npBright * 18.0;
+                        if (stilt != 0.0 && octAbove1k != null) {
+                            for (int k = 0; k < slen; k++) envMix[k] += stilt * octAbove1k[k];
+                        }
+                        seqGain = 1.0;
+                        if (fv != null) fv.setFrame(f0, vm.harmonicFreqs, envMix, true, FRAME_GAIN);
+                        if (ns != null) ns.reset();
+                    } else if (b1 != null || b2 != null) {
                         int len = vm.harmonicFreqs.length;
                         // BRI 0..1 (0.5 neutral) tilts the measured spectrum up to +-6 dB/oct above 1 kHz
                         double tiltDb = (pv[2] - 0.5) * 12.0 + vm.tiltBias * 6.0 + npBright * 18.0;
@@ -338,6 +367,7 @@ public class Renderer {
             double frac = (i - ci * ctlStep) / (double) ctlStep;
             f0 = f0c[ci] + (f0c[ci2] - f0c[ci]) * clamp(frac, 0, 1);
             if (Double.isNaN(f0) || f0 < 20) f0 = 20;
+            prevF0 = f0;
 
             double dyn = pv[0], bre = pv[1], ope = pv[4], gwl = pv[7];
             // OPE 127 (default) is neutral; smaller = more pressed/closed glottis
@@ -899,6 +929,8 @@ public class Renderer {
      * null when the model is off/unknown so the caller falls back to the measured band lookup.
      */
     private static boolean neuralLogged;
+
+    private static boolean SAMPLED_LOGGED;
 
     private static VoiceModel.HarmonicBand neuralBand(VoiceModel vm, String sym, double f0,
                                                       double dyn, double pos) {

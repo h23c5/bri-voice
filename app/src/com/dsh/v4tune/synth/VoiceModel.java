@@ -125,6 +125,11 @@ public class VoiceModel {
     /** recording-session metadata (record.json) written by the in-app record wizard, null for imported packs */
     public String recordJson;
 
+    /** sampled neural acoustic model trained from the raw takes (v11.1), null for banks without one */
+    public SampleNet.Model sampleNet;
+    /** serialized SampleNet, kept so the pack can carry the trained weights */
+    public byte[] sampleNetBytes;
+
     /** XStudio-style voicebank controls, all 0..1 with 0.5 neutral */
     public NeuralParams neuralParams = new NeuralParams();
 
