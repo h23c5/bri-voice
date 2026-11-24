@@ -65,7 +65,7 @@ import java.util.ArrayDeque;
 public class MainActivity extends Activity implements PianoRollView.Listener {
 
     private static final int REQ_OPEN = 1001, REQ_SAVE = 1002, REQ_PACK = 1003, REQ_PACK_DIR = 1004,
-            REQ_WAV = 1005, REQ_CHAR = 1007, REQ_TUNE = 1008, REQ_MODEL = 1009,
+            REQ_WAV = 1005, REQ_CHAR = 1007, REQ_TUNE = 1008, REQ_MODEL = 1009, REQ_REC_TAKE = 1012,
             REQ_CUSTOM_SAMPLES = 1010, REQ_CUSTOM_ART = 1011;
     private com.dsh.v4tune.io.PackStore packStore;
 
@@ -86,6 +86,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             new ArrayList<com.dsh.v4tune.voicebank.CustomBankBuilder.Sample>();
     private byte[] customArt;
     private TextView customStatus;
+    /** v11.0.1 record-wizard manifest (record.json) for the pack under construction */
+    private String customRecordJson;
+    private com.dsh.v4tune.voicebank.RecordWizard recWizard;
+    /** name/lang chosen in the record wizard, used as the defaults of the pack dialog */
+    private String customName = "";
+    private int customLang = 2;
     /** settings widgets for the experimental neural voicebank (updated after training) */
     private CheckBox neuralChk;
     private TextView neuralDesc;
@@ -2284,7 +2290,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 "BriNeting 神经声学模型（v11.0）",
                 "本地调音模型（BriTune-Net）",
                 "从音频分析表情（WAV，实验）",
-                "自制声库（用采样训练）(v11.0)"
+                "自制声库（用采样训练）(v11.0.1)"
         };
         menu(L.t("menu.tools"), null, items, -1, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, int which) {
@@ -3347,11 +3353,27 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
+        android.util.Log.i("V4Tune", "onActivityResult req=" + req + " res=" + res + " data=" + (data != null));
         if (res != RESULT_OK || data == null) return;
         if (req == REQ_CUSTOM_SAMPLES) { addCustomSamples(data); return; }
-        Uri uri = data.getData();
-        if (uri == null) return;
-        if (req == REQ_CHAR) {
+        Uri uri = null;
+        try {
+            uri = data.getData();
+        } catch (Throwable t) {
+            android.util.Log.e("V4Tune", "getData failed", t);
+        }
+        android.util.Log.i("V4Tune", "onActivityResult uri=" + uri);
+        if (uri == null) {
+            try {
+                android.util.Log.i("V4Tune", "clip=" + data.getClipData());
+            } catch (Throwable t) {
+                android.util.Log.e("V4Tune", "getClipData failed", t);
+            }
+            return;
+        }
+        if (req == REQ_REC_TAKE) {
+            recTakeFrom(data == null ? null : data.getData());
+        } else if (req == REQ_CHAR) {
             loadCharacter(uri);
         } else if (req == REQ_OPEN) {
             try {
@@ -5427,26 +5449,47 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     // -------------------------------------------------- custom voicebank (v11.0)
 
     /** sheet: pick takes + artwork, then train everything on the phone */
-    private void customBankDialog() {
-        customSamples.clear();
-        customArt = null;
+    private void customBankDialog() { customBankDialog(true); }
+
+    private void customBankDialog(boolean reset) {
+        if (reset) {
+            customSamples.clear();
+            customArt = null;
+            customRecordJson = null;
+            customName = "";
+            customLang = 2;
+        }
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(18), dp(8), dp(18), dp(8));
         TextView desc = new TextView(this);
-        desc.setText("用你自己唱的 WAV 采样训练一个专属声库。文件名就是发音：la.wav、ma.wav、a.wav、tian.wav…，"
-                + "同一发音可以录多条（la_1.wav、la_2.wav）。BriVoice 只在本机测量谐波、帧序列和首辅音噪声，"
-                + "再训练神经链接模型。包内会同时带上立绘、采样和神经参数。");
+        desc.setText("造库流程按 VOCALOID / UTAU 的习惯来：先定发音清单和参考音高，再一条一条录（UTAU 的文件名就是发音，"
+                + "VOCALOID 的录音清单就是参考音），手机直接录、自动修剪和质检；也可以导入已有 WAV。"
+                + "BriVoice 只在本机测量谐波、帧序列和首辅音噪声，再训练神经连接模型。包内会带上立绘、采样、神经参数和 record.json 录音记录。");
         desc.setTextColor(Theme.TEXT_DIM);
         desc.setTextSize(12.5f);
         box.addView(desc);
 
+        Button guide = new Button(this);
+        guide.setText("🎙 录音向导（推荐 · 手机直接录）");
+        guide.setAllCaps(false);
+        guide.setTextSize(14f);
+        LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        glp.setMargins(0, dp(8), 0, dp(4));
+        guide.setLayoutParams(glp);
+        guide.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { openRecordWizard(); }
+        });
+        box.addView(guide);
+
         final EditText name = new EditText(this);
         name.setHint("声库名称（默认：我的声库）");
         name.setSingleLine(true);
+        name.setText(customName);
         box.addView(name);
 
-        final int[] lang = {2};
+        final int[] lang = {customLang};
         final String[] langNames = {"中文", "日文", "英文"};
         final Button[] langBtns = new Button[3];
         LinearLayout langs = row();
@@ -5461,11 +5504,14 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             });
             langs.addView(langBtns[i]);
         }
-        langBtns[2].setText("● 英文");
-        lang[0] = 2;
+        for (int i = 0; i < 3; i++) {
+            langBtns[i].setText((i == customLang ? "● " : "") + langNames[i]);
+        }
         box.addView(langs);
 
-        customStatus = label("已选采样：0 个 · 立绘：未选择");
+        customStatus = label("已选采样：" + customSamples.size() + " 个"
+                + (customArt != null ? " · 立绘：已选择" : " · 立绘：未选择")
+                + (customRecordJson != null ? " · 录音记录：有" : ""));
         box.addView(customStatus);
 
         LinearLayout btns = row();
@@ -5491,13 +5537,82 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         ScrollView sc = new ScrollView(this);
         sc.addView(box);
         new AlertDialog.Builder(this)
-                .setTitle("自制声库（v11.0）")
+                .setTitle("自制声库（v11.0.1）")
                 .setView(sc)
                 .setPositiveButton("开始训练", new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface d, int w) { startCustomTraining(name.getText().toString(), lang[0]); }
                 })
                 .setNegativeButton(L.t("dlg.cancel"), null)
                 .show();
+    }
+
+    /** v11.0.1: phone-first guided recording, then hand the takes to the pack sheet */
+    private void openRecordWizard() {
+        recWizard = new com.dsh.v4tune.voicebank.RecordWizard(this,
+                new com.dsh.v4tune.voicebank.RecordWizard.Host() {
+                    public void onRecordingFinished(String name, int lang,
+                            java.util.List<com.dsh.v4tune.voicebank.CustomBankBuilder.Sample> samples,
+                            String recordJson) {
+                        recWizard = null;
+                        customSamples.clear();
+                        customSamples.addAll(samples);
+                        customRecordJson = recordJson;
+                        customName = name;
+                        customLang = lang;
+                        customBankDialog(false);
+                    }
+
+                    public void onPickTakeFile() { pickRecTake(); }
+                });
+        recWizard.show();
+    }
+
+    private void pickRecTake() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("audio/*");
+        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"audio/wav", "audio/x-wav", "audio/wave",
+                "audio/vnd.wave", "audio/*", "application/octet-stream"});
+        try {
+            startActivityForResult(i, REQ_REC_TAKE);
+        } catch (Throwable t) {
+            toast("无法打开文件选择器：" + t.getMessage());
+        }
+    }
+
+    /** v11.0.1: a picked WAV becomes the current wizard take */
+    private void recTakeFrom(Uri uri) {
+        android.util.Log.i("V4Tune", "recTakeFrom uri=" + uri + " wizard=" + (recWizard != null));
+        if (recWizard == null || uri == null) return;
+        try {
+            InputStream in = getContentResolver().openInputStream(uri);
+            byte[] bytes = readAllStream(in, 32 * 1024 * 1024);
+            WavReader.AudioData ad = WavReader.read(new ByteArrayInputStream(bytes), WavReader.OUT_RATE * 60);
+            if (ad == null || ad.error != null) {
+                toast("读不出这个 WAV：" + (ad == null ? "未知" : ad.error));
+                return;
+            }
+            float[] mono = new float[ad.left.length];
+            for (int k = 0; k < mono.length; k++) {
+                mono[k] = ad.right == null ? ad.left[k] : (ad.left[k] + ad.right[k]) * 0.5f;
+            }
+            android.util.Log.i("V4Tune", "recTakeFrom bytes=" + bytes.length + " mono=" + mono.length + " sr=" + ad.sampleRate);
+            recWizard.acceptImported(baseName(uri), mono, WavReader.OUT_RATE, bytes);
+        } catch (Throwable t) {
+            android.util.Log.e("V4Tune", "recTakeFrom failed", t);
+            toast("导入失败：" + t.getMessage());
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == com.dsh.v4tune.voicebank.RecordWizard.REQ_MIC) {
+            boolean granted = grantResults != null && grantResults.length > 0
+                    && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            if (recWizard != null) recWizard.onPermissionResult(granted);
+            else if (!granted) toast("没有麦克风权限，可以改用「选择采样 WAV…」导入");
+        }
     }
 
     private void pickCustomSamples() {
@@ -5515,7 +5630,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     }
 
     private void pickCustomArt() {
-        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+        // DocumentsUI (not the photo picker) so a PNG copied into Download is selectable too
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.setType("image/*");
         i.addCategory(Intent.CATEGORY_OPENABLE);
         try {
@@ -5617,7 +5733,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private void updateCustomStatus() {
         if (customStatus == null) return;
         customStatus.setText("已选采样：" + customSamples.size() + " 个"
-                + (customArt != null ? " · 立绘：已选择" : " · 立绘：未选择"));
+                + (customArt != null ? " · 立绘：已选择" : " · 立绘：未选择")
+                + (customRecordJson != null ? " · 录音记录：有" : ""));
     }
 
     /** measure + train + write the pack + register it; heavy work on a background thread */
@@ -5651,6 +5768,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     VoicePack.Result pr = VoicePack.load(tmp);
                     if (pr.error != null || pr.model == null) throw new IllegalStateException(pr.error == null ? "声库包读不回来" : pr.error);
                     final com.dsh.v4tune.synth.VoiceModel vm = pr.model;
+                    if (customRecordJson != null && customRecordJson.trim().length() > 0) {
+                        vm.recordJson = customRecordJson;
+                    }
                     vm.sampleWavs.clear();
                     for (com.dsh.v4tune.voicebank.CustomBankBuilder.Sample s : customSamples) {
                         vm.sampleWavs.put(baseName(s.fileName), s.wavBytes);
@@ -5746,6 +5866,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                                 .setMessage(fd + "\n\n已包含：立绘" + (fv.characterPng != null ? "✓" : "—")
                                         + " · 采样 " + fv.sampleWavs.size() + " 个 · 神经参数"
                                         + (fv.neural != null ? "✓" : "—")
+                                        + " · 录音记录" + (fv.recordJson != null ? "✓" : "—")
                                         + "\n\n下一步自动把新声库并入 BriNeting 基座训练（会重新训练共享基座，约几分钟）。")
                                 .setPositiveButton("并入基座训练", new DialogInterface.OnClickListener() {
                                     public void onClick(DialogInterface d, int w) { trainUniversalNeural(); }

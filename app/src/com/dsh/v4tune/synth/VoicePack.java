@@ -235,6 +235,9 @@ public class VoicePack {
                 n = n.replace('\\', '/').replace('/', '_');
                 putStoredEntry(zos, "samples/" + n, en.getValue());
             }
+            if (m.recordJson != null && m.recordJson.trim().length() > 0 && m.recordJson.length() <= 256 * 1024) {
+                putEntry(zos, "record.json", m.recordJson.getBytes(StandardCharsets.UTF_8));
+            }
             if (m.neuralEmbedded && m.neural != null) {
                 File tmp = null;
                 try {
@@ -346,6 +349,10 @@ public class VoicePack {
             String lower = name.toLowerCase(Locale.ROOT);
             byte[] data = en.getValue();
             if (data == null || data.length == 0) continue;
+            if (lower.equals("record.json")) {
+                if (data.length <= 256 * 1024) vm.recordJson = new String(data, StandardCharsets.UTF_8);
+                continue;
+            }
             if (lower.endsWith(".wav") || lower.endsWith(".wave")) {
                 int slash = Math.max(lower.lastIndexOf('/'), lower.lastIndexOf('\\'));
                 String base = (slash >= 0) ? name.substring(slash + 1) : name;

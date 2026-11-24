@@ -1,9 +1,9 @@
 {
-  "versionCode": 91,
-  "versionName": "11.0",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v11.0/BriVoice-11.0.apk",
-  "sha256": "c3f5e37dba76ea5af64c88cde7cd1401d8392d0a749428548fd38bc172fe5310",
-  "size": 666055,
-  "notes": "release 11.0: 新增「自制声库」——导入自己唱的 WAV 采样（文件名即发音，可多音高多 take），本机测量谐波/帧序列/首辅音噪声并训练神经连接模型，打包成 .v4voice（包含角色立绘、采样数据、神经参数三样内容）；生成后可一键把新声库的帧并入 BriNeting 基座重训。顺带修正：声库谐波曲线按对数频率插值（此前所有 v4voice 谐波曲线都是常量 0 dB）、VoicePack 导出漏写 harmonics、f0 估计八度错误、帧序列密度不足导致单 band。",
-  "publishedAt": "2026-11-24 13:30:43"
+  "versionCode": 92,
+  "versionName": "11.0.1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v11.0.1/BriVoice-11.0.1.apk",
+  "sha256": "c2d5d4fcb041f4f9e1ab4511704585ee4b438217f40784d9e6c3b8995052c7de",
+  "size": 682439,
+  "notes": "release 11.0.1: 按 VOCALOID / UTAU 的造库流程把自制声库做成引导式录音向导——先选发音清单（快速 5 元音 / 标准 16 音节）和参考音高（C3/C4/G4/C5，可试听），再逐条录（自动修剪、质检、不可用直接拒收并提示重录、可上一条重录/跳过、文件按 UTAU 规则自动命名 symbol_n.wav），检查页可逐条重录后一键训练；手机麦克风权限失败时仍可「从文件…」导入已有 WAV，走同一套质检。自制声库包内新增 record.json（录音清单/参考音高/每条 take 的时长、音高、峰值、RMS、静音比例、质检结论），旧版本读到会忽略。顺带修复：录音按钮状态、静音 take 被收进声库、录音音高显示八度错误（220 Hz 显示成 110 Hz）、选择立绘改用文档选择器（可从 Download 选 PNG）。",
+  "publishedAt": "2026-11-24 15:30:45"
 }

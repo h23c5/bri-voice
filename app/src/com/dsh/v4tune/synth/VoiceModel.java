@@ -122,6 +122,8 @@ public class VoiceModel {
     public byte[] characterPng;
     /** raw WAV takes carried by a custom voicebank: file name -> bytes, empty for normal packs */
     public final LinkedHashMap<String, byte[]> sampleWavs = new LinkedHashMap<String, byte[]>();
+    /** recording-session metadata (record.json) written by the in-app record wizard, null for imported packs */
+    public String recordJson;
 
     /** XStudio-style voicebank controls, all 0..1 with 0.5 neutral */
     public NeuralParams neuralParams = new NeuralParams();
