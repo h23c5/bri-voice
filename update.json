@@ -1,9 +1,9 @@
 {
-  "versionCode": 99,
-  "versionName": "12.0.2",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v12.0.2/BriVoice-12.0.2.apk",
-  "sha256": "c78681f596e0976a56c013ba6610d2c59778bdccdbd095edea0e486f8df74f53",
-  "size": 793106,
-  "notes": "release 12.0.2：把歌词功能彻底统一。左侧「歌词」按钮、双击音符、工具菜单三处以前行为不同，其中两处会把整句塞进一个音符——这就是一直说的「积压成一个音符块」。现在三处都打开同一个对话框：按空格拆段，一段填一个音符，从当前音符往后排；对话框会显示「从当前音符往后可用 N 个音符」，段数超过 N 直接报错并说明还差几个，不写入任何东西。",
-  "publishedAt": "2026-11-25 18:34:10"
+  "versionCode": 100,
+  "versionName": "12.1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v12.1/BriVoice-12.1.apk",
+  "sha256": "e983d2d9ae0d3915e8a135ac7698632b3899c9c7164667e1b37645f17da6b0d7",
+  "size": 805394,
+  "notes": "release 12.1：声库管理页 + 模型备份 .bri。「声库」按钮现在直接给出列表：一行一个声库（引擎角标、谐波统计、包体大小），点一行即切换；每行自带重命名与删除（重命名只改显示名、留空恢复原名；删除连同该声库的神经权重一起移除）。新增「导出 / 导入模型备份（.bri）」：把本机 BriTune-Net 权重和 BriNeting 基座打成一个 .bri（普通 zip + SHA-256 清单，导出后会用导入同样的校验读回来一遍），导入前完整校验，失败不动现有模型。同时修复：删除声库后列表会挤掉直接拷进 BriVoice_root/voicebanks 的包；重新加载后神经/传统角标可能误显示「需训练基座」。",
+  "publishedAt": "2026-11-25 22:06:54"
 }

@@ -66,7 +66,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
     private static final int REQ_OPEN = 1001, REQ_SAVE = 1002, REQ_PACK = 1003, REQ_PACK_DIR = 1004,
             REQ_WAV = 1005, REQ_CHAR = 1007, REQ_TUNE = 1008, REQ_MODEL = 1009, REQ_REC_TAKE = 1012,
-            REQ_CUSTOM_SAMPLES = 1010, REQ_CUSTOM_ART = 1011;
+            REQ_CUSTOM_SAMPLES = 1010, REQ_CUSTOM_ART = 1011,
+            REQ_BRI_SAVE = 1013, REQ_BRI_OPEN = 1014;
     private com.dsh.v4tune.io.PackStore packStore;
 
     private Song song;
@@ -1346,6 +1347,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
     private String singerName(VoiceModel v) {
         if (v == null) return "";
+        // a renamed bank shows the alias the user typed; the pack file itself is never rewritten
+        String alias = bankAlias(v);
+        if (alias.length() > 0 && SingerLibrary.isUserPack(v)) {
+            return alias + " " + L.t("singer.tag.mine");
+        }
         // legacy packs are named after the voicebank they were converted from; fusion results
         // carry their own combined name, so do not rewrite them into a single singer's name.
         String n = isFusionBank(v) ? v.nameFor(L.lang()) : bvName(v.nameFor(L.lang()));
@@ -1417,6 +1423,38 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         com.dsh.v4tune.ui.Dialogs.menu(this, title, subtitle, rows);
     }
 
+    /** switch to a voicebank: engine, params, caches and character art all follow it */
+    private void selectVoice(final VoiceModel v) {
+        if (v == null) return;
+        beginEdit();
+        currentVoice = v;
+        attachNeural(currentVoice);
+        applyVoiceToPart(currentVoice);
+        cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
+        commitEdit();
+        refreshAll();
+        if (v.characterPng != null) applyPackCharacter(v.characterPng);
+        status(v.neuralBank && currentVoice.neural == null
+                ? "这是神经声库，请先训练 BriNeting 基座"
+                : L.t("status.singer", singerName(v)));
+        if (Renderer.webSynth) {
+            new AlertDialog.Builder(MainActivity.this)
+                    .setTitle("当前是网页快速合成")
+                    .setMessage("网页快速模式不用逐帧实测谐波，只保留声库的平均频谱色彩；细节会比「声库谐波」少，但不同声库仍会有区别。\n\n想听完整细节，请切换到「声库谐波」。")
+                    .setPositiveButton("切回声库谐波", new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface d, int w) {
+                            webSynth = false;
+                            Renderer.webSynth = false;
+                            getSharedPreferences("brivoice", MODE_PRIVATE).edit().putBoolean("websynth", false).apply();
+                            cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
+                            status("已切回声库谐波，再播放即可听出音色差异");
+                        }
+                    })
+                    .setNegativeButton("先这样", null)
+                    .show();
+        }
+    }
+
     private void pickSinger() {
         final java.util.List<VoiceModel> all = SingerLibrary.all();
         java.util.List<com.dsh.v4tune.ui.Dialogs.Row> rows = com.dsh.v4tune.ui.Dialogs.rows();
@@ -1470,35 +1508,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     com.dsh.v4tune.ui.Dialogs.badgeFor(singerName(v)),
                     com.dsh.v4tune.ui.Dialogs.PALETTE[i % com.dsh.v4tune.ui.Dialogs.PALETTE.length],
                     singerName(v), info + " · " + engine, cur, new Runnable() {
-                        public void run() {
-                            beginEdit();
-                            currentVoice = v;
-                            attachNeural(currentVoice);
-                            applyVoiceToPart(currentVoice);
-                            cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
-                            commitEdit();
-                            refreshAll();
-                            if (v.characterPng != null) applyPackCharacter(v.characterPng);
-                            status(v.neuralBank && currentVoice.neural == null
-                                    ? "这是神经声库，请先训练 BriNeting 基座"
-                                    : L.t("status.singer", singerName(v)));
-                            if (Renderer.webSynth) {
-                                new AlertDialog.Builder(MainActivity.this)
-                                        .setTitle("当前是网页快速合成")
-                                        .setMessage("网页快速模式不用逐帧实测谐波，只保留声库的平均频谱色彩；细节会比「声库谐波」少，但不同声库仍会有区别。\n\n想听完整细节，请切换到「声库谐波」。")
-                                        .setPositiveButton("切回声库谐波", new DialogInterface.OnClickListener() {
-                                            public void onClick(DialogInterface d, int w) {
-                                                webSynth = false;
-                                                Renderer.webSynth = false;
-                                                getSharedPreferences("brivoice", MODE_PRIVATE).edit().putBoolean("websynth", false).apply();
-                                                cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;
-                                                status("已切回声库谐波，再播放即可听出音色差异");
-                                            }
-                                        })
-                                        .setNegativeButton("先这样", null)
-                                        .show();
-                            }
-                        }
+                        public void run() { selectVoice(v); }
                     });
             if (v.neuralBank || (v.neural != null && v.neuralEnabled)) row.tag("AI");
             rows.add(row);
@@ -1740,12 +1750,27 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     }
 
     private void reloadPacks(boolean announce) {
-        java.util.List<VoicePack.Result> rs = packStore.loadAll();
+        // same two sources as reloadPacksAsync: the store plus packs dropped into
+        // BriVoice_root/voicebanks. Reading only the store made a delete look like it had
+        // swallowed every pack the user copied in by hand.
+        java.util.List<VoicePack.Result> rs =
+                new java.util.ArrayList<VoicePack.Result>(packStore.loadAll());
+        File extraDir = Storage.voicebanks(this);
+        if (!extraDir.equals(packStore.directory())) {
+            try { rs.addAll(new com.dsh.v4tune.io.PackStore(extraDir).loadAll()); }
+            catch (Throwable t) { android.util.Log.w("V4Tune", "extra voicebank dir: " + t); }
+        }
         java.util.ArrayList<VoiceModel> ms = new java.util.ArrayList<VoiceModel>();
         StringBuilder bad = new StringBuilder();
+        java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<String>();
         for (VoicePack.Result r : rs) {
-            if (r.ok()) ms.add(r.model);
-            else bad.append(r.error).append("\n");
+            if (!r.ok() || r.model == null) {
+                if (r.error != null) bad.append(r.error).append("\n");
+                continue;
+            }
+            String key = (r.model.id == null || r.model.id.isEmpty())
+                    ? String.valueOf(r.model.name) : r.model.id;
+            if (seen.add(key)) ms.add(r.model);       // the same pack can sit in both folders
         }
         SingerLibrary.setUserPacks(ms);
         if (bad.length() > 0 && announce) toast("部分声库无法载入：\n" + bad);
@@ -2581,28 +2606,41 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         status(land ? "切换为竖屏" : "切换为横屏");
     }
 
+    /** the voicebank manager: one list, rename and delete on each bank, imports and .bri below */
     private void managePacks() {
-        final String[] items = {
-                "导入声库文件（.v4voice / .v4neural）",
-                "从文件夹批量导入（推荐，真机更稳）",
-                "打开 " + Storage.ROOT_NAME + " 文件夹说明",
-                "删除已导入的声库（" + SingerLibrary.userPackCount() + "）",
-                "声库说明",
-                "导入 UTAU 声库（oto.ini）",
-                "切换歌姬（选择声库）"
+        com.dsh.v4tune.ui.VoicebankManager.Host host = new com.dsh.v4tune.ui.VoicebankManager.Host() {
+            public java.util.List<VoiceModel> banks() {
+                java.util.ArrayList<VoiceModel> mine = new java.util.ArrayList<VoiceModel>();
+                for (VoiceModel m : SingerLibrary.all()) {
+                    if (!SingerLibrary.isUserPack(m)) continue;
+                    // a freshly reloaded pack carries no neural model yet; the row would then claim
+                    // "needs a base" even though the shared base is trained. Attach before reading.
+                    if (m.neural == null) attachNeural(m);
+                    mine.add(m);
+                }
+                return mine;
+            }
+            public String currentName() { return currentVoice == null ? "未选择" : singerName(currentVoice); }
+            public String name(VoiceModel v) { return singerName(v); }
+            public String info(VoiceModel v) { return bankInfo(v); }
+            public boolean neural(VoiceModel v) { return v.neuralBank || (v.neural != null && v.neuralEnabled); }
+            public boolean isCurrent(VoiceModel v) {
+                return currentVoice != null && v.id != null && v.id.equals(currentVoice.id);
+            }
+            public void select(VoiceModel v) {
+                selectVoice(v);
+                if (v.neuralBank && v.neural == null) status("这是神经声库，请先训练 BriNeting 基座");
+                else status(L.t("bank.selected", singerName(v)));
+            }
+            public void rename(VoiceModel v) { renameBank(v); }
+            public void delete(VoiceModel v) { deleteBank(v); }
+            public void importFile() { importPack(); }
+            public void importFolder() { importPackFolder(); }
+            public void help() { packHelp(); }
+            public void exportBundle() { showBundleExport(); }
+            public void importBundle() { showBundleImport(); }
         };
-        menu(L.t("menu.pack.title"), L.t("menu.pack.sub", SingerLibrary.userPackCount()), items, -1,
-                new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface d, int which) {
-                        if (which == 0) importPack();
-                        else if (which == 1) importPackFolder();
-                        else if (which == 2) showRootHelp();
-                        else if (which == 3) deletePack();
-                        else if (which == 4) packHelp();
-                        else if (which == 5) com.dsh.v4tune.voicebank.VoicebankWizard.start(MainActivity.this);
-                        else pickSinger();
-                    }
-                });
+        com.dsh.v4tune.ui.VoicebankManager.show(this, host);
     }
 
     /** where every file goes, and how to get the folder writable */
@@ -2679,6 +2717,262 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 .setMessage(L.t("dlg.pack.help.msg"))
                 .setPositiveButton(L.t("dlg.ok"), null)
                 .show();
+    }
+
+    /** name / engine / size of one imported bank, as the manager row subtitle */
+    private String bankInfo(VoiceModel v) {
+        if (v == null) return "";
+        StringBuilder sb = new StringBuilder();
+        int bands = 0;
+        for (java.util.Map.Entry<String, VoiceModel.HarmonicBand[]> e : v.harmonics.entrySet()) {
+            bands += e.getValue().length;
+        }
+        if (v.harmonics.size() > 0) {
+            sb.append("谐波 ").append(v.harmonics.size()).append(" 音素 / ").append(bands).append(" 频段");
+        } else {
+            sb.append("旧格式声库（无实测谐波）");
+        }
+        sb.append(" · ");
+        if (v.neuralBank) sb.append(v.neural != null ? "BriNeting 神经" : "BriNeting（需训练基座）");
+        else sb.append(v.neuralEnabled ? "BriNeting 神经合成" : "传统谐波");
+        try {
+            File f = packStore.fileFor(v.id);
+            if (f != null && f.isFile()) {
+                sb.append(" · ").append(String.format(java.util.Locale.US, "%.0f KB", f.length() / 1024.0));
+            }
+        } catch (Throwable ignored) { }
+        return sb.toString();
+    }
+
+    /** the display alias of a renamed bank ("" when it still uses the name inside its pack) */
+    private String bankAlias(VoiceModel v) {
+        if (v == null || v.id == null) return "";
+        try {
+            return getSharedPreferences("brivoice", MODE_PRIVATE).getString("alias_" + neuralKey(v), "");
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
+    private void setBankAlias(VoiceModel v, String alias) {
+        if (v == null || v.id == null) return;
+        String key = "alias_" + neuralKey(v);
+        if (alias == null || alias.trim().isEmpty()) {
+            getSharedPreferences("brivoice", MODE_PRIVATE).edit().remove(key).apply();
+        } else {
+            getSharedPreferences("brivoice", MODE_PRIVATE).edit().putString(key, alias.trim()).apply();
+        }
+    }
+
+    /** rename an imported bank: only the display name changes, the pack file is left untouched */
+    private void renameBank(final VoiceModel v) {
+        if (v == null) return;
+        final EditText et = new EditText(this);
+        et.setSingleLine(true);
+        et.setText(bankAlias(v));
+        et.setHint(L.t("bank.rename.hint"));
+        et.setTextColor(Theme.TEXT);
+        et.setInputType(InputType.TYPE_CLASS_TEXT);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(6), dp(18), 0);
+        box.addView(et);
+        com.dsh.v4tune.ui.Dialogs.builder(this)
+                .setTitle(L.t("bank.rename.title"))
+                .setView(box)
+                .setPositiveButton(L.t("dlg.ok"), new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) {
+                        setBankAlias(v, et.getText().toString());
+                        refreshAll();
+                        status(L.t("bank.renamed", singerName(v)));
+                        managePacks();
+                    }
+                })
+                .setNegativeButton(L.t("dlg.cancel"), new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) { managePacks(); }
+                })
+                .show();
+    }
+
+    /** delete one imported bank, together with the neural weights that belonged to it */
+    private void deleteBank(final VoiceModel v) {
+        if (v == null) return;
+        com.dsh.v4tune.ui.Dialogs.builder(this)
+                .setTitle(L.t("dlg.pack.del.confirm.title"))
+                .setMessage(L.t("dlg.pack.del.confirm.msg", singerName(v)))
+                .setPositiveButton(L.t("dlg.delete"), new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface dd, int w) {
+                        String gone = singerName(v);
+                        boolean ok = packStore.delete(v.id);
+                        neuralFile(v).delete();
+                        setBankAlias(v, "");
+                        reloadPacks(false);
+                        if (currentVoice != null && currentVoice.id != null && currentVoice.id.equals(v.id)) {
+                            currentVoice = null;
+                            chooseInitialVoice();
+                        }
+                        refreshAll();
+                        status(ok ? L.t("status.pack.deleted", gone) : L.t("status.pack.del.fail"));
+                        managePacks();
+                    }
+                })
+                .setNegativeButton(L.t("dlg.cancel"), new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) { managePacks(); }
+                })
+                .show();
+    }
+
+    // ------------------------------------------------------------- model bundle (.bri)
+
+    /** show what a bundle would contain, then let the user pick where it goes */
+    private void showBundleExport() {
+        java.util.List<com.dsh.v4tune.io.BriBundle.Part> parts = com.dsh.v4tune.io.BriBundle.parts(this);
+        if (parts.isEmpty()) {
+            com.dsh.v4tune.ui.Dialogs.message(this, L.t("bank.bri.title"), L.t("bank.bri.none"));
+            return;
+        }
+        com.dsh.v4tune.ui.Dialogs.builder(this)
+                .setTitle(L.t("bank.bri.saveTitle"))
+                .setMessage(L.t("bank.bri.summary", com.dsh.v4tune.io.BriBundle.summary(this)))
+                .setPositiveButton(L.t("bank.exportBri"), new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) { pickBriSave(); }
+                })
+                .setNegativeButton(L.t("dlg.cancel"), null)
+                .show();
+    }
+
+    private void pickBriSave() {
+        try {
+            Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("application/octet-stream");
+            i.putExtra(Intent.EXTRA_TITLE, "BriVoice-models-" + stamp() + com.dsh.v4tune.io.BriBundle.EXT);
+            startActivityForResult(i, REQ_BRI_SAVE);
+        } catch (Throwable t) {
+            toast("无法打开保存对话框: " + msgOf(t));
+        }
+    }
+
+    private String stamp() {
+        return new java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(new java.util.Date());
+    }
+
+    /**
+     * Writes the bundle, then reads it back through the importer's own checks before handing it to
+     * the picked URI - so a half written or corrupt .bri is never reported as exported.
+     */
+    private void exportBriTo(final Uri uri) {
+        File tmp = new File(getCacheDir(), "export.bri");
+        try {
+            java.io.OutputStream os = new java.io.FileOutputStream(tmp);
+            int n = com.dsh.v4tune.io.BriBundle.export(this, os);      // closes the stream
+            com.dsh.v4tune.io.BriBundle.Result check = com.dsh.v4tune.io.BriBundle.verify(this, tmp);
+            java.io.OutputStream dst = getContentResolver().openOutputStream(uri, "w");
+            if (dst == null) throw new java.io.IOException("系统没有给出可写的输出流");
+            java.io.InputStream src = new java.io.FileInputStream(tmp);
+            try {
+                byte[] buf = new byte[32 * 1024];
+                int k;
+                while ((k = src.read(buf)) > 0) dst.write(buf, 0, k);
+                dst.flush();
+            } finally {
+                try { src.close(); } catch (Throwable ignored) { }
+                try { dst.close(); } catch (Throwable ignored) { }
+            }
+            long size = tmp.length();
+            String name = uri.getLastPathSegment();
+            if (name == null || name.trim().isEmpty()) name = "模型备份";
+            String details = name + " · " + (size / 1024) + " KB · " + check.text;
+            status(L.t("bank.bri.exported", n, details));
+            toast(L.t("bank.bri.exported", n, details));
+        } catch (Throwable t) {
+            status(L.t("bank.bri.failed", msgOf(t)));
+            toast(L.t("bank.bri.failed", msgOf(t)));
+        } finally {
+            tmp.delete();
+        }
+    }
+
+    private void showBundleImport() {
+        try {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("*/*");
+            i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/octet-stream", "application/zip", "*/*"});
+            startActivityForResult(i, REQ_BRI_OPEN);
+        } catch (Throwable t) {
+            toast("无法打开文件选择器: " + msgOf(t));
+        }
+    }
+
+    /** copy the picked bundle to cache, validate it, ask, then install */
+    private void importBriFrom(final Uri uri) {
+        final File tmp = new File(getCacheDir(), "import.bri");
+        try {
+            java.io.InputStream in = getContentResolver().openInputStream(uri);
+            if (in == null) throw new java.io.IOException("读不到这个文件");
+            java.io.OutputStream os = new java.io.FileOutputStream(tmp);
+            try {
+                byte[] buf = new byte[32 * 1024];
+                int k;
+                while ((k = in.read(buf)) > 0) os.write(buf, 0, k);
+                os.flush();
+            } finally {
+                try { in.close(); } catch (Throwable ignored) { }
+                try { os.close(); } catch (Throwable ignored) { }
+            }
+            final com.dsh.v4tune.io.BriBundle.Result check = com.dsh.v4tune.io.BriBundle.verify(this, tmp);
+            com.dsh.v4tune.ui.Dialogs.builder(this)
+                    .setTitle(L.t("bank.bri.importTitle"))
+                    .setMessage(L.t("bank.bri.importAsk", check.text))
+                    .setPositiveButton(L.t("dlg.ok"), new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface d, int w) { applyBri(tmp); }
+                    })
+                    .setNegativeButton(L.t("dlg.cancel"), new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface d, int w) { tmp.delete(); }
+                    })
+                    .show();
+        } catch (Throwable t) {
+            tmp.delete();
+            status(L.t("bank.bri.importFailed", msgOf(t)));
+            toast(L.t("bank.bri.importFailed", msgOf(t)));
+        }
+    }
+
+    private void applyBri(File tmp) {
+        try {
+            java.io.InputStream in = new java.io.FileInputStream(tmp);
+            com.dsh.v4tune.io.BriBundle.Result r = com.dsh.v4tune.io.BriBundle.importFrom(this, in);
+            reloadUniversalNeural();
+            if (currentVoice != null) {
+                currentVoice.neural = null;                 // the base may be a different one now
+                attachNeural(currentVoice);
+            }
+            refreshAll();
+            status(L.t("bank.bri.imported", r.text));
+            toast(L.t("bank.bri.imported", r.text));
+        } catch (Throwable t) {
+            status(L.t("bank.bri.importFailed", msgOf(t)));
+            toast(L.t("bank.bri.importFailed", msgOf(t)));
+        } finally {
+            tmp.delete();
+        }
+    }
+
+    /** the bundle import may have replaced the base: drop the cached copy so the next render uses it */
+    private void reloadUniversalNeural() {
+        universalNeural = null;
+        universalNeuralTried = false;
+        if (briNetingVoice != null) {
+            briNetingVoice.neural = null;
+            briNetingVoice.neuralFromUniversal = false;
+        }
+        ensureUniversalNeural();
+    }
+
+    private String msgOf(Throwable t) {
+        if (t == null) return "未知错误";
+        return t.getMessage() == null ? t.toString() : t.getMessage();
     }
 
     private void editTempo() {
@@ -3590,6 +3884,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             importModelFrom(uri);
         } else if (req == REQ_CUSTOM_ART) {
             loadCustomArt(uri);
+        } else if (req == REQ_BRI_SAVE) {
+            exportBriTo(uri);
+        } else if (req == REQ_BRI_OPEN) {
+            importBriFrom(uri);
         }
     }
 
