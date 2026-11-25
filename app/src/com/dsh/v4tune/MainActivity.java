@@ -3021,30 +3021,37 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     }
 
     private void applyLyrics(String text) {
-        final java.util.List<String> syl = LyricFill.split(text, new LyricFill.Hanzi() {
-            public String convert(char c) {
-                try {
-                    String py = ChineseG2P.hanziToPinyin(c);
-                    return py;
-                } catch (Throwable t) {
-                    return null;
-                }
-            }
-        });
+        // v11.1.2: keep each character as typed. Splitting to pinyin first put "wo"/"ai"/"ni"
+        // into the lyric field, so the piano roll showed romanisation instead of the words the user
+        // typed, and Japanese kanji went through the Chinese dictionary. The renderer derives the
+        // phonemes from the character itself (v11.1.1), so the raw character is the right value.
+        final java.util.List<String> syl = LyricFill.split(text, null);
         if (syl.isEmpty()) { status(L.t("status.lyrics.empty")); return; }
         final Part p = currentPart();
-        if (p == null || p.notes.isEmpty()) { status("当前片段没有音符"); return; }
+        if (p == null || p.notes.isEmpty()) { status(L.t("status.lyrics.nonotes")); return; }
         ArrayList<Note> notes = new ArrayList<Note>(p.notes);
         java.util.Collections.sort(notes, new java.util.Comparator<Note>() {
             public int compare(Note a, Note b) { return a.pos < b.pos ? -1 : (a.pos > b.pos ? 1 : 0); }
         });
-        int start = 0;
+        // v11.1.2: start at the note the user selected, then run forward; the playback cursor is
+        // only the anchor when nothing is selected.
+        Note sel = roll == null ? null : roll.getSelectedNote();
+        int selIndex = -1;
         for (int i = 0; i < notes.size(); i++) {
-            if (notes.get(i).pos >= startTick) { start = i; break; }
+            if (notes.get(i) == sel) { selIndex = i; break; }
         }
+        long[] positions = new long[notes.size()];
+        for (int i = 0; i < notes.size(); i++) positions[i] = notes.get(i).pos;
+        int start = LyricFill.startIndex(positions, selIndex, startTick);
+        if (start < 0) { status(L.t("status.lyrics.nonotes")); return; }
         beginEdit();
         int n = 0;
-        for (int i = start; i < notes.size() && n < syl.size(); i++, n++) notes.get(i).lyric = syl.get(n);
+        for (int i = start; i < notes.size() && n < syl.size(); i++, n++) {
+            Note nt = notes.get(i);
+            nt.lyric = syl.get(n);
+            nt.phoneme = "";           // re-derive from the new lyric; a stale <p> would win otherwise
+            nt.lockPhoneme = false;
+        }
         commitEdit();
         refreshAll();
         String msg = L.t("status.lyrics.done", n);

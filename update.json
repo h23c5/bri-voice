@@ -1,9 +1,9 @@
 {
-  "versionCode": 94,
-  "versionName": "11.1.1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v11.1.1/BriVoice-11.1.1.apk",
-  "sha256": "a4ae6e11d41bcdc3b01bcf7689dbbc24220c77586836012a43d6c8ac9bb75cdb",
+  "versionCode": 95,
+  "versionName": "11.1.2",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v11.1.2/BriVoice-11.1.2.apk",
+  "sha256": "7ee8f8d76dcad9457e41e24a3b345c108fb6fcad97c13ea7637656a7bf05f88b",
   "size": 784914,
-  "notes": "release 11.1.1：修复日文 / 中文歌词只唱 aaa 的问题。根因是保存工程时把歌词原文（假名 / 汉字）写进了音素字段 <p>，而未知音素会静默退回中性 a，重新打开后整句就变成 aaa；混排歌词还会先走中文分支，把假名整个丢掉。现在按文字种类选语言（假名走日文、汉字走中文），<p> 只接受真正的音素串，读入旧工程时丢弃被写坏的字段并重新从歌词推导，渲染端也不再信任无法演唱的音素串；单个生僻字跳过而不是让整句作废。",
-  "publishedAt": "2026-11-25 15:49:44"
+  "notes": "release 11.1.2：修复批量填入歌词的位置。以前是从播放光标开始填，选中音符后再填会把文字放到别处；光标在最后一个音符之后时还会跳回第一个音符，看起来像没生效。现在从选中的音符开始逐字往后填，没有选中音符时才用光标定位。另外填入的是原文（汉字/假名保持不变），不再先转成拼音——之前卷帘上显示的是 romanisation，日文汉字还会被中文拼音表顶掉；音素由渲染端从字本身推导。",
+  "publishedAt": "2026-11-25 16:34:54"
 }

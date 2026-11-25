@@ -76,4 +76,31 @@ public final class LyricFill {
     public static int fillCount(List<String> syllables) {
         return syllables == null ? 0 : syllables.size();
     }
+
+    /**
+     * Where the fill starts (v11.1.2).
+     *
+     * <p>The lyric has to land on the note the user picked, then run forward, which is the manual's
+     * "select a note, type the words" flow. The old code always used the playback cursor, so filling
+     * after selecting a note put the text somewhere else. It also wrapped to the FIRST note when the
+     * cursor sat past the last note (the scan never found a match and left the index at 0), which is
+     * what made a fill appear to do nothing at the end of a phrase.</p>
+     *
+     * @param positions      note start ticks, ascending
+     * @param selectedIndex  index of the selected note, or -1 when nothing is selected
+     * @param anchorTick     playback / edit cursor, used only when nothing is selected
+     * @return the index to start at, or -1 when there are no notes
+     */
+    public static int startIndex(long[] positions, int selectedIndex, long anchorTick) {
+        if (positions == null || positions.length == 0) return -1;
+        if (selectedIndex >= 0 && selectedIndex < positions.length) return selectedIndex;
+        int first = -1;
+        for (int i = 0; i < positions.length; i++) {
+            if (positions[i] >= anchorTick) { first = i; break; }
+        }
+        // the cursor sits past the last note: there is nothing left to fill. Returning the last
+        // index would silently overwrite it, and returning 0 (the old behaviour) moved the whole
+        // line to the top of the phrase - both are wrong, so report "nothing here" instead.
+        return first;
+    }
 }
