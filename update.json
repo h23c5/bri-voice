@@ -1,9 +1,9 @@
 {
-  "versionCode": 93,
-  "versionName": "11.1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v11.1/BriVoice-11.1.apk",
-  "sha256": "2e25410a85d50759339bd023f3a45844abb15178adfa5a857fe135c8e6d6ea31",
+  "versionCode": 94,
+  "versionName": "11.1.1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v11.1.1/BriVoice-11.1.1.apk",
+  "sha256": "a4ae6e11d41bcdc3b01bcf7689dbbc24220c77586836012a43d6c8ac9bb75cdb",
   "size": 784914,
-  "notes": "release 11.1: 自制声库新增「采样直训」神经声学模型——用免费免授权的 UTAU 声库训练共享基座（30 音节 / 6,071 帧 / 23.6k 参数），用户造库时用他自己的原始 WAV 做针对性微调（约 95 KB），模型随 .v4voice 包内 neural/samplenet.brsn 一起分发，渲染时逐帧预测谐波包络；桌面同条件验证：基座直接用你的采样唱 MAE 13.775 dB，微调后 5.445 dB。同时保留 v11.0 的测量式合成作回退路径，电平按同声库测量包络对齐；训练完成弹窗显示采样模型帧数与参数。顺带修复：声库名称输入框首次点击不再把新名字拼到旧名字后面。",
-  "publishedAt": "2026-11-24 19:47:17"
+  "notes": "release 11.1.1：修复日文 / 中文歌词只唱 aaa 的问题。根因是保存工程时把歌词原文（假名 / 汉字）写进了音素字段 <p>，而未知音素会静默退回中性 a，重新打开后整句就变成 aaa；混排歌词还会先走中文分支，把假名整个丢掉。现在按文字种类选语言（假名走日文、汉字走中文），<p> 只接受真正的音素串，读入旧工程时丢弃被写坏的字段并重新从歌词推导，渲染端也不再信任无法演唱的音素串；单个生僻字跳过而不是让整句作废。",
+  "publishedAt": "2026-11-25 15:49:44"
 }

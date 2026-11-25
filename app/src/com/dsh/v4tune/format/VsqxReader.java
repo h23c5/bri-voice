@@ -391,7 +391,7 @@ public final class VsqxReader {
         Element ph = kid(ne, v4 ? "p" : "phnms");
         if (ph != null) {
             String t = ph.getTextContent();
-            n.phoneme = t == null ? "" : t;
+            n.phoneme = sanitizePhonemes(t);
             String lock = attr(ph, "lock", null);
             n.lockPhoneme = "1".equals(lock) || "true".equalsIgnoreCase(lock);
         }
@@ -424,6 +424,38 @@ public final class VsqxReader {
             }
         }
         return n;
+    }
+
+    /**
+     * v11.1.1: drops a stored &lt;p&gt; column that is not phoneme text.
+     *
+     * <p>Older builds wrote the raw lyric into &lt;p&gt; whenever the G2P could not convert it, so a
+     * Japanese or Chinese project could carry kana or Hanzi there. An unknown token resolves to the
+     * neutral "a" definition, and the whole verse came out as "aaa" with nothing to indicate why.
+     * Clearing it here makes the renderer re-derive the phonemes from the lyric instead.</p>
+     */
+    static String sanitizePhonemes(String stored) {
+        if (stored == null) return "";
+        String s = stored.trim();
+        if (s.length() == 0) return "";
+        String[] parts = s.split("[\\s,]+");
+        boolean nucleus = false;
+        boolean allSilent = true;
+        int n = 0;
+        for (int i = 0; i < parts.length; i++) {
+            String tok = parts[i];
+            if (tok.length() == 0) continue;
+            com.dsh.v4tune.phoneme.PhonemeDef d = com.dsh.v4tune.phoneme.PhonemeTable.get(tok);
+            if (d == null) return "";                       // not a symbol: it is text, drop it
+            int t = d.type;
+            if (t == com.dsh.v4tune.phoneme.PhonemeDef.T_VOWEL
+                    || t == com.dsh.v4tune.phoneme.PhonemeDef.T_NASAL
+                    || t == com.dsh.v4tune.phoneme.PhonemeDef.T_GLIDE) nucleus = true;
+            if (t != com.dsh.v4tune.phoneme.PhonemeDef.T_SIL) allSilent = false;
+            n++;
+        }
+        if (n == 0 || (!nucleus && !allSilent)) return "";
+        return com.dsh.v4tune.phoneme.PhonemeTable.normalize(s);
     }
 
     private static void addPoint(java.util.LinkedHashMap<String, com.dsh.v4tune.model.ControlCurve> map, String id, long t, double v) {

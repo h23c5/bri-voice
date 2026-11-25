@@ -514,21 +514,64 @@ public final class VsqxWriter {
      * ("Verify error ... CVSMusicalNote"). The lyric is converted with the same G2P the renderer uses.
      */
     private static String phonemeFor(Note n) {
-        String ph = trunc(n.phoneme, 32).trim();
-        if (!ph.isEmpty()) return ph;
+        // A stored <p> is only carried over when it really is phoneme text. Older builds (and
+        // hand-edited projects) could leave the raw lyric there - kana or Hanzi - and that used to
+        // be written back verbatim. On the next load every unknown token resolved to the neutral
+        // "a", so a whole Japanese or Chinese verse sang "aaa". Re-derive instead of trusting it.
+        java.util.List<String> typed = splitPhonemes(n.phoneme);
+        if (com.dsh.v4tune.synth.Renderer.isSingable(typed)) {
+            return trunc(com.dsh.v4tune.phoneme.PhonemeTable.join(typed), 32).trim();
+        }
+        String ph = "";
         try {
-            java.util.List<String> syms = com.dsh.v4tune.phoneme.ChineseG2P.lyricToPhonemes(n.lyric);
+            java.util.List<String> syms = phonemesOfLyric(n);
             if (syms != null && !syms.isEmpty()) {
-                // VOCALOID4 keeps ONE symbol per note - the syllable, e.g. <y>luo</y><p>uo</p> -
-                // and re-derives the initial from the lyric. The G2P returns the initial and the
-                // final separately ("l", "uo"), and writing both made the PC editor drop notes.
-                // the whole sequence, the way VOCALOID writes it: a real project carries
-                // <y>kan</y><p>k_h a_n</p>, so initial + final is the correct form here
+                // A real project carries <y>kan</y><p>k_h a_n</p>: initial + final, space separated.
                 ph = trunc(com.dsh.v4tune.phoneme.PhonemeTable.join(syms), 32).trim();
             }
         } catch (Throwable ignored) { }
         if (ph.isEmpty()) ph = trunc(n.lyric, 32).trim();
         return ph;
+    }
+
+    /** splits a stored <p> column into normalized tokens (empty when it holds no symbol at all) */
+    private static java.util.List<String> splitPhonemes(String stored) {
+        java.util.ArrayList<String> out = new java.util.ArrayList<String>();
+        if (stored == null) return out;
+        String s = stored.trim();
+        if (s.length() == 0) return out;
+        String[] parts = s.split("[\\s,]+");
+        for (int i = 0; i < parts.length; i++) {
+            if (parts[i].length() == 0) continue;
+            String canon = com.dsh.v4tune.phoneme.PhonemeTable.normalize(parts[i]);
+            out.add(canon.length() == 0 ? parts[i] : canon);
+        }
+        return out;
+    }
+
+    /**
+     * Phonemes for a lyric, the same way the renderer derives them: Chinese pinyin/Hanzi first,
+     * then Japanese kana and romaji. Returns null when nothing convertible is found.
+     */
+    static java.util.List<String> phonemesOfLyric(Note n) {
+        String ly = n == null || n.lyric == null ? "" : n.lyric.trim();
+        if (ly.length() == 0) return null;
+        java.util.List<String> syms = com.dsh.v4tune.phoneme.ChineseG2P.lyricToPhonemes(ly);
+        if (syms == null || syms.isEmpty()) {
+            syms = com.dsh.v4tune.phoneme.JapaneseG2P.lyricToPhonemes(ly);
+        }
+        if (syms == null || syms.isEmpty()) {
+            String canon = com.dsh.v4tune.phoneme.PhonemeTable.normalize(ly);
+            if (com.dsh.v4tune.phoneme.PhonemeTable.get(canon) != null) {
+                java.util.ArrayList<String> one = new java.util.ArrayList<String>();
+                // keep the case-sensitive spelling: "N" is not "n"
+                String raw = ly.trim();
+                one.add(com.dsh.v4tune.phoneme.PhonemeTable.get(raw) != null ? raw
+                        : (com.dsh.v4tune.phoneme.PhonemeTable.get(canon) != null ? canon : ly.trim()));
+                return one;
+            }
+        }
+        return syms;
     }
 
     /** the nine standard attributes first, then anything else the note carries */

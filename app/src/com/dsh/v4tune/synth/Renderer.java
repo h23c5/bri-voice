@@ -619,17 +619,37 @@ public class Renderer {
         ArrayList<String> out = new ArrayList<String>();
         if (nt.phoneme != null && nt.phoneme.trim().length() > 0) {
             // user typed phonemes: keep the case-sensitive VOCALOID CHN symbols (iE_r, N, Sil...)
+            ArrayList<String> typed = new ArrayList<String>();
             for (String s : nt.phoneme.trim().split("[\\s,]+")) {
                 if (s.length() == 0) continue;
                 String n = PhonemeTable.normalize(s);
-                out.add(n.length() == 0 ? s : n);
+                typed.add(n.length() == 0 ? s : n);
             }
-            return out;
+            // v11.1.1: a <p> column that holds the *lyric* instead of phonemes (kana or Hanzi -
+            // older builds wrote the raw lyric there when the G2P could not convert it) used to
+            // sail straight through: every unknown token resolves to the neutral "a" def, so a
+            // whole Japanese or Chinese verse came out as "aaa". Only trust the column when every
+            // token is a real symbol AND it can actually be sung (at least one vowel/nasal).
+            if (isSingable(typed)) { out.addAll(typed); return out; }
         }
         String ly = nt.lyric == null ? "" : nt.lyric.trim();
         if (ly.length() == 0) { out.add("a"); return out; }
         List<String> r = null;
-        if (vm != null && vm.lang == 0) {
+        // v11.1.1: the script decides the language, not the voicebank. A kana lyric always reads as
+        // Japanese and a Hanzi lyric as Chinese; only romaji needs the bank's language to break the
+        // tie. Before this, a Chinese bank reading "さくら" went through the Chinese path first, and
+        // a mixed line like "君のことが好きだ" lost every kana to it.
+        boolean hasKana = false, hasHanzi = false;
+        for (int i = 0; i < ly.length(); i++) {
+            char c = ly.charAt(i);
+            if ((c >= 0x3041 && c <= 0x3096) || (c >= 0x30A1 && c <= 0x30FA)) hasKana = true;
+            else if ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF)) hasHanzi = true;
+        }
+        if (hasKana && !hasHanzi) {
+            r = JapaneseG2P.lyricToPhonemes(ly);
+        } else if (hasHanzi && !hasKana) {
+            r = ChineseG2P.lyricToPhonemes(ly);
+        } else if (vm != null && vm.lang == 0) {
             r = JapaneseG2P.lyricToPhonemes(ly);
             if (r == null || r.isEmpty()) r = ChineseG2P.lyricToPhonemes(ly);
         } else {
@@ -644,6 +664,31 @@ public class Renderer {
         }
         out.addAll(r);
         return out;
+    }
+
+    /**
+     * v11.1.1: can this token list actually be sung?
+     *
+     * <p>The check exists because an unknown symbol quietly resolves to the neutral "a" definition:
+     * a &lt;p&gt; column that carries the lyric itself (kana/Hanzi written by older builds, or a
+     * hand-edited project) therefore rendered as a run of "aaa" with nothing in the UI saying so.
+     * A usable column needs every token to be a real phoneme AND at least one vowel-like token,
+     * because a syllable without a nucleus has nothing to carry the pitch.</p>
+     */
+    public static boolean isSingable(List<String> syms) {
+        if (syms == null || syms.isEmpty()) return false;
+        boolean nucleus = false;
+        boolean allSilent = true;
+        for (int i = 0; i < syms.size(); i++) {
+            String s = syms.get(i);
+            PhonemeDef d = (s == null) ? null : PhonemeTable.get(s);
+            if (d == null) return false;                    // not a symbol at all: it is text
+            int t = d.type;
+            if (t == PhonemeDef.T_VOWEL || t == PhonemeDef.T_NASAL || t == PhonemeDef.T_GLIDE) nucleus = true;
+            if (t != PhonemeDef.T_SIL) allSilent = false;
+        }
+        // an explicit "Sil" column is valid: the user asked for a rest, not for a noun vowel
+        return nucleus || allSilent;
     }
 
     // ---------------------------------------------------------------- shaping

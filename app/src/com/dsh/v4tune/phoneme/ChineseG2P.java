@@ -243,6 +243,13 @@ public final class ChineseG2P {
     if (lyric == null) return null;
     String s = lyric.trim();
     if (s.length() == 0) return null;
+    // v11.1.1: a kana anywhere means this is a Japanese lyric. Returning the two or three Hanzi
+    // that happen to be in the table made "君のことが好きだ" sing only 君 and 好 and silently drop
+    // every kana - the caller saw a non-empty result and never reached JapaneseG2P.
+    for (int i = 0; i < s.length(); i++) {
+      char c = s.charAt(i);
+      if ((c >= 0x3041 && c <= 0x3096) || (c >= 0x30A1 && c <= 0x30FA)) return null;
+    }
     String syl = stripTone(s);
     if (syl.length() > 0 && SYLLABLES.contains(syl)) {
       List<String> ph = syllableToPhonemes(syl);
@@ -255,9 +262,12 @@ public final class ChineseG2P {
       if (Character.isWhitespace(c) || (c >= '0' && c <= '9')) continue;
       if (!isHan(c)) continue;                       // punctuation / latin leftovers
       String py = hanziToPinyin(c);
-      if (py == null) return null;                   // unknown hanzi: whole lyric unusable
+      // v11.1.1: one Hanzi outside the Unihan table used to make the WHOLE lyric unusable, so a
+      // line with a rare name in it fell back to a bare "a" (heard as "aaa"). Skip the character
+      // and keep singing the rest of the line instead.
+      if (py == null) continue;
       List<String> ph = syllableToPhonemes(py);
-      if (ph.isEmpty()) return null;
+      if (ph == null || ph.isEmpty()) continue;
       out.addAll(ph);
       any = true;
     }
