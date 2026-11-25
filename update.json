@@ -1,9 +1,9 @@
 {
-  "versionCode": 97,
-  "versionName": "12.0.1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v12.0.1/BriVoice-12.0.1.apk",
-  "sha256": "c72bad78966901d23ee3a3ac9878b2aeb16de7e3b6e7df38894a61711a1e11f7",
+  "versionCode": 99,
+  "versionName": "12.0.2",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v12.0.2/BriVoice-12.0.2.apk",
+  "sha256": "c78681f596e0976a56c013ba6610d2c59778bdccdbd095edea0e486f8df74f53",
   "size": 793106,
-  "notes": "release 12.0.1：修复批量填入歌词。现在按空格拆分——「一 闪 一 闪 亮 晶 晶 满 天 都 是 小 星 星」是 14 段，就占 14 个音符，从选中的音符开始逐段往后放；整句一个空格都没有时才退回按单字拆。如果从这里往后音符不够，直接报错并提示还差几个，不再只填一半、把后半句丢掉。",
-  "publishedAt": "2026-11-25 17:48:24"
+  "notes": "release 12.0.2：把歌词功能彻底统一。左侧「歌词」按钮、双击音符、工具菜单三处以前行为不同，其中两处会把整句塞进一个音符——这就是一直说的「积压成一个音符块」。现在三处都打开同一个对话框：按空格拆段，一段填一个音符，从当前音符往后排；对话框会显示「从当前音符往后可用 N 个音符」，段数超过 N 直接报错并说明还差几个，不写入任何东西。",
+  "publishedAt": "2026-11-25 18:34:10"
 }

@@ -1319,43 +1319,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         status(snapTicks == 0 ? "网格吸附已关闭" : ("网格吸附: " + (1920 / snapTicks) + " 分音符"));
     }
 
-    private void editLyric(final Note n) {
-        if (n == null) { status("请先选中一个音符"); return; }
-        final EditText et = new EditText(this);
-        et.setInputType(InputType.TYPE_CLASS_TEXT);
-        et.setText(n.lyric);
-        et.setSelectAllOnFocus(true);
-        new AlertDialog.Builder(this)
-                .setTitle(L.t("dlg.lyric.title"))
-                .setView(et)
-                .setPositiveButton(L.t("dlg.lyric.ok"), new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface d, int w) {
-                        beginEdit();
-                        n.lyric = et.getText().toString().trim();
-                        boolean kept = false;
-                        if (phonemeLock && n.phoneme != null && n.phoneme.trim().length() > 0) {
-                            n.lockPhoneme = true;      // keep the phonemes this note already sings
-                            kept = true;
-                        } else {
-                            n.phoneme = "";           // default: regenerate from the new lyric
-                            n.lockPhoneme = false;
-                        }
-                        commitEdit();
-                        roll.refresh();
-                        if (kept) {
-                            status(L.t("status.lyric.locked", n.lyric));
-                        } else {
-                            String ph = com.dsh.v4tune.synth.Renderer.resolvePhonemes(n, currentVoice).toString();
-                            status(L.t("status.lyric.set", n.lyric, ph));
-                        }
-                    }
-                })
-                .setNeutralButton(L.t("dlg.lyric.clear.lock"), new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface d, int w) { n.phoneme = ""; n.lockPhoneme = false; roll.refresh(); status(L.t("set.phoneme.state.off")); }
-                })
-                .setNegativeButton(L.t("dlg.cancel"), null)
-                .show();
-    }
+    /**
+     * v12.0.2: this used to be a separate single-note editor, which is where the whole line could
+     * end up inside one note ("积压成一个音符块"). Every lyric entry point now goes through
+     * {@link #lyricDialog}, so a sentence is always split and spread over the notes that follow.
+     */
+    private void editLyric(final Note n) { lyricDialog(n); }
 
     /** pick a sensible active voicebank after a load/delete */
     /**
@@ -3101,19 +3070,106 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     // ---------------------------------------------------------------- batch lyrics
 
     /** paste a whole line of lyrics and hand one syllable to each note */
-    private void lyricFillDialog() {
-        final android.widget.EditText e = new android.widget.EditText(this);
-        e.setMinLines(4);
+    /** 工具菜单入口：不带具体音符，锚点交给选中音符 / 播放光标 */
+    private void lyricFillDialog() { lyricDialog(null); }
+
+    /** the part's notes in playing order, as a mutable copy */
+    private ArrayList<Note> sortedNotes(Part p) {
+        ArrayList<Note> notes = new ArrayList<Note>(p.notes);
+        java.util.Collections.sort(notes, new java.util.Comparator<Note>() {
+            public int compare(Note a, Note b) { return a.pos < b.pos ? -1 : (a.pos > b.pos ? 1 : 0); }
+        });
+        return notes;
+    }
+
+    /**
+     * Index the fill starts at: the note that opened the dialog, else the roll selection, else the
+     * first note at/after the playback cursor. -1 when the part has no notes that qualify.
+     */
+    private int lyricAnchorIndex(ArrayList<Note> notes, Note anchor) {
+        if (notes == null || notes.isEmpty()) return -1;
+        Note sel = anchor != null ? anchor : (roll == null ? null : roll.getSelectedNote());
+        int selIndex = -1;
+        for (int i = 0; i < notes.size(); i++) {
+            if (notes.get(i) == sel) { selIndex = i; break; }
+        }
+        long[] positions = new long[notes.size()];
+        for (int i = 0; i < notes.size(); i++) positions[i] = notes.get(i).pos;
+        return LyricFill.startIndex(positions, selIndex, startTick);
+    }
+
+    /** how many notes are available for a fill that starts here (0 when there is no room) */
+    private int lyricRoom(Note anchor) {
+        Part p = currentPart();
+        if (p == null || p.notes.isEmpty()) return 0;
+        ArrayList<Note> notes = sortedNotes(p);
+        int start = lyricAnchorIndex(notes, anchor);
+        return start < 0 ? 0 : notes.size() - start;
+    }
+
+    /**
+     * The one and only lyric editor (v12.0.2).
+     *
+     * <p>All three entry points - the 歌词 button in the left column, double-tapping a note, and
+     * 工具 &gt; 批量填入歌词 - open this dialog. They used to differ: the first two dropped the whole
+     * line into a single note, which is exactly the "积压成一个音符块" that kept being reported.</p>
+     *
+     * <p>The dialog prints how many notes are available from the anchor to the end of the part, so
+     * "this line has 14 pieces but only 13 notes are left" is visible before 填入 is pressed; the
+     * fill itself refuses to write anything in that case.</p>
+     */
+    private void lyricDialog(final Note anchorNote) {
+        final Part part = currentPart();
+        if (part == null || part.notes.isEmpty()) { status(L.t("status.lyrics.nonotes")); return; }
+        final ArrayList<Note> notes = sortedNotes(part);
+        final int start = lyricAnchorIndex(notes, anchorNote);
+        final int room = start < 0 ? 0 : notes.size() - start;
+        final Note anchor = (start >= 0) ? notes.get(start) : null;
+
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(18), dp(6), dp(18), dp(2));
+
+        TextView info = new TextView(this);
+        info.setText(L.t("dlg.lyrics.room", room));
+        info.setTextColor(room > 0 ? 0xFF9FB0C8 : 0xFFFF6B6B);
+        info.setTextSize(13f);
+        info.setPadding(0, 0, 0, dp(6));
+        col.addView(info);
+
+        final EditText e = new EditText(this);
+        e.setInputType(InputType.TYPE_CLASS_TEXT);
+        e.setMinLines(3);
         e.setGravity(Gravity.TOP | Gravity.START);
         e.setHint(L.t("dlg.lyrics.hint"));
-        new AlertDialog.Builder(this)
+        if (anchor != null && anchor.lyric != null) {
+            e.setText(anchor.lyric);
+            e.setSelection(e.getText().length());
+        }
+        col.addView(e);
+
+        AlertDialog.Builder b = new AlertDialog.Builder(this)
                 .setTitle(L.t("dlg.lyrics.title"))
-                .setView(e)
+                .setView(col)
                 .setPositiveButton(L.t("dlg.lyrics.ok"), new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface d, int w) { applyLyrics(e.getText().toString()); }
+                    public void onClick(DialogInterface d, int w) {
+                        applyLyrics(e.getText().toString(), anchorNote);
+                    }
                 })
-                .setNegativeButton(L.t("dlg.cancel"), null)
-                .show();
+                .setNegativeButton(L.t("dlg.cancel"), null);
+        if (anchor != null) {
+            b.setNeutralButton(L.t("dlg.lyric.clear.lock"), new DialogInterface.OnClickListener() {
+                public void onClick(DialogInterface d, int w) {
+                    beginEdit();
+                    anchor.phoneme = "";
+                    anchor.lockPhoneme = false;
+                    commitEdit();
+                    if (roll != null) roll.refresh();
+                    status(L.t("set.phoneme.state.off"));
+                }
+            });
+        }
+        b.show();
     }
 
     /**
@@ -3130,7 +3186,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
      * is told how many notes are missing - a partial fill silently dropping the tail of the line
      * was the other half of the complaint.</p>
      */
-    private void applyLyrics(String text) {
+    private void applyLyrics(String text, Note anchorNote) {
         final java.util.List<String> syl = LyricFill.segments(text);
         if (syl.isEmpty()) { status(L.t("status.lyrics.empty")); return; }
         final Part p = currentPart();
@@ -3141,14 +3197,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         });
         // start at the note the user selected, then run forward; the playback cursor is only the
         // anchor when nothing is selected.
-        Note sel = roll == null ? null : roll.getSelectedNote();
-        int selIndex = -1;
-        for (int i = 0; i < notes.size(); i++) {
-            if (notes.get(i) == sel) { selIndex = i; break; }
-        }
-        long[] positions = new long[notes.size()];
-        for (int i = 0; i < notes.size(); i++) positions[i] = notes.get(i).pos;
-        int start = LyricFill.startIndex(positions, selIndex, startTick);
+        int start = lyricAnchorIndex(notes, anchorNote);
         if (start < 0) { status(L.t("status.lyrics.nonotes")); return; }
         int room = notes.size() - start;
         if (room < syl.size()) {
@@ -3163,8 +3212,14 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         for (int n = 0; n < syl.size(); n++) {
             Note nt = notes.get(start + n);
             nt.lyric = syl.get(n);
-            nt.phoneme = "";           // re-derive from the new lyric; a stale <p> would win otherwise
-            nt.lockPhoneme = false;
+            if (syl.size() == 1 && phonemeLock && nt.phoneme != null && nt.phoneme.trim().length() > 0) {
+                // editing a single note keeps the phonemes it already sings (the old single-note
+                // editor behaved this way; spreading a line over many notes never does)
+                nt.lockPhoneme = true;
+            } else {
+                nt.phoneme = "";       // re-derive from the new lyric; a stale <p> would win otherwise
+                nt.lockPhoneme = false;
+            }
         }
         commitEdit();
         refreshAll();
