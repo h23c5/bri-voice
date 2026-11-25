@@ -1,9 +1,9 @@
 {
-  "versionCode": 96,
-  "versionName": "12.0",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v12.0/BriVoice-12.0.apk",
-  "sha256": "5824ebdb1820dff007b449e3ac82db1592606ed8a985e5f3f0bbc6ba916a5775",
+  "versionCode": 97,
+  "versionName": "12.0.1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v12.0.1/BriVoice-12.0.1.apk",
+  "sha256": "c72bad78966901d23ee3a3ac9878b2aeb16de7e3b6e7df38894a61711a1e11f7",
   "size": 793106,
-  "notes": "release 12.0：插件机架改成拟物化面板——参数从滑块换成一圈 270° 行程的旋钮（刻度、指针、读数、刻字），旁路做成带独立 LED 的摇摆开关，整块面板是带刻线和螺丝的金属板。旋钮上下一拖就能调，拖的时候指针变白。同时从本版本起，许可证由 MIT 改为 GPLv3；11.1.2 及更早的版本仍按 MIT 发布。",
-  "publishedAt": "2026-11-25 17:25:24"
+  "notes": "release 12.0.1：修复批量填入歌词。现在按空格拆分——「一 闪 一 闪 亮 晶 晶 满 天 都 是 小 星 星」是 14 段，就占 14 个音符，从选中的音符开始逐段往后放；整句一个空格都没有时才退回按单字拆。如果从这里往后音符不够，直接报错并提示还差几个，不再只填一半、把后半句丢掉。",
+  "publishedAt": "2026-11-25 17:48:24"
 }

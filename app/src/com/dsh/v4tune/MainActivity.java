@@ -3116,12 +3116,22 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 .show();
     }
 
+    /**
+     * Fills the picked note and the ones after it, <b>one space-separated piece per note</b>
+     * (v12.0.1).
+     *
+     * <p>The old splitter cut every CJK character apart, so "一 闪 一 闪 …" arrived as fourteen
+     * characters and "洛天依" as three - and because the user's line is usually typed with spaces,
+     * the two rules fought: the whole line could land on the first note while later notes kept
+     * their old text, which reads as "积压成一个音符块". Segmentation is now by whitespace first;
+     * per-character splitting is only the fallback for a line with no spaces at all.</p>
+     *
+     * <p>When there are not enough notes left from the selection, nothing is written and the user
+     * is told how many notes are missing - a partial fill silently dropping the tail of the line
+     * was the other half of the complaint.</p>
+     */
     private void applyLyrics(String text) {
-        // v11.1.2: keep each character as typed. Splitting to pinyin first put "wo"/"ai"/"ni"
-        // into the lyric field, so the piano roll showed romanisation instead of the words the user
-        // typed, and Japanese kanji went through the Chinese dictionary. The renderer derives the
-        // phonemes from the character itself (v11.1.1), so the raw character is the right value.
-        final java.util.List<String> syl = LyricFill.split(text, null);
+        final java.util.List<String> syl = LyricFill.segments(text);
         if (syl.isEmpty()) { status(L.t("status.lyrics.empty")); return; }
         final Part p = currentPart();
         if (p == null || p.notes.isEmpty()) { status(L.t("status.lyrics.nonotes")); return; }
@@ -3129,8 +3139,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         java.util.Collections.sort(notes, new java.util.Comparator<Note>() {
             public int compare(Note a, Note b) { return a.pos < b.pos ? -1 : (a.pos > b.pos ? 1 : 0); }
         });
-        // v11.1.2: start at the note the user selected, then run forward; the playback cursor is
-        // only the anchor when nothing is selected.
+        // start at the note the user selected, then run forward; the playback cursor is only the
+        // anchor when nothing is selected.
         Note sel = roll == null ? null : roll.getSelectedNote();
         int selIndex = -1;
         for (int i = 0; i < notes.size(); i++) {
@@ -3140,18 +3150,25 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         for (int i = 0; i < notes.size(); i++) positions[i] = notes.get(i).pos;
         int start = LyricFill.startIndex(positions, selIndex, startTick);
         if (start < 0) { status(L.t("status.lyrics.nonotes")); return; }
+        int room = notes.size() - start;
+        if (room < syl.size()) {
+            // refuse rather than fill half a line: the text would land on the wrong notes and the
+            // remainder would look like it vanished
+            String msg = L.t("status.lyrics.notenough", syl.size(), room, syl.size() - room);
+            status(msg);
+            toast(msg);
+            return;
+        }
         beginEdit();
-        int n = 0;
-        for (int i = start; i < notes.size() && n < syl.size(); i++, n++) {
-            Note nt = notes.get(i);
+        for (int n = 0; n < syl.size(); n++) {
+            Note nt = notes.get(start + n);
             nt.lyric = syl.get(n);
             nt.phoneme = "";           // re-derive from the new lyric; a stale <p> would win otherwise
             nt.lockPhoneme = false;
         }
         commitEdit();
         refreshAll();
-        String msg = L.t("status.lyrics.done", n);
-        if (n < syl.size()) msg += " " + L.t("status.lyrics.left", syl.size() - n);
+        String msg = L.t("status.lyrics.done", syl.size());
         status(msg);
         toast(msg);
     }
@@ -3954,7 +3971,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
             if ("setLyrics".equals(action)) {
                 String text = com.dsh.v4tune.ai.Json.str(args, "text", "");
-                java.util.List<String> parts = com.dsh.v4tune.io.LyricFill.split(text, null);
+                java.util.List<String> parts = com.dsh.v4tune.io.LyricFill.segments(text);
                 beginEdit();
                 p.sortNotes();
                 int n = Math.min(parts.size(), p.notes.size());
@@ -7021,6 +7038,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         sb.append(L.t("about.line.net.update")).append("\n");
         sb.append(L.t("about.line.net.ai")).append("\n");
         sb.append(L.t("about.line.net.offline")).append("\n");
+        sb.append("\n").append(L.t("about.line.license")).append("\n");
         sb.append("\n").append(L.t("about.line.author")).append("\n");
         sb.append("\n").append(L.t("about.line.disclaimer")).append("\n");
         new AlertDialog.Builder(this)

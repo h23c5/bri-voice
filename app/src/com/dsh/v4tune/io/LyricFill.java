@@ -42,6 +42,52 @@ public final class LyricFill {
                 || c == '’' || c == '(' || c == ')' || c == '（' || c == '）';
     }
 
+    /**
+     * Splits a pasted line into one segment per note, <b>by whitespace first</b> (v12.0.1).
+     *
+     * <p>This is the rule users actually state: "一 闪 一 闪 亮 晶 晶 …" is fourteen notes because
+     * there are fourteen space-separated pieces, and "洛天依" typed as one piece is ONE note, not
+     * three. The per-character splitting below is only the fallback for a line that has no
+     * whitespace at all (someone pasting "一闪一闪亮晶晶" straight in).</p>
+     */
+    public static List<String> segments(String text) {
+        ArrayList<String> out = new ArrayList<String>();
+        if (text == null) return out;
+        String norm = text.replace('\r', '\n');
+        StringBuilder word = new StringBuilder();
+        for (int i = 0; i < norm.length(); i++) {
+            char c = norm.charAt(i);
+            if (Character.isWhitespace(c)) {
+                flushRaw(word, out);
+                continue;
+            }
+            word.append(c);
+        }
+        flushRaw(word, out);
+        if (out.size() == 1) {
+            String only = out.get(0);
+            // no whitespace at all: fall back to one note per character, but only when the piece is
+            // actually multi-character CJK. A single Latin word stays one note.
+            boolean allCjk = only.length() > 1;
+            for (int i = 0; allCjk && i < only.length(); i++) {
+                if (!isCjk(only.charAt(i))) allCjk = false;
+            }
+            if (allCjk) {
+                out.clear();
+                for (int i = 0; i < only.length(); i++) out.add(String.valueOf(only.charAt(i)));
+            }
+        }
+        return out;
+    }
+
+    /** keeps the segment exactly as typed - no lower-casing, no pinyin conversion */
+    private static void flushRaw(StringBuilder word, List<String> out) {
+        if (word.length() == 0) return;
+        String w = word.toString().trim();
+        word.setLength(0);
+        if (!w.isEmpty()) out.add(w);
+    }
+
     /** @return one lyric per note, in order; never null, may be shorter than the note list */
     public static List<String> split(String text, Hanzi hanzi) {
         ArrayList<String> out = new ArrayList<String>();
