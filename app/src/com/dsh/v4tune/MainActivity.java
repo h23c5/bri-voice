@@ -2165,42 +2165,138 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 });
     }
 
+    /**
+     * The plugin rack (v12.0): a physical front panel instead of a column of SeekBars.
+     *
+     * <p>Each parameter is a knurled knob on a bevelled plate; bypass is a hardware toggle with an
+     * LED, and the plate is labelled with the module name. Knobs are 270-degree rotations with an
+     * engraved scale, so the current setting is readable without parsing a number, and the whole
+     * panel scrolls as one unit when a module has more parameters than fit.</p>
+     */
     private void pluginMenu(final int idx) {
         final Plugin p = pluginChain.get(idx);
+        if (p == null) return;
+
         android.widget.ScrollView sc = new android.widget.ScrollView(this);
+        sc.setBackgroundColor(0xFF0B0D13);
+
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
-        col.setPadding(dp(12), dp(8), dp(12), dp(8));
+        col.setPadding(dp(10), dp(10), dp(10), dp(10));
+
+        // --- module plate: name + bypass toggle, on a bevelled panel
+        FrameLayout header = new FrameLayout(this);
+        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(62));
+        header.setLayoutParams(hlp);
+        // the plate is a View, not a Drawable, so it has to sit behind the content as a child
+        header.addView(new com.dsh.v4tune.ui.RackControls.Plate(this),
+                new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT));
+
+        TextView name = new TextView(this);
+        name.setText(p.name().toUpperCase(java.util.Locale.US));
+        name.setTextColor(0xFFE8ECF5);
+        name.setTextSize(14f);
+        name.setTypeface(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD);
+        name.setLetterSpacing(0.12f);
+        name.setPadding(dp(18), dp(18), 0, 0);
+        header.addView(name);
+
+        final com.dsh.v4tune.ui.RackControls.Toggle bypass =
+                new com.dsh.v4tune.ui.RackControls.Toggle(this);
+        bypass.setOn(!pluginChain.isBypassed(idx));
+        bypass.setCaption(pluginChain.isBypassed(idx) ? "BYPASS" : "ACTIVE");
+        bypass.setListener(new com.dsh.v4tune.ui.RackControls.Toggle.Listener() {
+            public void onToggle(boolean on) {
+                pluginChain.setBypass(idx, !on);
+                // the engraved label has to follow the switch, otherwise it keeps saying ACTIVE
+                // while the module is bypassed
+                bypass.setCaption(on ? "ACTIVE" : "BYPASS");
+                status(L.t(on ? "plug.enable" : "plug.bypass", p.name()));
+            }
+        });
+        FrameLayout.LayoutParams tlp = new FrameLayout.LayoutParams(dp(120), dp(44));
+        tlp.gravity = android.view.Gravity.END | android.view.Gravity.CENTER_VERTICAL;
+        tlp.rightMargin = dp(12);
+        header.addView(bypass, tlp);
+        col.addView(header);
+
+        // --- knobs, two per row on a phone, all on one plate
+        FrameLayout panel = new FrameLayout(this);
+        panel.addView(new com.dsh.v4tune.ui.RackControls.Plate(this),
+                new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT));
+        LinearLayout grid = new LinearLayout(this);
+        grid.setOrientation(LinearLayout.VERTICAL);
+        grid.setPadding(dp(14), dp(18), dp(14), dp(10));
+        LinearLayout row = null;
         for (int i = 0; i < p.paramCount(); i++) {
-            final int pi = i;
-            double lo = p.paramMin(i), hi = p.paramMax(i);
-            double frac = (p.getParam(i) - lo) / Math.max(1e-9, hi - lo);
-            col.addView(sliderRow(p.paramName(i), 0, 100, (int) Math.round(frac * 100),
-                    new android.widget.SeekBar.OnSeekBarChangeListener() {
-                        public void onProgressChanged(android.widget.SeekBar sb, int pr, boolean u) {
-                            Plugin q = pluginChain.get(idx);
-                            double lo2 = q.paramMin(pi), hi2 = q.paramMax(pi);
-                            q.setParam(pi, lo2 + (hi2 - lo2) * pr / 100.0);
-                        }
-                        public void onStartTrackingTouch(android.widget.SeekBar sb) { }
-                        public void onStopTrackingTouch(android.widget.SeekBar sb) { }
-                    }));
+            if (i % 2 == 0) {
+                row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                row.setPadding(0, 0, 0, dp(4));
+                grid.addView(row);
+            }
+            row.addView(knobFor(idx, i), new LinearLayout.LayoutParams(0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         }
+        panel.addView(grid);
+        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        plp.topMargin = dp(10);
+        panel.setLayoutParams(plp);
+        col.addView(panel);
+
         sc.addView(col);
         new AlertDialog.Builder(this)
-                .setTitle(p.name())
+                .setTitle(L.t("dlg.plugin.title"))
                 .setView(sc)
                 .setPositiveButton(L.t("dlg.ok"), null)
-                .setNeutralButton(pluginChain.isBypassed(idx) ? L.t("plug.enable") : L.t("plug.bypass"),
-                        new DialogInterface.OnClickListener() {
-                            public void onClick(DialogInterface d, int w) {
-                                pluginChain.setBypass(idx, !pluginChain.isBypassed(idx));
-                            }
-                        })
                 .setNegativeButton(L.t("plug.remove"), new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface d, int w) { pluginChain.remove(idx); }
                 })
                 .show();
+    }
+
+    /** one knob bound to plugin[idx] parameter pi, with its value formatted for the readout */
+    private View knobFor(final int idx, final int pi) {
+        final Plugin q = pluginChain.get(idx);
+        final double lo = q.paramMin(pi), hi = q.paramMax(pi);
+        final double span = Math.max(1e-9, hi - lo);
+        final com.dsh.v4tune.ui.RackControls.Knob k = new com.dsh.v4tune.ui.RackControls.Knob(this);
+        k.setValue((float) ((q.getParam(pi) - lo) / span));
+        k.setText(shortParamName(q.paramName(pi)), formatParam(q, pi, q.getParam(pi)));
+        k.setListener(new com.dsh.v4tune.ui.RackControls.Knob.Listener() {
+            public void onKnob(float v) {
+                Plugin cur = pluginChain.get(idx);
+                if (cur == null) return;
+                double nv = lo + span * v;
+                cur.setParam(pi, nv);
+                k.setText(shortParamName(cur.paramName(pi)), formatParam(cur, pi, cur.getParam(pi)));
+            }
+        });
+        return k;
+    }
+
+    /** "Dry/Wet" -> "DRY/WET"; long names keep their first word so the engraved caption fits */
+    private static String shortParamName(String name) {
+        String s = name == null ? "" : name.trim().toUpperCase(java.util.Locale.US);
+        if (s.length() <= 9) return s;
+        int sp = s.indexOf(' ');
+        if (sp > 0) return s.substring(0, sp);
+        return s.substring(0, 9);
+    }
+
+    /** the readout above a knob: whole numbers for dB/ms-like ranges, one decimal for ratios */
+    private static String formatParam(Plugin q, int pi, double v) {
+        String nm = q.paramName(pi) == null ? "" : q.paramName(pi).toLowerCase(java.util.Locale.US);
+        if (nm.contains("ratio")) return String.format(java.util.Locale.US, "%.1f:1", v);
+        if (nm.contains("db") || nm.contains("depth") || nm.contains("rate")
+                || nm.contains("threshold") || nm.contains("attack") || nm.contains("release")) {
+            return String.format(java.util.Locale.US, "%.1f", v);
+        }
+        return String.format(java.util.Locale.US, "%.0f%%", v * 100.0);
     }
     // ------------------------------------------------------------- tracks
 

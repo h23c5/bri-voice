@@ -111,7 +111,7 @@ tools/      构建脚本与测试工具
 ## 七、技术规格
 
 - 包名：**com.bri.voice**
-- 版本：9.4（versionCode 84）
+- 版本：12.0（versionCode 96）
 - minSdk：**21**（Android 5.0）
 - targetSdk：**34**（Android 14）
 - 渲染速度：约 **24–49× 实时**（44.1 kHz 单声道）
@@ -120,7 +120,11 @@ tools/      构建脚本与测试工具
 
 ## 八、许可证
 
-MIT（仅覆盖源代码）。声库数据与第三方权利的说明见 [NOTICE.md](NOTICE.md)。
+**GPLv3**（GNU General Public License v3.0）。自 **v12.0** 起本软件改用 GPLv3；此前版本（≤ 11.1.2）仍为 MIT。
+全文见 [LICENSE](LICENSE)，声库数据与第三方权利的说明见 [NOTICE.md](NOTICE.md)。
+
+> GPLv3 覆盖仓库内的源代码与随包发布的程序本体。注意：因为本仓库刻意不包含任何商业声库数据（见 NOTICE），
+> **分发的 APK 需自行移除内置声库**，或者由分发者自行解决声库的授权，GPLv3 不会为声库数据授予任何权利。
 
 ---
 

@@ -1,9 +1,9 @@
 {
-  "versionCode": 95,
-  "versionName": "11.1.2",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v11.1.2/BriVoice-11.1.2.apk",
-  "sha256": "7ee8f8d76dcad9457e41e24a3b345c108fb6fcad97c13ea7637656a7bf05f88b",
-  "size": 784914,
-  "notes": "release 11.1.2：修复批量填入歌词的位置。以前是从播放光标开始填，选中音符后再填会把文字放到别处；光标在最后一个音符之后时还会跳回第一个音符，看起来像没生效。现在从选中的音符开始逐字往后填，没有选中音符时才用光标定位。另外填入的是原文（汉字/假名保持不变），不再先转成拼音——之前卷帘上显示的是 romanisation，日文汉字还会被中文拼音表顶掉；音素由渲染端从字本身推导。",
-  "publishedAt": "2026-11-25 16:34:54"
+  "versionCode": 96,
+  "versionName": "12.0",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v12.0/BriVoice-12.0.apk",
+  "sha256": "3780d4ae7e9bdda4bbbcab794b497855a0c56784a5e4bdbf9df17c272113461c",
+  "size": 793106,
+  "notes": "release 12.0：插件机架改成拟物化面板——参数从滑块换成一圈 270° 行程的旋钮（刻度、指针、读数、刻字），旁路做成带独立 LED 的摇摆开关，整块面板是带刻线和螺丝的金属板。旋钮上下一拖就能调，拖的时候指针变白。同时从本版本起，许可证由 MIT 改为 GPLv3；11.1.2 及更早的版本仍按 MIT 发布。",
+  "publishedAt": "2026-11-25 17:22:22"
 }

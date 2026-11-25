@@ -1,11 +1,19 @@
-# 关于声库数据与第三方权利 / Voice data notice
+# 关于许可证、声库数据与第三方权利 / License & voice data notice
+
+## 许可证变更（v12.0）
+
+自 **v12.0** 起，本项目整体改为 **GPLv3**（GNU General Public License v3.0），全文见 [LICENSE](LICENSE)。
+**v11.1.2 及更早的版本仍按 MIT 发布**，已经拿到那些版本的人不受影响。
+
+GPLv3 只覆盖**本仓库中的源代码**。它不会、也不能为下表里的声库数据授予任何权利——
+如果你要再分发本程序，请一并遵守声库本身的使用条款（多数商业声库禁止再分发参数包）。
 
 本仓库**只包含程序源代码**，刻意不包含任何从商业声库派生的数据：
 
 | 内容 | 是否包含 | 说明 |
 |---|---|---|
-| `app/src/**` 源码 | 是 | MIT 许可 |
-| `tools/**` 脚本 | 是 | MIT 许可 |
+| `app/src/**` 源码 | 是 | GPLv3（v12.0 起） |
+| `tools/**` 脚本 | 是 | GPLv3（v12.0 起） |
 | `app/assets/dict/pinyin.txt.gz` | 是 | 由 **Unicode Unihan** 数据库生成，Unicode License 允许再分发 |
 | `app/assets/singers/*.v4voice`（内置声库） | **否** | 从作者本机已授权声库测量得到的参数化数据 |
 | `dist/*.apk`、`dist/*.zip` | **否** | 构建产物，内含上述声库数据 |
