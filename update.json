@@ -2,8 +2,8 @@
   "versionCode": 96,
   "versionName": "12.0",
   "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v12.0/BriVoice-12.0.apk",
-  "sha256": "3780d4ae7e9bdda4bbbcab794b497855a0c56784a5e4bdbf9df17c272113461c",
+  "sha256": "5824ebdb1820dff007b449e3ac82db1592606ed8a985e5f3f0bbc6ba916a5775",
   "size": 793106,
   "notes": "release 12.0：插件机架改成拟物化面板——参数从滑块换成一圈 270° 行程的旋钮（刻度、指针、读数、刻字），旁路做成带独立 LED 的摇摆开关，整块面板是带刻线和螺丝的金属板。旋钮上下一拖就能调，拖的时候指针变白。同时从本版本起，许可证由 MIT 改为 GPLv3；11.1.2 及更早的版本仍按 MIT 发布。",
-  "publishedAt": "2026-11-25 17:22:22"
+  "publishedAt": "2026-11-25 17:25:24"
 }
