@@ -1,9 +1,9 @@
 {
-  "versionCode": 102,
-  "versionName": "12.3",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v12.3/BriVoice-12.3.apk",
-  "sha256": "b32e0546737938b6879aa33710d38a06ef84d100e64004e552299d627d77f424",
+  "versionCode": 103,
+  "versionName": "12.3.1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v12.3.1/BriVoice-12.3.1.apk",
+  "sha256": "7db97fb5b446b876279a3026b37d75e21b7da1a433b92d32471f36d66bd885d5",
   "size": 817682,
-  "notes": "release 12.3：新增开始界面——新建 / 打开 / 歌手管理器 / 更多（设置、教程、Gitee、B 站、关于），底下直接列出最近 5 个工程；点一行就进编辑器。",
-  "publishedAt": "2026-11-26 13:04:18"
+  "notes": "release 12.3.1：音高线（PIT）按半音显示与吸附，控制点可以左右拖；画笔/直线/拖点都能落到整半音，画颤音时可关闭。",
+  "publishedAt": "2026-11-26 22:12:57"
 }

@@ -47,8 +47,8 @@ public class ParamView extends View {
     private int tool = TOOL_PENCIL;
     /** one-finger pan of the tuning lane (select tool) */
     private float panStartX, panStartTick;
-    private final float[] toolX = new float[3];
-    private final float[] toolW = new float[3];
+    private final float[] toolX = new float[4];   // pencil / line / select / snap
+    private final float[] toolW = new float[4];
     private float toolTop, toolBot, toolLeft;
     private int toolHit = -1;
     private int toolPressed = -1;
@@ -61,6 +61,10 @@ public class ParamView extends View {
     private double lineV0, lineV1;
     /** index of the point picked by the select tool, -1 when nothing is selected */
     private int selIdx = -1;
+    /** the picked point itself: it survives sorting while the user drags it in both axes */
+    private ControlCurve.P selPoint;
+    /** PIT only: snap values to whole semitones while drawing / dragging (v12.3.1) */
+    private boolean snapOn;
 
     private float density;
     private float chipH, chipPad, chipGap, areaTop;
@@ -79,7 +83,7 @@ public class ParamView extends View {
     private boolean pendingRange;
     private long pendingFrom, pendingTo;
 
-    private Paint bgP, partBgP, outP, edgeP, gridP, defP, curveP, fillP, ptP, hotP, playP, chipBgP, chipTxtP;
+    private Paint bgP, partBgP, outP, edgeP, gridP, gridMajorP, defP, curveP, fillP, ptP, hotP, playP, chipBgP, chipTxtP;
     private Paint labelP, labelBgP, valP, valBgP, emptyP, chipOnP, chipBarP, chipLineP;
     private Paint.FontMetrics valFm, labelFm, chipFm;
     private float valMid, labelMid, chipMid;
@@ -120,6 +124,7 @@ public class ParamView extends View {
         outP = Theme.paint(0x88000000, 0f, true);
         edgeP = Theme.paint(Theme.withAlpha(Theme.ACCENT2, 0x99), hair, false);
         gridP = Theme.paint(Theme.GRID, hair, false);
+        gridMajorP = Theme.paint(Theme.withAlpha(Theme.TEXT_DIM, 0x33), hair, false);
         defP = Theme.dashPaint(Theme.withAlpha(Theme.TEXT_DIM, 0x88), hair, dp(5f), dp(5f));
         curveP = Theme.paint(Theme.ACCENT, Math.max(1.5f, density * 1.6f), false);
         curveP.setStrokeCap(Paint.Cap.ROUND);
@@ -171,6 +176,8 @@ public class ParamView extends View {
         if (id.equals(paramId)) return;
         paramId = id;
         hasLast = false;
+        selIdx = -1;
+        selPoint = null;
         ensureChipVisible(pi());
         invalidate();
     }
@@ -226,6 +233,12 @@ public class ParamView extends View {
     private double clampV(double v) { double a = vmin(), b = vmax(); if (v < a) return a; if (v > b) return b;
         return v;
     }
+
+    /** true when the lane shows the pitch curve; the pitch lane gets semitone grid and snap */
+    private boolean isPitch() { return "PIT".equals(paramId); }
+
+    /** snap to whole semitones only on the pitch lane, and only when the snap button is on */
+    private double snapV(double v) { return isPitch() ? PitchMath.snap(v, snapOn) : v; }
 
     private float visibleTicks() { float w = getWidth() - leftInset; float v = (w > 1f ? w : getWidth()) / pxPerTick; return v < 1f ? 1f : v; }
 
@@ -335,8 +348,8 @@ public class ParamView extends View {
     /** line tool: lay a straight, evenly sampled segment between the two ends */
     private void commitLine(float top, float bot) {
         long a = Math.min(lineT0, lineT1), b = Math.max(lineT0, lineT1);
-        double va = (lineT0 <= lineT1) ? lineV0 : lineV1;
-        double vb = (lineT0 <= lineT1) ? lineV1 : lineV0;
+        double va = snapV((lineT0 <= lineT1) ? lineV0 : lineV1);
+        double vb = snapV((lineT0 <= lineT1) ? lineV1 : lineV0);
         if (b <= a) { put(a, va); }
         else {
             long its = (long) Math.max(1d, Math.round(dp(4f) / Math.max(0.02f, pxPerTick)));
@@ -362,14 +375,14 @@ public class ParamView extends View {
     private void markLast(long t, double v) { hasLast = true; lastTick = t; lastVal = v; }
 
     private void paintTo(float x, float y, float top, float bot) { long t = clampTick((long) tickAtX(x));
-        double v = clampV(vAtY(top, bot, y));
+        double v = snapV(clampV(vAtY(top, bot, y)));
         float dx = x - lastPaintX;
         if (Math.abs(dx) >= dp(4f)) { long its = (long) Math.max(1d, Math.round(dp(4f) / pxPerTick));
             long d = t - lastPaintTick;
             if (d != 0L) { long steps = Math.abs(d) / its; if (steps > 512L) steps = 512L;
                 for (long i = 1L; i <= steps; i++) { long tt = lastPaintTick + (d > 0L ? i * its : -i * its);
                     double f = (double) (tt - lastPaintTick) / (double) d;
-                    put(tt, clampV(lastPaintVal + (v - lastPaintVal) * f));
+                    put(tt, snapV(clampV(lastPaintVal + (v - lastPaintVal) * f)));
                 }
             }
             put(t, v);
@@ -436,9 +449,12 @@ public class ParamView extends View {
         }
         if (tool == TOOL_SELECT) {
             selIdx = nearestPoint(x, y, top, bot);
-            if (selIdx >= 0) {
+            ControlCurve sc = (part == null) ? null : part.ctrlOrNull(paramId);
+            selPoint = (sc != null && selIdx >= 0 && selIdx < sc.pts.size()) ? sc.pts.get(selIdx) : null;
+            if (selPoint != null) {
                 mode = MODE_DRAGPT;
                 cancelPress();
+                markLast(selPoint.t, selPoint.v);
                 invalidate();
             } else {
                 // nothing under the finger: dragging the lane scrolls the timeline instead
@@ -450,7 +466,7 @@ public class ParamView extends View {
         }
         if (tool == TOOL_LINE) {
             lineT0 = lineT1 = clampTick((long) tickAtX(x));
-            lineV0 = lineV1 = clampV(vAtY(top, bot, y));
+            lineV0 = lineV1 = snapV(clampV(vAtY(top, bot, y)));
             linePreview = true;
             mode = MODE_LINE;
             invalidate();
@@ -471,7 +487,7 @@ public class ParamView extends View {
                 }
                 if (mode == MODE_LINE) {
                     lineT1 = clampTick((long) tickAtX(x));
-                    lineV1 = clampV(vAtY(top, bot, y));
+                    lineV1 = snapV(clampV(vAtY(top, bot, y)));
                     invalidate();
                     return true;
                 }
@@ -484,9 +500,15 @@ public class ParamView extends View {
                 }
                 if (mode == MODE_DRAGPT) {
                     ControlCurve cc = (part == null) ? null : part.ctrlOrNull(paramId);
-                    if (cc != null && selIdx >= 0 && selIdx < cc.pts.size()) {
-                        cc.pts.get(selIdx).v = clampV(vAtY(top, bot, y));
+                    if (cc != null && selPoint != null) {
+                        // v12.3.1: move the point in time as well as in pitch/value - before this it
+                        // could only go up and down, so fixing a point's position meant deleting and
+                        // redrawing it. Sorting while dragging keeps the preview monotonic.
+                        selPoint.t = clampTick((long) tickAtX(x));
+                        selPoint.v = snapV(clampV(vAtY(top, bot, y)));
+                        cc.sort();
                         paintDirty = true;
+                        markLast(selPoint.t, selPoint.v);
                         invalidate();
                     }
                     return true;
@@ -518,8 +540,13 @@ public class ParamView extends View {
                 cancelPress();
                 if (toolPressed >= 0) {              // a tap on the floating bar only switches tools
                     if (!moved && toolAt(x, y) == toolPressed) {
-                        tool = toolPressed;
-                        selIdx = -1;
+                        if (toolPressed == 3) {
+                            snapOn = !snapOn;          // pitch lane: toggle semitone snap, keep the tool
+                        } else {
+                            tool = toolPressed;
+                            selIdx = -1;
+                            selPoint = null;
+                        }
                     }
                     toolPressed = -1;
                     mode = MODE_NONE;
@@ -541,7 +568,10 @@ public class ParamView extends View {
                     return true;
                 }
                 if (mode == MODE_DRAGPT) {
-                    finishStroke();
+                    ControlCurve cc = (part == null) ? null : part.ctrlOrNull(paramId);
+                    if (cc != null) cc.sort();
+                    paintDirty = false;
+                    if (listener != null) listener.onCurveEdited(paramId);
                     mode = MODE_NONE;
                     invalidate();
                     performClick();
@@ -549,7 +579,7 @@ public class ParamView extends View {
                 }
                 if (mode == MODE_CHIP) { if (!moved && chipHit >= 0 && chipAt(x) == chipHit) selectChip(chipHit);
                 } else if (mode == MODE_PAINT && !longFired) { long t = clampTick((long) tickAtX(x));
-                    double v = clampV(vAtY(top, bot, y));
+                    double v = snapV(clampV(vAtY(top, bot, y)));
                     put(t, v);
                     markLast(t, v);
                     finishStroke();
@@ -624,10 +654,11 @@ public class ParamView extends View {
             curveP.setStrokeWidth(dp(2f));
             c.drawLine(x0, yOfV(top, bot, lineV0), x1, yOfV(top, bot, lineV1), curveP);
         }
-        if (tool == TOOL_SELECT && selIdx >= 0) {
+        if (tool == TOOL_SELECT && selPoint != null) {
             ControlCurve cc = (part == null) ? null : part.ctrlOrNull(paramId);
-            if (cc != null && selIdx < cc.pts.size()) {
-                ControlCurve.P sp = cc.pts.get(selIdx);
+            if (cc != null && cc.pts.contains(selPoint)) {
+                ControlCurve.P sp = selPoint;
+                selIdx = cc.pts.indexOf(selPoint);
                 float sx = xOfTick(sp.t), sy = yOfV(top, bot, sp.v);
                 hotP.setColor(Theme.ACCENT2);
                 hotP.setStyle(Paint.Style.STROKE);
@@ -647,11 +678,17 @@ public class ParamView extends View {
         if (r < w) c.drawRect(r, top, w, bot, outP);
         if (px0 >= 0f && px0 <= w) c.drawLine(px0, top, px0, bot, edgeP);
         if (px1 >= 0f && px1 <= w) c.drawLine(px1, top, px1, bot, edgeP);
-        double vmn = vmin(), vmx = vmax(), st = vstep();
+        // v12.3.1: the pitch lane is read in semitones, so its grid is one line per semitone and a
+        // brighter line per octave instead of the coarse 600-cent grid the other params use.
+        double vmn = vmin(), vmx = vmax(), st = isPitch() ? PitchMath.SEMITONE : vstep();
         if (st > 0) { int guard = 0;
             for (double v = Math.ceil(vmn / st) * st; v < vmx && guard < 512; v += st, guard++) {
                 float y = yOfV(top, bot, v);
-                if (y > top + 0.5f && y < bot - 0.5f) c.drawLine(0f, y, w, y, gridP);
+                if (y > top + 0.5f && y < bot - 0.5f) {
+                    boolean octave = isPitch() && Math.abs(v % PitchMath.OCTAVE) < 1e-6;
+                    if (octave && Math.abs(v) > 1e-6) c.drawLine(0f, y, w, y, gridMajorP);
+                    else c.drawLine(0f, y, w, y, gridP);
+                }
             }
         }
         float yd = yOfV(top, bot, vdef());
@@ -704,17 +741,18 @@ public class ParamView extends View {
 
     private void valueLabel(Canvas c, double v, float top, float bot) { float y = yOfV(top, bot, v);
         if (y < top + dp(2f) || y > bot - dp(2f)) return;
-        int len = fmtInt(Math.round(v));
-        float tw = labelP.measureText(numBuf, 0, len);
+        String text = isPitch() ? PitchMath.cents(v) : Integer.toString((int) Math.round(v));
+        float tw = labelP.measureText(text);
         float bh = dp(13f);
         float by = Math.min(Math.max(y - bh * 0.5f, top + dp(1f)), bot - bh - dp(1f));
         Theme.rr(c, dp(3f), by, dp(3f) + tw + dp(8f), by + bh, dp(2.5f), labelBgP);
-        c.drawText(numBuf, 0, len, dp(7f), by + bh * 0.5f - labelMid, labelP);
+        c.drawText(text, dp(7f), by + bh * 0.5f - labelMid, labelP);
     }
 
-    private void drawValueBadge(Canvas c, int w, float top, float bot) { int len = fmtInt(Math.round(lastVal));
+    private void drawValueBadge(Canvas c, int w, float top, float bot) {
         String nm = (pi() < 0) ? paramId : IDS[pi()];
-        float nw = valP.measureText(nm), vw = valP.measureText(numBuf, 0, len);
+        String val = isPitch() ? PitchMath.label(lastVal) : Integer.toString((int) Math.round(lastVal));
+        float nw = valP.measureText(nm), vw = valP.measureText(val);
         float bw = nw + vw + dp(18f), bh = dp(20f);
         float hx = xOfTick(lastTick), hy = yOfV(top, bot, lastVal);
         float bx = Math.min(Math.max(hx + dp(9f), dp(2f)), Math.max(dp(2f), w - bw - dp(2f)));
@@ -723,23 +761,28 @@ public class ParamView extends View {
         valP.setColor(Theme.TEXT_DIM);
         c.drawText(nm, bx + dp(7f), by + bh * 0.5f - valMid, valP);
         valP.setColor(col());
-        c.drawText(numBuf, 0, len, bx + dp(7f) + nw + dp(4f), by + bh * 0.5f - valMid, valP);
+        c.drawText(val, bx + dp(7f) + nw + dp(4f), by + bh * 0.5f - valMid, valP);
     }
 
     /** three little buttons floating over the top-right corner of the curve area */
     private void drawToolBar(Canvas c, int w, float top) {
         String[] names = {L.t("param.tool.pencil"), L.t("param.tool.line"), L.t("param.tool.select")};
+        int nTools = 3;
+        if (isPitch()) {                       // v12.3.1: pitch lane gets a semitone-snap toggle
+            names = new String[]{names[0], names[1], names[2], L.t("param.tool.snap")};
+            nTools = 4;
+        }
         float h = dp(22f), gap = dp(4f), pad = dp(6f);
         float bw = 0f;
-        for (String n : names) bw = Math.max(bw, toolTxtP.measureText(n) + dp(14f));
+        for (int i = 0; i < nTools; i++) bw = Math.max(bw, toolTxtP.measureText(names[i]) + dp(14f));
         toolTop = top + dp(6f);
         toolBot = toolTop + h;
-        toolLeft = w - pad - (bw * 3 + gap * 2);
+        toolLeft = w - pad - (bw * nTools + gap * (nTools - 1));
         float x = toolLeft;
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < nTools; i++) {
             toolX[i] = x;
             toolW[i] = bw;
-            boolean on = (tool == i);
+            boolean on = (i == 3) ? snapOn : (tool == i);
             toolBgP.setColor(on ? Theme.ACCENT : 0xE01A1E28);
             Theme.rr(c, x, toolTop, x + bw, toolBot, dp(7f), toolBgP);
             toolTxtP.setColor(on ? Theme.ON_PRIMARY : Theme.TEXT_DIM);
@@ -760,7 +803,8 @@ public class ParamView extends View {
 
     private int toolAt(float x, float y) {
         if (y < toolTop || y > toolBot) return -1;
-        for (int i = 0; i < 3; i++) {
+        int nTools = isPitch() ? 4 : 3;
+        for (int i = 0; i < nTools; i++) {
             if (x >= toolX[i] && x <= toolX[i] + toolW[i]) return i;
         }
         return -1;

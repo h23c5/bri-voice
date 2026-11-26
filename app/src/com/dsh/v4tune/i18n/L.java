@@ -368,7 +368,7 @@ public final class L {
         {"bank.bri.save.title", "导出模型备份", "Export model bundle", "モデルを書き出す"},
 
         // ------------------------------------------------ start screen (v12.3)
-        {"start.version", "v12.3 · 歌声合成工作站", "v12.3 · singing synthesizer", "v12.3 · 歌声合成ワークステーション"},
+        {"start.version", "v12.3.1 · 歌声合成工作站", "v12.3.1 · singing synthesizer", "v12.3.1 · 歌声合成ワークステーション"},
         {"start.subtitle", "先选一个开始方式。工程、声库和导出的 WAV 都在本机，不会上传。", "Pick how to start. Projects, voicebanks and exported WAVs stay on this device.", "始め方を選んでください。プロジェクト・声庫・書き出した WAV はこの端末内に留まります。"},
         {"start.new", "新建工程", "New project", "新規プロジェクト"},
         {"start.new.sub", "从空白的音轨开始", "Start from an empty track", "空のトラックから始める"},
@@ -478,6 +478,7 @@ public final class L {
         {"param.tool.pencil", "画笔", "Draw", "ペン"},
         {"param.tool.line", "直线", "Line", "直線"},
         {"param.tool.select", "选择", "Select", "選択"},
+{"param.tool.snap", "吸附", "Snap", "スナップ"},
         {"status.packs.loading", "正在载入声库，请稍候…载入完成后会自动开始播放", "Loading voicebanks, playback starts when ready", "声庫を読み込み中です。完了後に自動的に再生します"},
         {"singer.tag.builtin", "（内置）", "(bundled)", "（同梱）"},
         {"transport.fromstart", "从头播放", "From Start", "最初から再生"},
