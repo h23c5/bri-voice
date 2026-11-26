@@ -100,24 +100,24 @@ public final class VoicebankManager {
 
         root.addView(sectionLabel(a, L.t("bank.actions")));
         root.addView(actionRow(a,
-                action(a, L.t("bank.importFile"), true, new View.OnClickListener() {
+                action(a, L.t("bank.import.file"), true, new View.OnClickListener() {
                     public void onClick(View x) { close(self); host.importFile(); }
                 }),
-                action(a, L.t("bank.importFolder"), false, new View.OnClickListener() {
+                action(a, L.t("bank.import.folder"), false, new View.OnClickListener() {
                     public void onClick(View x) { close(self); host.importFolder(); }
                 })));
         root.addView(actionRow(a,
-                action(a, L.t("bank.exportBri"), false, new View.OnClickListener() {
+                action(a, L.t("bank.export.bri"), false, new View.OnClickListener() {
                     public void onClick(View x) { close(self); host.exportBundle(); }
                 }),
-                action(a, L.t("bank.importBri"), false, new View.OnClickListener() {
+                action(a, L.t("bank.import.bri"), false, new View.OnClickListener() {
                     public void onClick(View x) { close(self); host.importBundle(); }
                 })));
         root.addView(actionRow(a,
-                action(a, L.t("bank.exportTune"), false, new View.OnClickListener() {
+                action(a, L.t("bank.export.tune"), false, new View.OnClickListener() {
                     public void onClick(View x) { close(self); host.exportTune(); }
                 }),
-                action(a, L.t("bank.exportBase"), false, new View.OnClickListener() {
+                action(a, L.t("bank.export.base"), false, new View.OnClickListener() {
                     public void onClick(View x) { close(self); host.exportBriNetingBase(); }
                 })));
         root.addView(actionRow(a,

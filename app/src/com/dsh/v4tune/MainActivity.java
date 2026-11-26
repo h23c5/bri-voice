@@ -302,7 +302,15 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         if (!getSharedPreferences("brivoice", MODE_PRIVATE).getBoolean("onboarded", false)) {
             ui.postDelayed(new Runnable() { public void run() { if (!isFinishing()) showOnboarding(); } }, 2200L);
         }
+        boolean openedFromFile = getIntent() != null
+                && Intent.ACTION_VIEW.equals(getIntent().getAction());
         handleViewIntent(getIntent());
+        // v12.3: the start screen comes first, unless the app was opened *with* a project
+        if (!openedFromFile) {
+            ui.postDelayed(new Runnable() {
+                public void run() { if (!isFinishing()) showStartScreen(); }
+            }, 350L);
+        }
     }
 
     private void loadDictionary() {
@@ -2855,11 +2863,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     + " · " + (parts.get(0).size / 1024) + " KB";
         }
         com.dsh.v4tune.ui.Dialogs.builder(this)
-                .setTitle(kind == null ? L.t("bank.bri.saveTitle") : L.t("bank.bri.saveTitle"))
+                .setTitle(kind == null ? L.t("bank.bri.save.title") : L.t("bank.bri.save.title"))
                 .setMessage(body)
-                .setPositiveButton(kind == null ? L.t("bank.exportBri")
+                .setPositiveButton(kind == null ? L.t("bank.export.bri")
                         : (com.dsh.v4tune.io.BriBundle.KIND_BASE.equals(kind)
-                            ? L.t("bank.exportBase") : L.t("bank.exportTune")),
+                            ? L.t("bank.export.base") : L.t("bank.export.tune")),
                         new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface d, int w) { pickBriSave(kind); }
                 })
@@ -2958,14 +2966,14 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             opened = com.dsh.v4tune.io.BriBundle.open(this, fin);   // keeps parsed models, installs nothing
         } catch (Throwable t) {
             tmp.delete();
-            status(L.t("bank.bri.importFailed", msgOf(t)));
-            toast(L.t("bank.bri.importFailed", msgOf(t)));
+            status(L.t("bank.bri.import.failed", msgOf(t)));
+            toast(L.t("bank.bri.import.failed", msgOf(t)));
             return;
         }
         tmp.delete();
         com.dsh.v4tune.ui.Dialogs.builder(this)
-                .setTitle(L.t("bank.bri.importTitle"))
-                .setMessage(L.t("bank.bri.importAsk", opened.text) + "\n\n" + L.t("bank.bri.modeAsk"))
+                .setTitle(L.t("bank.bri.import.title"))
+                .setMessage(L.t("bank.bri.import.ask", opened.text) + "\n\n" + L.t("bank.bri.mode.ask"))
                 .setPositiveButton(L.t("bank.bri.replace"), new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface d, int w) { applyBriReplace(opened); }
                 })
@@ -2986,8 +2994,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             toast(L.t("bank.bri.imported", opened.text));
         } catch (Throwable t) {
             com.dsh.v4tune.io.BriBundle.discard(opened);
-            status(L.t("bank.bri.importFailed", msgOf(t)));
-            toast(L.t("bank.bri.importFailed", msgOf(t)));
+            status(L.t("bank.bri.import.failed", msgOf(t)));
+            toast(L.t("bank.bri.import.failed", msgOf(t)));
         }
     }
 
@@ -2999,8 +3007,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             toast(L.t("bank.bri.merged", opened.text));
         } catch (Throwable t) {
             com.dsh.v4tune.io.BriBundle.discard(opened);
-            status(L.t("bank.bri.importFailed", msgOf(t)));
-            toast(L.t("bank.bri.importFailed", msgOf(t)));
+            status(L.t("bank.bri.import.failed", msgOf(t)));
+            toast(L.t("bank.bri.import.failed", msgOf(t)));
         }
     }
 
@@ -3375,6 +3383,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             ProjectIO.savePath(f, song);
             currentUri = null;
             projectName = ProjectIO.sanitize(name);
+            noteRecent(f);
             dirty = false;
             status("已保存到 " + f.getAbsolutePath());
             toast("已保存到 " + Storage.ROOT_NAME + "/projects");
@@ -3723,6 +3732,172 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
     // ---------------------------------------------------------------- batch lyrics end
 
+    // ------------------------------------------------------------- start screen (v12.3)
+
+    private com.dsh.v4tune.ui.StartScreen startScreen;
+    /** preference key: one recent project per line, tab separated path / label / time */
+    private static final String RECENT_PREF = "recentProjects";
+    private static final int RECENT_MAX = 5;
+
+    /** full-screen entry point: four ways in, plus the five most recent projects */
+    private void showStartScreen() {
+        if (startScreen != null && startScreen.isShowing()) return;
+        startScreen = new com.dsh.v4tune.ui.StartScreen(this,
+                new com.dsh.v4tune.ui.StartScreen.Host() {
+            public void startNew() { newProject(); }
+            public void startOpen() { openProject(); }
+            public void startSingers() { managePacks(); }
+            public void startSettings() { settingsDialog(); }
+            public void startTutorial() { showTutorial(); }
+            public void startGitee() { openUrl("https://gitee.com/h23c5/bri-voice"); }
+            public void startBilibili() { openUrl("https://space.bilibili.com/3461562746538484"); }
+            public void startAbout() { about(); }
+
+            public java.util.List<com.dsh.v4tune.ui.StartScreen.Recent> startRecents() {
+                return recentProjects();
+            }
+
+            public void startRecent(com.dsh.v4tune.ui.StartScreen.Recent r) { openRecent(r); }
+        });
+        startScreen.show();
+    }
+
+    private void openUrl(String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (Throwable t) {
+            toast("没有可用的浏览器：" + msgOf(t));
+        }
+    }
+
+    /** remember a project picked through the system file picker (content:// keeps its Uri) */
+    private void noteRecentUri(Uri uri, String label) {
+        if (uri == null) return;
+        String path = uri.toString();
+        if ("file".equals(uri.getScheme()) && uri.getPath() != null) {
+            noteRecent(new File(uri.getPath()));
+            return;
+        }
+        try {
+            String old = getSharedPreferences("brivoice", MODE_PRIVATE).getString(RECENT_PREF, "");
+            StringBuilder sb = new StringBuilder();
+            sb.append(path).append('\t').append(label == null ? "工程" : label)
+                    .append('\t').append(System.currentTimeMillis());
+            int kept = 1;
+            if (old != null) {
+                for (String line : old.split("\n")) {
+                    if (line.trim().isEmpty()) continue;
+                    int t = line.indexOf('\t');
+                    if (t <= 0) continue;
+                    if (line.substring(0, t).equals(path)) continue;
+                    if (kept >= RECENT_MAX) continue;
+                    sb.append('\n').append(line);
+                    kept++;
+                }
+            }
+            getSharedPreferences("brivoice", MODE_PRIVATE).edit().putString(RECENT_PREF, sb.toString()).apply();
+        } catch (Throwable ignored) { }
+    }
+
+    /** remember a saved project so the start screen can offer it again */
+    private void noteRecent(File f) {
+        if (f == null || !f.isFile()) return;
+        try {
+            String path = f.getAbsolutePath();
+            String label = baseName(f.getName());
+            String old = getSharedPreferences("brivoice", MODE_PRIVATE).getString(RECENT_PREF, "");
+            StringBuilder sb = new StringBuilder();
+            sb.append(path).append('\t').append(label).append('\t').append(System.currentTimeMillis());
+            int kept = 1;
+            if (old != null) {
+                for (String line : old.split("\n")) {
+                    if (line.trim().isEmpty()) continue;
+                    int t = line.indexOf('\t');
+                    if (t <= 0) continue;
+                    if (line.substring(0, t).equals(path)) continue;
+                    if (kept >= RECENT_MAX) continue;
+                    sb.append('\n').append(line);
+                    kept++;
+                }
+            }
+            getSharedPreferences("brivoice", MODE_PRIVATE).edit().putString(RECENT_PREF, sb.toString()).apply();
+        } catch (Throwable ignored) { }
+    }
+
+    /** recent projects: the saved list first, then anything in BriVoice_root/projects, newest first */
+    private java.util.List<com.dsh.v4tune.ui.StartScreen.Recent> recentProjects() {
+        java.util.LinkedHashMap<String, com.dsh.v4tune.ui.StartScreen.Recent> map =
+                new java.util.LinkedHashMap<String, com.dsh.v4tune.ui.StartScreen.Recent>();
+        String raw = getSharedPreferences("brivoice", MODE_PRIVATE).getString(RECENT_PREF, "");
+        if (raw != null) {
+            for (String line : raw.split("\n")) {
+                if (line.trim().isEmpty()) continue;
+                String[] parts = line.split("\t");
+                if (parts.length < 2) continue;
+                String stored = parts[0];
+                java.io.File f = stored.startsWith("content://") ? null : new File(stored);
+                if (f != null && (!f.isFile() || f.length() == 0)) continue;  // gone or half-written: not openable
+                long time = f == null ? 0L : f.lastModified();
+                if (parts.length >= 3) {
+                    try { time = Long.parseLong(parts[2].trim()); } catch (Throwable ignored) { }
+                }
+                map.put(stored, new com.dsh.v4tune.ui.StartScreen.Recent(parts[1], stored, time,
+                        f == null ? 0L : f.length()));
+            }
+        }
+        File dir = Storage.projects(this);
+        File[] files = dir == null ? null : dir.listFiles();
+        if (files != null) {
+            java.util.Arrays.sort(files, new java.util.Comparator<File>() {
+                public int compare(File x, File y) { return Long.compare(y.lastModified(), x.lastModified()); }
+            });
+            for (File f : files) {
+                if (f == null || !f.isFile() || f.length() == 0) continue;   // empty = interrupted save, not a project
+                if (!f.getName().toLowerCase(java.util.Locale.US).endsWith(".vsqx")) continue;
+                String path = f.getAbsolutePath();
+                if (map.containsKey(path)) continue;
+                map.put(path, new com.dsh.v4tune.ui.StartScreen.Recent(
+                        baseName(f.getName()), path, f.lastModified(), f.length()));
+            }
+        }
+        java.util.ArrayList<com.dsh.v4tune.ui.StartScreen.Recent> out =
+                new java.util.ArrayList<com.dsh.v4tune.ui.StartScreen.Recent>(map.values());
+        java.util.Collections.sort(out, new java.util.Comparator<com.dsh.v4tune.ui.StartScreen.Recent>() {
+            public int compare(com.dsh.v4tune.ui.StartScreen.Recent x,
+                               com.dsh.v4tune.ui.StartScreen.Recent y) {
+                return Long.compare(y.time, x.time);
+            }
+        });
+        while (out.size() > RECENT_MAX) out.remove(out.size() - 1);
+        return out;
+    }
+
+    private void openRecent(com.dsh.v4tune.ui.StartScreen.Recent r) {
+        if (r == null) return;
+        boolean content = r.path != null && r.path.startsWith("content://");
+        java.io.File f = content ? null : new File(r.path);
+        if (f != null && (!f.isFile() || f.length() == 0)) {
+            toast("这个工程文件不见了（可能被移动或删掉）");
+            return;
+        }
+        try {
+            beginEdit();
+            song = content ? ProjectIO.open(this, Uri.parse(r.path)) : ProjectIO.openPath(f);
+            commitEdit();
+            currentUri = null;
+            projectName = r.label;
+            trackIndex = 0;
+            chooseInitialVoice();
+            refreshAll();
+            scrollToContent();
+            if (f != null) noteRecent(f); else noteRecentUri(Uri.parse(r.path), r.label);
+            status("已打开 " + r.label + "（" + song.tracks.size() + " 轨 / " + countNotes() + " 音符）");
+        } catch (Throwable t) {
+            toast("打开失败：" + msgOf(t));
+            status("打开失败：" + msgOf(t));
+        }
+    }
+
     private void openProject() {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
@@ -3849,6 +4024,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             currentUri = uri;
             projectName = (name == null) ? "未命名" : name.replaceAll("\\.[A-Za-z0-9]+$", "");
             trackIndex = 0;
+            noteRecentUri(uri, projectName);
             chooseInitialVoice();
             refreshAll();
             scrollToContent();
@@ -3908,6 +4084,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 String last = uri.getLastPathSegment();
                 projectName = last == null ? "未命名" : last.replaceAll("\\.[A-Za-z0-9]+$", "");
                 trackIndex = 0;
+                noteRecentUri(uri, projectName);
                 refreshAll();
                 scrollToContent();
                 status("已打开 " + last + "（" + song.tracks.size() + " 轨 / " + countNotes() + " 音符）");
@@ -3920,6 +4097,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             try {
                 ProjectIO.save(this, uri, song);
                 currentUri = uri;
+                noteRecentUri(uri, projectName);
                 status("已保存");
                 toast("已保存");
             } catch (Exception e) {
