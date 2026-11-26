@@ -82,7 +82,7 @@ public final class RecordWizard {
         ScrollView sc = new ScrollView(act);
         sc.addView(root);
         dlg = new AlertDialog.Builder(act)
-                .setTitle("录音向导（v11.0.1）")
+                .setTitle("录音向导（v12.2）")
                 .setView(sc)
                 .setNegativeButton("关闭", new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface d, int w) { abortMic(); }
@@ -127,21 +127,24 @@ public final class RecordWizard {
 
         sectionTitle("录音清单");
         LinearLayout levels = row();
-        final Button[] vv = new Button[2];
-        for (int i = 0; i < 2; i++) {
+        final int nLevels = 3;
+        final Button[] vv = new Button[nLevels];
+        for (int i = 0; i < nLevels; i++) {
             final int idx = i;
             vv[i] = small((i == level ? "● " : "") + RecordGuide.levelName(i));
             vv[i].setOnClickListener(new View.OnClickListener() {
                 public void onClick(View v) {
                     level = idx;
                     items = RecordGuide.items(lang, level);
-                    for (int j = 0; j < 2; j++) vv[j].setText((j == level ? "● " : "") + RecordGuide.levelName(j));
+                    for (int j = 0; j < nLevels; j++) vv[j].setText((j == level ? "● " : "") + RecordGuide.levelName(j));
                 }
             });
             levels.addView(vv[i]);
         }
         page.addView(levels);
-        text("快速 5 个元音 1 分钟即可出声库；标准 16 个音节还能补上辅音噪声，吐字更像人。", 11.5f, true);
+        text("快速 5 个元音 1 分钟即可出声库；标准 16 个音节还能补上辅音噪声，吐字更像人；"
+                + "全音素把每个辅音和 5 个元音都配一遍（" + RecordGuide.items(0, RecordGuide.LEVEL_FULL).size()
+                + " 条），辅音过渡最完整，适合认真做一个要长期用的声库（录不动可以随时「跳过」）。", 11.5f, true);
 
         sectionTitle("参考音高（所有音都照这个音高唱）");
         LinearLayout pitches = row();

@@ -22,6 +22,8 @@ public final class RecordGuide {
 
     public static final int LEVEL_QUICK = 0;
     public static final int LEVEL_STANDARD = 1;
+    /** every consonant x every vowel, resolved through the same G2P the bank builder uses */
+    public static final int LEVEL_FULL = 2;
 
     /** reference pitches offered by the wizard (label -> Hz) */
     public static final String[] PITCH_NAMES = {"C3", "C4", "G4", "C5"};
@@ -53,10 +55,19 @@ public final class RecordGuide {
         public String quality = "";
     }
 
+    /** consonants offered by the 全音素 list; each one is filtered by real G2P resolution */
+    private static final String[] FULL_CONSONANTS = {
+        "k", "g", "s", "z", "t", "d", "n", "h", "b", "p", "m", "y", "r", "w", "f", "ch", "sh", "ts", "j"
+    };
+    private static final String[] FULL_VOWELS = {"a", "i", "u", "e", "o"};
+
     private RecordGuide() { }
 
     public static String levelName(int level) {
-        return level == LEVEL_QUICK ? "快速 · 5 个元音" : "标准 · 16 个音节";
+        if (level == LEVEL_QUICK) return "快速 · 5 个元音";
+        if (level == LEVEL_STANDARD) return "标准 · 16 个音节";
+        // same function the take list is built from, so the label can never promise a different count
+        return "全音素 · " + items(0, LEVEL_FULL).size() + " 条";
     }
 
     /**
@@ -108,7 +119,40 @@ public final class RecordGuide {
             out.add(new Item("ka", "ka", "卡"));
             out.add(new Item("ha", "ha", "哈"));
         }
+        if (level == LEVEL_FULL) {
+            // the five vowels above are already in the list; add every consonant + vowel pair
+            for (String stem : fullStems()) {
+                if (stem.length() <= 1) continue;
+                out.add(new Item(stem, stem, hintFor(stem)));
+            }
+        }
         return out;
+    }
+
+    /** the 全音素 take list: 5 vowels plus every consonant x vowel the G2P can actually resolve */
+    public static List<String> fullStems() {
+        List<String> out = new ArrayList<String>();
+        for (String v : FULL_VOWELS) out.add(v);
+        for (String c : FULL_CONSONANTS) {
+            for (String v : FULL_VOWELS) {
+                String stem = c + v;
+                List<String> ph = CustomBankBuilder.phonemesOf(stem);
+                if (ph == null || ph.isEmpty()) continue;
+                boolean nucleus = false;
+                for (String s : ph) {
+                    if (com.dsh.v4tune.phoneme.PhonemeTable.isVowel(s)) { nucleus = true; break; }
+                }
+                if (!nucleus) continue;
+                out.add(stem);
+            }
+        }
+        return out;
+    }
+
+    private static String hintFor(String stem) {
+        String v = stem.substring(stem.length() - 1);
+        String c = stem.substring(0, stem.length() - 1);
+        return "辅音 " + c + " 起头 + 元音 " + v + "，一口气拖长";
     }
 
     public static double pitchHz(int index) {

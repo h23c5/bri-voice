@@ -846,6 +846,51 @@ public class NeuralSpectrum {
 
     // ------------------------------------------------------------------ helpers
 
+    // ------------------------------------------------------------------ merge (v12.2)
+
+    /**
+     * Weighted average of two BriNeting models of the same shape. Both sides are already-validated
+     * models (they were parsed before this is called), so the result keeps the architecture of
+     * {@code a} and is written back through {@link #save(File)} before it is installed.
+     *
+     * @param wA 0..1 weight of {@code a} (the installed base when merging an import)
+     */
+    public static NeuralSpectrum blend(NeuralSpectrum a, NeuralSpectrum b, double wA) throws IOException {
+        if (a == null || b == null) throw new IOException("缺少要合并的模型");
+        if (a.gridLen != b.gridLen || a.inputDim != b.inputDim
+                || a.hidden != b.hidden || a.hidden2 != b.hidden2) {
+            throw new IOException("两个 BriNeting 模型结构不同（" + a.hidden + "x" + a.hidden2
+                    + " vs " + b.hidden + "x" + b.hidden2 + "），不能合并");
+        }
+        double wB = 1.0 - wA;
+        int kind = (a.kind == KIND_UNIVERSAL || b.kind == KIND_UNIVERSAL) ? KIND_UNIVERSAL : a.kind;
+        return new NeuralSpectrum(a.symbols, a.gridLen,
+                mix(a.meanDb, b.meanDb, wA, wB),
+                mix(a.w1, b.w1, wA, wB), mix(a.b1, b.b1, wA, wB),
+                mix(a.w2, b.w2, wA, wB), mix(a.b2, b.b2, wA, wB),
+                mix(a.w3, b.w3, wA, wB), mix(a.b3, b.b3, wA, wB),
+                kind, Math.max(a.bankCount, b.bankCount), a.sampleCount + b.sampleCount,
+                a.trainLoss * wA + b.trainLoss * wB, a.valLoss * wA + b.valLoss * wB, false);
+    }
+
+    private static float[] mix(float[] x, float[] y, double wx, double wy) {
+        int n = Math.min(x.length, y.length);
+        float[] out = new float[n];
+        for (int i = 0; i < n; i++) out[i] = (float) (x[i] * wx + y[i] * wy);
+        return out;
+    }
+
+    private static float[][] mix(float[][] x, float[][] y, double wx, double wy) {
+        int n = Math.min(x.length, y.length);
+        float[][] out = new float[n][];
+        for (int i = 0; i < n; i++) {
+            int m = Math.min(x[i].length, y[i].length);
+            out[i] = new float[m];
+            for (int j = 0; j < m; j++) out[i][j] = (float) (x[i][j] * wx + y[i][j] * wy);
+        }
+        return out;
+    }
+
     private static double[] buildGrid() {
         double[] f = new double[GRID];
         double ratio = Math.log(GRID_HI / GRID_LO);

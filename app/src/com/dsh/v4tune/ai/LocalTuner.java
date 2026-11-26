@@ -156,6 +156,43 @@ public final class LocalTuner {
         for (int i = 0; i < a.length; i++) bb.putFloat(a[i]);
     }
 
+    /**
+     * v12.2: weighted average of two BriTune-Net models with the same shape ("model soup"). The
+     * result keeps the architecture of {@code a} and is a real model: it goes through the same
+     * {@link #save(Model, File)} / {@link #load(File)} path before it may replace anything.
+     *
+     * @param wA 0..1 weight of {@code a} (the installed model when merging an import)
+     */
+    public static Model blend(Model a, Model b, double wA) throws IOException {
+        if (a == null || b == null) throw new IOException("缺少要合并的模型");
+        if (a.inDim != b.inDim || a.h1 != b.h1 || a.h2 != b.h2 || a.outDim != b.outDim) {
+            throw new IOException("两个 BriTune-Net 结构不同（" + a.inDim + "-" + a.h1 + "-" + a.h2 + "-" + a.outDim
+                    + " vs " + b.inDim + "-" + b.h1 + "-" + b.h2 + "-" + b.outDim + "），不能合并");
+        }
+        Model m = new Model();
+        m.inDim = a.inDim;
+        m.h1 = a.h1;
+        m.h2 = a.h2;
+        m.outDim = a.outDim;
+        double wB = 1.0 - wA;
+        m.mu = mix(a.mu, b.mu, wA, wB);
+        m.sd = mix(a.sd, b.sd, wA, wB);
+        m.w1 = mix(a.w1, b.w1, wA, wB);
+        m.b1 = mix(a.b1, b.b1, wA, wB);
+        m.w2 = mix(a.w2, b.w2, wA, wB);
+        m.b2 = mix(a.b2, b.b2, wA, wB);
+        m.w3 = mix(a.w3, b.w3, wA, wB);
+        m.b3 = mix(a.b3, b.b3, wA, wB);
+        m.outScale = mix(a.outScale, b.outScale, wA, wB);
+        return m;
+    }
+
+    private static float[] mix(float[] x, float[] y, double wx, double wy) {
+        float[] out = new float[x.length];
+        for (int i = 0; i < out.length; i++) out[i] = (float) (x[i] * wx + y[i] * wy);
+        return out;
+    }
+
     /** "流行" etc -> index into {@link #STYLES}; unknown text falls back to pop */
     public static int styleIndex(String s) {
         if (s != null) {

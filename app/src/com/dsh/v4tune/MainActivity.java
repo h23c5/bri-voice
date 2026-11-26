@@ -93,6 +93,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     /** name/lang chosen in the record wizard, used as the defaults of the pack dialog */
     private String customName = "";
     private int customLang = 2;
+    /** v12.2: build the recorded pack with the BriNeting neural engine (default) or samples only */
+    private boolean customNeural = true;
+    /** v12.2: which model the pending .bri save writes (null = every model) */
+    private String briSaveKind;
+    /** v12.2: hard ceiling for a recorded bank (800 MB); reported in the build summary */
+    private static final long BANK_MAX_BYTES = 800L * 1024 * 1024;
     /** settings widgets for the experimental neural voicebank (updated after training) */
     private CheckBox neuralChk;
     private TextView neuralDesc;
@@ -2380,7 +2386,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 "BriNeting 神经声学模型（v11.0）",
                 "本地调音模型（BriTune-Net）",
                 "从音频分析表情（WAV，实验）",
-                "自制声库（用采样训练）(v11.0.1)"
+                "自制声库（用采样训练）(v12.2)"
         };
         menu(L.t("menu.tools"), null, items, -1, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, int which) {
@@ -2639,6 +2645,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             public void help() { packHelp(); }
             public void exportBundle() { showBundleExport(); }
             public void importBundle() { showBundleImport(); }
+            public void exportTune() { showBundleExport(com.dsh.v4tune.io.BriBundle.KIND_TUNE); }
+            public void exportBriNetingBase() { showBundleExport(com.dsh.v4tune.io.BriBundle.KIND_BASE); }
         };
         com.dsh.v4tune.ui.VoicebankManager.show(this, host);
     }
@@ -2826,27 +2834,48 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
     /** show what a bundle would contain, then let the user pick where it goes */
     private void showBundleExport() {
-        java.util.List<com.dsh.v4tune.io.BriBundle.Part> parts = com.dsh.v4tune.io.BriBundle.parts(this);
+        showBundleExport(null);
+    }
+
+    /**
+     * v12.2: the same sheet, but limited to one model, so BriTune-Net and the BriNeting base can be
+     * exported on their own (the bundle still carries one manifest entry and the same checks).
+     *
+     * @param kind {@code BriBundle.KIND_TUNE} / {@code KIND_BASE}, null for every model
+     */
+    private void showBundleExport(final String kind) {
+        java.util.List<com.dsh.v4tune.io.BriBundle.Part> parts = com.dsh.v4tune.io.BriBundle.parts(this, kind);
         if (parts.isEmpty()) {
             com.dsh.v4tune.ui.Dialogs.message(this, L.t("bank.bri.title"), L.t("bank.bri.none"));
             return;
         }
+        String body = L.t("bank.bri.summary", com.dsh.v4tune.io.BriBundle.summary(this));
+        if (kind != null) {
+            body = (com.dsh.v4tune.io.BriBundle.KIND_BASE.equals(kind) ? "BriNeting 基座" : "BriTune-Net")
+                    + " · " + (parts.get(0).size / 1024) + " KB";
+        }
         com.dsh.v4tune.ui.Dialogs.builder(this)
-                .setTitle(L.t("bank.bri.saveTitle"))
-                .setMessage(L.t("bank.bri.summary", com.dsh.v4tune.io.BriBundle.summary(this)))
-                .setPositiveButton(L.t("bank.exportBri"), new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface d, int w) { pickBriSave(); }
+                .setTitle(kind == null ? L.t("bank.bri.saveTitle") : L.t("bank.bri.saveTitle"))
+                .setMessage(body)
+                .setPositiveButton(kind == null ? L.t("bank.exportBri")
+                        : (com.dsh.v4tune.io.BriBundle.KIND_BASE.equals(kind)
+                            ? L.t("bank.exportBase") : L.t("bank.exportTune")),
+                        new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) { pickBriSave(kind); }
                 })
                 .setNegativeButton(L.t("dlg.cancel"), null)
                 .show();
     }
 
-    private void pickBriSave() {
+    private void pickBriSave(final String kind) {
+        briSaveKind = kind;
         try {
             Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
             i.addCategory(Intent.CATEGORY_OPENABLE);
             i.setType("application/octet-stream");
-            i.putExtra(Intent.EXTRA_TITLE, "BriVoice-models-" + stamp() + com.dsh.v4tune.io.BriBundle.EXT);
+            String stem = kind == null ? "BriVoice-models"
+                    : (com.dsh.v4tune.io.BriBundle.KIND_BASE.equals(kind) ? "BriVoice-brineting-base" : "BriVoice-britune-net");
+            i.putExtra(Intent.EXTRA_TITLE, stem + "-" + stamp() + com.dsh.v4tune.io.BriBundle.EXT);
             startActivityForResult(i, REQ_BRI_SAVE);
         } catch (Throwable t) {
             toast("无法打开保存对话框: " + msgOf(t));
@@ -2865,7 +2894,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         File tmp = new File(getCacheDir(), "export.bri");
         try {
             java.io.OutputStream os = new java.io.FileOutputStream(tmp);
-            int n = com.dsh.v4tune.io.BriBundle.export(this, os);      // closes the stream
+            int n = com.dsh.v4tune.io.BriBundle.export(this, os, briSaveKind);   // closes the stream
             com.dsh.v4tune.io.BriBundle.Result check = com.dsh.v4tune.io.BriBundle.verify(this, tmp);
             java.io.OutputStream dst = getContentResolver().openOutputStream(uri, "w");
             if (dst == null) throw new java.io.IOException("系统没有给出可写的输出流");
@@ -2905,9 +2934,13 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         }
     }
 
-    /** copy the picked bundle to cache, validate it, ask, then install */
+    /**
+     * v12.2: copy the picked bundle to cache, validate it, then let the user choose between
+     * replacing the installed models and merging the new one into them (half and half).
+     */
     private void importBriFrom(final Uri uri) {
         final File tmp = new File(getCacheDir(), "import.bri");
+        final com.dsh.v4tune.io.BriBundle.Result opened;
         try {
             java.io.InputStream in = getContentResolver().openInputStream(uri);
             if (in == null) throw new java.io.IOException("读不到这个文件");
@@ -2921,42 +2954,64 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 try { in.close(); } catch (Throwable ignored) { }
                 try { os.close(); } catch (Throwable ignored) { }
             }
-            final com.dsh.v4tune.io.BriBundle.Result check = com.dsh.v4tune.io.BriBundle.verify(this, tmp);
-            com.dsh.v4tune.ui.Dialogs.builder(this)
-                    .setTitle(L.t("bank.bri.importTitle"))
-                    .setMessage(L.t("bank.bri.importAsk", check.text))
-                    .setPositiveButton(L.t("dlg.ok"), new DialogInterface.OnClickListener() {
-                        public void onClick(DialogInterface d, int w) { applyBri(tmp); }
-                    })
-                    .setNegativeButton(L.t("dlg.cancel"), new DialogInterface.OnClickListener() {
-                        public void onClick(DialogInterface d, int w) { tmp.delete(); }
-                    })
-                    .show();
+            java.io.InputStream fin = new java.io.FileInputStream(tmp);
+            opened = com.dsh.v4tune.io.BriBundle.open(this, fin);   // keeps parsed models, installs nothing
         } catch (Throwable t) {
             tmp.delete();
+            status(L.t("bank.bri.importFailed", msgOf(t)));
+            toast(L.t("bank.bri.importFailed", msgOf(t)));
+            return;
+        }
+        tmp.delete();
+        com.dsh.v4tune.ui.Dialogs.builder(this)
+                .setTitle(L.t("bank.bri.importTitle"))
+                .setMessage(L.t("bank.bri.importAsk", opened.text) + "\n\n" + L.t("bank.bri.modeAsk"))
+                .setPositiveButton(L.t("bank.bri.replace"), new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) { applyBriReplace(opened); }
+                })
+                .setNeutralButton(L.t("bank.bri.merge"), new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) { applyBriMerge(opened); }
+                })
+                .setNegativeButton(L.t("dlg.cancel"), new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) { com.dsh.v4tune.io.BriBundle.discard(opened); }
+                })
+                .show();
+    }
+
+    private void applyBriReplace(com.dsh.v4tune.io.BriBundle.Result opened) {
+        try {
+            com.dsh.v4tune.io.BriBundle.applyReplace(this, opened);
+            afterModelChange();
+            status(L.t("bank.bri.imported", opened.text));
+            toast(L.t("bank.bri.imported", opened.text));
+        } catch (Throwable t) {
+            com.dsh.v4tune.io.BriBundle.discard(opened);
             status(L.t("bank.bri.importFailed", msgOf(t)));
             toast(L.t("bank.bri.importFailed", msgOf(t)));
         }
     }
 
-    private void applyBri(File tmp) {
+    private void applyBriMerge(com.dsh.v4tune.io.BriBundle.Result opened) {
         try {
-            java.io.InputStream in = new java.io.FileInputStream(tmp);
-            com.dsh.v4tune.io.BriBundle.Result r = com.dsh.v4tune.io.BriBundle.importFrom(this, in);
-            reloadUniversalNeural();
-            if (currentVoice != null) {
-                currentVoice.neural = null;                 // the base may be a different one now
-                attachNeural(currentVoice);
-            }
-            refreshAll();
-            status(L.t("bank.bri.imported", r.text));
-            toast(L.t("bank.bri.imported", r.text));
+            com.dsh.v4tune.io.BriBundle.applyMerge(this, opened, 0.5);
+            afterModelChange();
+            status(L.t("bank.bri.merged", opened.text));
+            toast(L.t("bank.bri.merged", opened.text));
         } catch (Throwable t) {
+            com.dsh.v4tune.io.BriBundle.discard(opened);
             status(L.t("bank.bri.importFailed", msgOf(t)));
             toast(L.t("bank.bri.importFailed", msgOf(t)));
-        } finally {
-            tmp.delete();
         }
+    }
+
+    /** a replaced or merged model invalidates the cached base and the per-singer binding */
+    private void afterModelChange() {
+        reloadUniversalNeural();
+        if (currentVoice != null) {
+            currentVoice.neural = null;
+            attachNeural(currentVoice);
+        }
+        refreshAll();
     }
 
     /** the bundle import may have replaced the base: drop the cached copy so the next render uses it */
@@ -5931,6 +5986,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             customRecordJson = null;
             customName = "";
             customLang = 2;
+            customNeural = true;
         }
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -5983,6 +6039,37 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         }
         box.addView(langs);
 
+        TextView engineTitle = new TextView(this);
+        engineTitle.setText("合成方式");
+        engineTitle.setTextColor(Theme.TEXT_DIM);
+        engineTitle.setTextSize(11.5f);
+        engineTitle.setPadding(0, dp(8), 0, dp(2));
+        box.addView(engineTitle);
+        final Button[] engBtns = new Button[2];
+        final String[] engNames = {"神经合成（BriNeting）", "采样合成（传统）"};
+        LinearLayout engines = row();
+        for (int i = 0; i < 2; i++) {
+            final boolean neural = (i == 0);
+            engBtns[i] = small("");
+            engBtns[i].setOnClickListener(new View.OnClickListener() {
+                public void onClick(View v) {
+                    customNeural = neural;
+                    engBtns[0].setText((customNeural ? "● " : "") + engNames[0]);
+                    engBtns[1].setText((customNeural ? "" : "● ") + engNames[1]);
+                }
+            });
+            engines.addView(engBtns[i]);
+        }
+        engBtns[0].setText((customNeural ? "● " : "") + engNames[0]);
+        engBtns[1].setText((customNeural ? "" : "● ") + engNames[1]);
+        box.addView(engines);
+        TextView engTip = new TextView(this);
+        engTip.setText("神经合成会额外训练一层声学模型并嵌进包里（默认，音色更连贯）；"
+                + "采样合成只保留测量出的谐波与辅音谱，包更小、训练更快。两种都不超过 800 MB。");
+        engTip.setTextColor(Theme.TEXT_DIM);
+        engTip.setTextSize(11.5f);
+        box.addView(engTip);
+
         customStatus = label("已选采样：" + customSamples.size() + " 个"
                 + (customArt != null ? " · 立绘：已选择" : " · 立绘：未选择")
                 + (customRecordJson != null ? " · 录音记录：有" : ""));
@@ -6011,10 +6098,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         ScrollView sc = new ScrollView(this);
         sc.addView(box);
         new AlertDialog.Builder(this)
-                .setTitle("自制声库（v11.0.1）")
+                .setTitle("自制声库（v12.2）")
                 .setView(sc)
                 .setPositiveButton("开始训练", new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface d, int w) { startCustomTraining(name.getText().toString(), lang[0]); }
+                    public void onClick(DialogInterface d, int w) { startCustomTraining(name.getText().toString(), lang[0], customNeural); }
                 })
                 .setNegativeButton(L.t("dlg.cancel"), null)
                 .show();
@@ -6211,8 +6298,14 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 + (customRecordJson != null ? " · 录音记录：有" : ""));
     }
 
-    /** measure + train + write the pack + register it; heavy work on a background thread */
-    private void startCustomTraining(final String rawName, final int lang) {
+    /**
+     * measure + (optionally) train + write the pack + register it; heavy work on a background thread.
+     *
+     * <p>v12.2: {@code neural} picks the synthesis mode chosen in the sheet. Neural also trains the
+     * BriNeting acoustic layer and embeds it; sample mode keeps the measured harmonics only, which
+     * makes a much smaller pack and skips the training wait.</p>
+     */
+    private void startCustomTraining(final String rawName, final int lang, final boolean neural) {
         if (customSamples.isEmpty()) {
             toast("请先选择至少一个 WAV 采样");
             return;
@@ -6232,11 +6325,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 try {
                     final com.dsh.v4tune.voicebank.CustomBankBuilder.Report rep =
                             new com.dsh.v4tune.voicebank.CustomBankBuilder.Report();
-                    pd.setMessage("正在用采样训练神经声学模型…");
+                    pd.setMessage(neural ? "正在用采样训练神经声学模型…" : "正在测量采样（采样合成）…");
                     final com.dsh.v4tune.voicebank.VoicebankWriter w =
                             com.dsh.v4tune.voicebank.CustomBankBuilder.build(
                                     new ArrayList<com.dsh.v4tune.voicebank.CustomBankBuilder.Sample>(customSamples),
-                                    nm, lang, rep, baseSampleNet());
+                                    nm, lang, rep, neural ? baseSampleNet() : null);
                     pd.setMessage("正在写入声库包…");
                     File tmp = new File(getCacheDir(), "custom_" + System.currentTimeMillis() + VoicePack.EXT);
                     w.writeZip(tmp, null);
@@ -6259,10 +6352,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     }
 
                     // 1) the samples get their own neural link model (falls back to fine-tuning
-                    //    the shared base when there are too few frames)
-                    pd.setMessage("正在训练采样神经参数…");
+                    //    the shared base when there are too few frames). Sample mode skips it.
+                    pd.setMessage(neural ? "正在训练采样神经参数…" : "采样合成：跳过神经训练");
                     NeuralSpectrum model = null;
-                    try {
+                    if (neural) try {
                         model = NeuralSpectrum.train(vm, new NeuralSpectrum.Progress() {
                             public void onProgress(final int percent, final String message) {
                                 runOnUiThread(new Runnable() {
@@ -6292,12 +6385,20 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         if (model == null) throw first;
                     }
                     pd.setProgress(84);
-                    pd.setMessage("正在写神经模型与采样…");
-                    model.save(neuralFile(vm));
-                    vm.neural = model;
-                    vm.neuralEmbedded = true;
-                    vm.neuralFromUniversal = false;
-                    vm.neuralEnabled = true;
+                    pd.setMessage(neural ? "正在写神经模型与采样…" : "正在写采样声库…");
+                    if (neural && model != null) {
+                        model.save(neuralFile(vm));
+                        vm.neural = model;
+                        vm.neuralEmbedded = true;
+                        vm.neuralFromUniversal = false;
+                        vm.neuralEnabled = true;
+                    } else {
+                        vm.neural = null;
+                        vm.neuralEmbedded = false;
+                        vm.neuralFromUniversal = false;
+                        vm.neuralEnabled = false;
+                        vm.neuralBank = false;
+                    }
 
                     // 2) rewrite the pack with art + raw takes + neural weights embedded
                     File dir = packStore.directory();
@@ -6305,13 +6406,20 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     File target = new File(dir, vm.id + VoicePack.EXT);
                     VoicePack.write(target, vm, "本声库的采样与立绘由用户提供，版权归用户所有；"
                             + "BriVoice 只在本机分析与训练，不上传任何音频。");
+                    if (target.length() > BANK_MAX_BYTES) {
+                        long mb = target.length() / (1024L * 1024L);
+                        target.delete();
+                        throw new IllegalStateException("声库超过 800 MB 上限（" + mb
+                                + " MB）：减少采样数量，或改用采样合成");
+                    }
                     VoicePack.Result check = VoicePack.load(target);
                     if (check.error != null || check.model == null) throw new IllegalStateException(check.error == null ? "声库包校验失败" : check.error);
                     result = check.model;
                     pd.setProgress(94);
                     detail = "采样 " + rep.takes + " 个 · 符号 " + rep.symbols + " 个 · 频段 " + rep.bands + " 条"
                             + (rep.f0Max > 0 ? " · 音域 " + Math.round(rep.f0Min) + "–" + Math.round(rep.f0Max) + " Hz" : "")
-                            + " · 参数 " + model.paramCount()
+                            + " · 合成 " + (neural ? "神经" : "采样")
+                            + (model != null ? " · 参数 " + model.paramCount() : "")
                             + " · " + (target.length() / 1024) + " KB"
                             + (rep.sampleNet != null
                                 ? "\n采样神经模型：" + rep.sampleNetFrames + " 帧 · "
@@ -6335,7 +6443,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                             return;
                         }
                         SingerLibrary.upsertUserPack(fv);
-                    saveNeuralEnabled(fv, true);
+                        saveNeuralEnabled(fv, fv.neuralEnabled);
                         beginEdit();
                         currentVoice = fv;
                         attachNeural(currentVoice);
@@ -6346,19 +6454,23 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         if (fv.characterPng != null) applyPackCharacter(fv.characterPng);
                         toast("自制声库完成：" + fd);
                         status("已安装自制声库 " + fv.name + " · " + fd);
-                        new AlertDialog.Builder(MainActivity.this)
+                        AlertDialog.Builder fin = new AlertDialog.Builder(MainActivity.this)
                                 .setTitle("自制声库已生成")
                                 .setMessage(fd + "\n\n已包含：立绘" + (fv.characterPng != null ? "✓" : "—")
-                                        + " · 采样 " + fv.sampleWavs.size() + " 个 · 神经参数"
-                                        + (fv.neural != null ? "✓" : "—")
+                                        + " · 采样 " + fv.sampleWavs.size() + " 个 · 包内神经参数"
+                                        + (fv.neuralEmbedded ? "✓" : "—")
                                         + " · 采样神经模型" + (fv.sampleNet != null ? "（" + fv.sampleNet.paramCount() + " 参数）" : "—")
                                         + " · 录音记录" + (fv.recordJson != null ? "✓" : "—")
-                                        + "\n\n下一步自动把新声库并入 BriNeting 基座训练（会重新训练共享基座，约几分钟）。")
-                                .setPositiveButton("并入基座训练", new DialogInterface.OnClickListener() {
-                                    public void onClick(DialogInterface d, int w) { trainUniversalNeural(); }
-                                })
-                                .setNegativeButton("稍后", null)
-                                .show();
+                                        + (fv.neuralEnabled
+                                            ? "\n\n下一步可以把这个声库并入 BriNeting 基座训练（会重新训练共享基座，约几分钟）。"
+                                            : "\n\n采样合成不训练神经参数，随时可以在管理页换成神经合成重建。"))
+                                .setNegativeButton(fv.neuralEnabled ? "稍后" : "好", null);
+                        if (fv.neuralEnabled) {
+                            fin.setPositiveButton("并入基座训练", new DialogInterface.OnClickListener() {
+                                public void onClick(DialogInterface d, int w) { trainUniversalNeural(); }
+                            });
+                        }
+                        fin.show();
                     }
                 });
             }

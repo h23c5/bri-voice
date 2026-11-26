@@ -1,9 +1,9 @@
 {
-  "versionCode": 100,
-  "versionName": "12.1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v12.1/BriVoice-12.1.apk",
-  "sha256": "e983d2d9ae0d3915e8a135ac7698632b3899c9c7164667e1b37645f17da6b0d7",
-  "size": 805394,
-  "notes": "release 12.1：声库管理页 + 模型备份 .bri。「声库」按钮现在直接给出列表：一行一个声库（引擎角标、谐波统计、包体大小），点一行即切换；每行自带重命名与删除（重命名只改显示名、留空恢复原名；删除连同该声库的神经权重一起移除）。新增「导出 / 导入模型备份（.bri）」：把本机 BriTune-Net 权重和 BriNeting 基座打成一个 .bri（普通 zip + SHA-256 清单，导出后会用导入同样的校验读回来一遍），导入前完整校验，失败不动现有模型。同时修复：删除声库后列表会挤掉直接拷进 BriVoice_root/voicebanks 的包；重新加载后神经/传统角标可能误显示「需训练基座」。",
-  "publishedAt": "2026-11-25 22:06:54"
+  "versionCode": 101,
+  "versionName": "12.2",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v12.2/BriVoice-12.2.apk",
+  "sha256": "5854f0a2674d2922046dc5b72f3e6070f9651f6005e6c2941ba721e69b94251d",
+  "size": 809490,
+  "notes": "release 12.2：两个模型可分别导出，导入时可选择与现有模型合并；采样录入选单新增「全音素」111 条；自制声库可选神经合成 / 采样合成，两条路径都有 800 MB 上限。",
+  "publishedAt": "2026-11-26 10:57:35"
 }

@@ -44,6 +44,9 @@ public final class VoicebankManager {
         void help();
         void exportBundle();
         void importBundle();
+        /** v12.2: export one model on its own */
+        void exportTune();
+        void exportBriNetingBase();
     }
 
     private VoicebankManager() { }
@@ -109,6 +112,13 @@ public final class VoicebankManager {
                 }),
                 action(a, L.t("bank.importBri"), false, new View.OnClickListener() {
                     public void onClick(View x) { close(self); host.importBundle(); }
+                })));
+        root.addView(actionRow(a,
+                action(a, L.t("bank.exportTune"), false, new View.OnClickListener() {
+                    public void onClick(View x) { close(self); host.exportTune(); }
+                }),
+                action(a, L.t("bank.exportBase"), false, new View.OnClickListener() {
+                    public void onClick(View x) { close(self); host.exportBriNetingBase(); }
                 })));
         root.addView(actionRow(a,
                 action(a, L.t("bank.help"), false, new View.OnClickListener() {

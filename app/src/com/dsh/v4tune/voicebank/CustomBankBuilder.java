@@ -463,7 +463,8 @@ public final class CustomBankBuilder {
         return n.trim();
     }
 
-    private static List<String> phonemesOf(String stem) {
+    /** the one resolver shared with RecordGuide: file stem -> phonemes, null when unreadable */
+    public static List<String> phonemesOf(String stem) {
         if (stem == null || stem.isEmpty()) return null;
         if (ChineseG2P.isSyllable(stem)) {
             List<String> p = ChineseG2P.syllableToPhonemes(stem);

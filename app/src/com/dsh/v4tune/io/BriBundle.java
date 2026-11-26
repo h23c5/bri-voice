@@ -48,8 +48,10 @@ public final class BriBundle {
     private static final String MAGIC = "BRIPACK1";
     private static final int FORMAT = 1;
 
-    private static final String KIND_TUNE = "britune";
-    private static final String KIND_BASE = "brineting-base";
+    /** manifest kind of the BriTune-Net weights */
+    public static final String KIND_TUNE = "britune";
+    /** manifest kind of the BriNeting universal base */
+    public static final String KIND_BASE = "brineting-base";
 
     private BriBundle() { }
 
@@ -71,6 +73,9 @@ public final class BriBundle {
         /** extracted weights, consumed by the caller of parse() */
         File tuneTmp;
         File baseTmp;
+        /** the parsed models, so a merge can compare shapes without reading the files again */
+        public LocalTuner.Model tuneModel;
+        public NeuralSpectrum baseModel;
     }
 
     // ---------------------------------------------------------------- locations
@@ -98,8 +103,17 @@ public final class BriBundle {
 
     /** the models that would go into a bundle right now (empty when nothing was trained yet) */
     public static List<Part> parts(Context ctx) {
+        return parts(ctx, null);
+    }
+
+    /**
+     * the models of one kind only, for a single-model export.
+     *
+     * @param kind {@link #KIND_TUNE}, {@link #KIND_BASE}, or null for both
+     */
+    public static List<Part> parts(Context ctx, String kind) {
         List<Part> out = new ArrayList<Part>();
-        File t = tuneFile(ctx);
+        File t = (kind == null || KIND_TUNE.equals(kind)) ? tuneFile(ctx) : null;
         if (t != null) {
             Part p = new Part();
             p.kind = KIND_TUNE;
@@ -109,8 +123,8 @@ public final class BriBundle {
             p.sha256 = sha256(t);
             out.add(p);
         }
-        File b = baseFile(ctx);
-        if (b.isFile() && b.length() > 0) {
+        File b = (kind == null || KIND_BASE.equals(kind)) ? baseFile(ctx) : null;
+        if (b != null && b.isFile() && b.length() > 0) {
             Part p = new Part();
             p.kind = KIND_BASE;
             p.path = "model/brineting-base.v4neural";
@@ -155,9 +169,23 @@ public final class BriBundle {
      * @return the number of models written
      */
     public static int export(Context ctx, OutputStream raw) throws IOException {
-        List<Part> parts = parts(ctx);
+        return export(ctx, raw, null);
+    }
+
+    /**
+     * v12.2: writes one model (or both) into a bundle. A single-model bundle uses exactly the same
+     * manifest and checks as a full one, so the importer needs no special case.
+     *
+     * @param kind {@link #KIND_TUNE} / {@link #KIND_BASE}, null for everything that exists
+     */
+    public static int export(Context ctx, OutputStream raw, String kind) throws IOException {
+        List<Part> parts = parts(ctx, kind);
         if (parts.isEmpty()) {
-            throw new IOException("没有可导出的模型：先训练 BriNeting 基座，或下载 BriTune-Net 模型");
+            throw new IOException(KIND_BASE.equals(kind)
+                    ? "还没有 BriNeting 基座：先在设置里训练一次基座再导出"
+                    : (KIND_TUNE.equals(kind)
+                        ? "还没有 BriTune-Net 模型：先下载或导入一次再导出"
+                        : "没有可导出的模型：先训练 BriNeting 基座，或下载 BriTune-Net 模型"));
         }
         String manifest = manifestOf(ctx, parts);
         ZipOutputStream z = new ZipOutputStream(new BufferedOutputStream(raw));
@@ -217,19 +245,86 @@ public final class BriBundle {
      * @param raw the picked document; closed by this call
      */
     public static Result importFrom(Context ctx, InputStream raw) throws IOException {
-        File cache = tempDir(ctx);
-        File zip = new File(cache, "bundle.zip");
+        Result r = open(ctx, raw);
+        applyReplace(ctx, r);
+        return r;
+    }
+
+    /**
+     * v12.2: validates a bundle and keeps the parsed models in the result, without installing
+     * anything. The caller must finish with {@link #applyReplace}, {@link #applyMerge} or
+     * {@link #discard}; each of them releases the extracted temp files.
+     */
+    public static Result open(Context ctx, InputStream raw) throws IOException {
+        File zip = new File(tempDir(ctx), "bundle-open.zip");
         try {
             copy(raw, zip, true);
-            Result r = parse(ctx, zip);
-            try {
-                apply(ctx, r);
-            } finally {
-                drop(r);
-            }
-            return r;
+            return parse(ctx, zip);
         } finally {
             zip.delete();
+        }
+    }
+
+    /** installs what {@link #open} parsed, replacing the installed models */
+    public static void applyReplace(Context ctx, Result r) throws IOException {
+        try {
+            apply(ctx, r);
+        } finally {
+            drop(r);
+        }
+    }
+
+    /** releases the temp files of an {@link #open} result that will not be installed */
+    public static void discard(Result r) {
+        drop(r);
+    }
+
+    /**
+     * v12.2: merges the imported models into the installed ones instead of replacing them.
+     *
+     * <p>Both sides are real models that already passed their loaders, so the blend is a weighted
+     * average of the weights and is written out through the same save/load path before it becomes
+     * the installed file. A missing local model, or a different architecture, is an error - a
+     * merge silently falling back to "replace" would throw away what the user wanted to keep.</p>
+     *
+     * @param wA 0..1 share of the model that is already installed (0.5 = even blend)
+     */
+    public static void applyMerge(Context ctx, Result r, double wA) throws IOException {
+        if (r == null) throw new IOException("没有可合并的模型");
+        try {
+            if (r.tuneTmp != null) {
+                File cur = tuneFile(ctx);
+                if (cur == null) throw new IOException("本机还没有 BriTune-Net 模型，无法合并（可以直接导入替换）");
+                LocalTuner.Model have = LocalTuner.load(cur);
+                LocalTuner.Model mixed = LocalTuner.blend(have, r.tuneModel, wA);
+                File tmp = new File(tempDir(ctx), "tune-merged.bin");
+                LocalTuner.save(mixed, tmp);
+                LocalTuner.load(tmp);                        // read back with the real loader
+                FileInputStream fin = new FileInputStream(tmp);
+                try {
+                    LocalModelStore.importFrom(ctx, fin);
+                } finally {
+                    try { fin.close(); } catch (Throwable ignored) { }
+                }
+                tmp.delete();
+                r.tuneBytes = (int) LocalModelStore.file(ctx).length();
+            }
+            if (r.baseTmp != null) {
+                File cur = baseFile(ctx);
+                if (!cur.isFile() || cur.length() == 0)
+                    throw new IOException("本机还没有 BriNeting 基座，无法合并（可以直接导入替换）");
+                NeuralSpectrum have = NeuralSpectrum.load(cur);
+                NeuralSpectrum mixed = NeuralSpectrum.blend(have, r.baseModel, wA);
+                File tmp = new File(tempDir(ctx), "base-merged.v4neural");
+                mixed.save(tmp);
+                NeuralSpectrum.load(tmp);                    // read back with the real loader
+                install(tmp, cur);
+                tmp.delete();
+                r.baseBytes = (int) cur.length();
+            }
+            r.text = describe(r);
+        } finally {
+            drop(r);
         }
     }
 
@@ -296,11 +391,11 @@ public final class BriBundle {
 
             // parse with the real loaders before anything installed is replaced
             if (r.tuneTmp != null) {
-                LocalTuner.load(r.tuneTmp);          // validates the BRTN header and shapes
+                r.tuneModel = LocalTuner.load(r.tuneTmp);   // validates the BRTN header and shapes
                 r.tuneBytes = (int) r.tuneTmp.length();
             }
             if (r.baseTmp != null) {
-                NeuralSpectrum.load(r.baseTmp);      // validates the BriNeting base
+                r.baseModel = NeuralSpectrum.load(r.baseTmp); // validates the BriNeting base
                 r.baseBytes = (int) r.baseTmp.length();
             }
             r.selfTrained = man.optBoolean("selfTrained", false);
