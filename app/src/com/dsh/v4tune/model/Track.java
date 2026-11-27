@@ -10,6 +10,8 @@ public class Track {
     // mixer (vsUnit)
     public int vol = 0, pan = 0, inGain = 0, sendLevel = 0;
     public boolean mute = false, solo = false, sendEnable = false;
+    /** true when this track was created for imported audio (no notes, waveform thumbnail) */
+    public boolean audio = false;
 
     public Part partAt(long tick) {
         for (Part p : parts) if (tick >= p.pos && tick < p.end()) return p;
@@ -21,6 +23,7 @@ public class Track {
         t.no = no; t.name = name; t.comment = comment;
         t.vol = vol; t.pan = pan; t.inGain = inGain; t.sendLevel = sendLevel;
         t.mute = mute; t.solo = solo; t.sendEnable = sendEnable;
+        t.audio = audio;
         for (Part p : parts) t.parts.add(p.copy());
         return t;
     }

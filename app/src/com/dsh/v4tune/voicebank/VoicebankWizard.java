@@ -127,6 +127,25 @@ public final class VoicebankWizard {
                 .show();
     }
 
+    /**
+     * Where a freshly built pack is written. The public folder at the root of shared storage only
+     * works when the "all files access" grant is really in place (Android 11+) AND the folder
+     * accepts new files; on Android 10 - and on any phone that never granted it - mkdirs() fails
+     * silently and the write died with ENOENT/EPERM ("声库生成失败"). Storage already knows how to
+     * fall back to the app's own folder, and the pack loader scans that same folder, so the bank is
+     * still found afterwards. The probe proves writability instead of trusting a permission flag.
+     */
+    static File outputDir(Activity act) {
+        File d = com.dsh.v4tune.io.Storage.voicebanks(act);
+        if (com.dsh.v4tune.io.Storage.probeWritable(d)) return d;
+        File ext = act.getExternalFilesDir(null);
+        File alt = new File(ext != null ? ext : act.getFilesDir(), "BriVoice_root/voicebanks");
+        if (com.dsh.v4tune.io.Storage.probeWritable(alt)) return alt;
+        File inner = new File(act.getFilesDir(), "voicebanks");
+        inner.mkdirs();
+        return inner;
+    }
+
     private static TextView label(Activity a, String s) {
         TextView t = new TextView(a);
         t.setText(s);
@@ -171,8 +190,7 @@ public final class VoicebankWizard {
                         VoicebankBuilder.Options o = new VoicebankBuilder.Options();
                         w = VoicebankBuilder.build(ddb, bank, bank.toUpperCase(java.util.Locale.US), o);
                     }
-                    File vdir = new File(Environment.getExternalStorageDirectory(), "BriVoice_root/voicebanks");
-                    if (!vdir.exists()) vdir.mkdirs();
+                    File vdir = outputDir(act);
                     w.engine = neural ? "neural" : "voice";
                     if (neural) {
                         w.neuralParams.put("breath", 0.5);
@@ -192,12 +210,13 @@ public final class VoicebankWizard {
                     info = "声库：" + w.name + "\n类型：" + (neural ? "神经声库（.v4neural，BriNeting 引擎）" : "标准声库（.v4voice，传统引擎）")
                             + "\n元音：" + w.phonemes.size() + " 个\n频段：" + bandCount
                             + " 条\n辅音谱：" + w.noise.size() + " 个\n文件：" + out.getName()
-                            + "（" + (out.length() / 1024) + " KB）";
+                            + "（" + (out.length() / 1024) + " KB）"
+                            + "\n保存位置：" + out.getParentFile().getAbsolutePath();
                 } catch (Throwable t) {
                     err = String.valueOf(t.getMessage());
                     errT = t;
                     try {
-                        java.io.FileOutputStream fo = new java.io.FileOutputStream(new File(Environment.getExternalStorageDirectory(), "BriVoice_root/last_utau_error.txt"));
+                        java.io.FileOutputStream fo = new java.io.FileOutputStream(new File(com.dsh.v4tune.io.Storage.root(act), "last_utau_error.txt"));
                         java.io.PrintWriter pw = new java.io.PrintWriter(new java.io.OutputStreamWriter(fo, "UTF-8"));
                         t.printStackTrace(pw); pw.flush(); pw.close();
                     } catch (Throwable ignored) { }
@@ -216,6 +235,7 @@ public final class VoicebankWizard {
                             File oto = findOto(dir, 0);
                             d.append("oto.ini: ").append(oto == null ? "未找到" : oto.getAbsolutePath()).append('\n');
                             d.append("文件数: ").append(countFiles(dir)).append('\n');
+                            d.append("输出目录: ").append(outputDir(act).getAbsolutePath()).append('\n');
                             d.append("错误: ").append(e).append('\n');
                             if (extra != null && extra.length() > 0) d.append("\n--- 压缩包诊断 ---\n").append(extra);
                             showFailure(act, "声库生成失败", d.toString(), fexc);
@@ -517,8 +537,7 @@ public final class VoicebankWizard {
         }
         final String report = b.toString();
         try {
-            java.io.File dir = new java.io.File(android.os.Environment.getExternalStorageDirectory(), "BriVoice_root");
-            if (!dir.exists()) dir.mkdirs();
+            java.io.File dir = com.dsh.v4tune.io.Storage.root(act);
             java.io.FileOutputStream fo = new java.io.FileOutputStream(new java.io.File(dir, "last_voicebank_error.txt"));
             fo.write(report.getBytes("UTF-8")); fo.flush(); fo.close();
         } catch (Throwable ignored) { }

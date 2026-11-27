@@ -59,6 +59,9 @@ public class AudioEngine {
     public long playTick() { return playTick; }
     public void cancelRender() { cancelRender = true; }
 
+    /** metronome click, mixed into the stream exactly on every quarter beat (480 ticks) */
+    public volatile boolean metronome = false;
+
     /** map a project voice slot onto one of the built-in singers */
     public static VoiceModel modelFor(Voice v, VoiceModel fallback) {
         if (v == null) return fallback;
@@ -518,6 +521,22 @@ public class AudioEngine {
                         }
                     }, "v4tune-progress");
                     sampler.start();
+                    // Metronome: pre-compute the frame of every quarter beat once, then mix a short
+                    // click into the output at that sample. A second AudioTrack (or a UI timer) would
+                    // drift away from the voice; here the click is sample accurate by construction.
+                    final int[] beatFrames = new int[Math.max(1, total / 11025 + 8)];
+                    int beatN = 0;
+                    for (long bt = 0; beatN < beatFrames.length; bt += 480L) {
+                        int fr = (int) Math.round(
+                                com.dsh.v4tune.model.TimeUtil.tickToSec(src.song(), bt) * sr);
+                        if (fr >= total) break;
+                        beatFrames[beatN++] = Math.max(0, fr);
+                    }
+                    int beatAt = 0;
+                    int clickCount = 0;
+                    int clickLeft = 0;
+                    double clickPhase = 0, clickFreq = 0;
+                    float clickAmp = 0;
                     while (playing && pos < total) {
                         int ready = src.ready();
                         boolean done = src.finished();
@@ -530,6 +549,25 @@ public class AudioEngine {
                         int cnt = Math.min(bufFrames, Math.min(ready, total) - pos);
                         for (int i = 0; i < cnt; i++) {
                             float l = src.left()[pos + i], rr = src.right()[pos + i];
+                            // fire a click when this sample reaches a beat frame (accents on the bar)
+                            while (beatAt < beatN && beatFrames[beatAt] <= pos + i) {
+                                if (metronome) {
+                                    clickCount++;
+                                    clickLeft = sr / 45;
+                                    clickAmp = (beatAt % 4 == 0) ? 0.45f : 0.28f;
+                                    clickFreq = (beatAt % 4 == 0) ? 1568.0 : 1046.5;
+                                    clickPhase = 0;
+                                }
+                                beatAt++;
+                            }
+                            if (clickLeft > 0) {
+                                double env = clickLeft / (double) (sr / 45) * 0.06;
+                                float c = (float) (Math.sin(clickPhase) * clickAmp * env * 6.0);
+                                clickPhase += 2 * Math.PI * clickFreq / sr;
+                                clickLeft--;
+                                l += c;
+                                rr += c;
+                            }
                             if (l > 1) l = 1; else if (l < -1) l = -1;
                             if (rr > 1) rr = 1; else if (rr < -1) rr = -1;
                             inter[i * 2] = (short) (l * 32000);
@@ -547,7 +585,8 @@ public class AudioEngine {
                         pos += Math.min(cnt, written / 2);
                     }
                     android.util.Log.i("V4Tune", "playStream writer done: session=" + session
-                            + " pos=" + pos + " waitedMs=" + waitedMs + " failed=" + writeFailed);
+                            + " pos=" + pos + " waitedMs=" + waitedMs + " failed=" + writeFailed
+                            + " metronome=" + metronome + " clicks=" + clickCount);
                     if (writeFailed) {
                         sampleStop[0] = true;
                         if (sampler != null) { try { sampler.join(80L); } catch (InterruptedException ignored) { } }

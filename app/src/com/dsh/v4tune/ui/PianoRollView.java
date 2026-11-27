@@ -48,6 +48,8 @@ public class PianoRollView extends View {
     }
 
     public interface Listener { void onSelectionChanged(Note n); void onNoteEdited(Note n, String what);
+        /** a note is being dragged/resized right now (no undo snapshot yet) - cheap live refresh only */
+        default void onNoteChanging() { }
         /** a clip drag begins: the caller snapshots the project for undo */
         void onClipDragStart();
         /** a clip was dragged to a new start tick */
@@ -375,6 +377,7 @@ public class PianoRollView extends View {
     }
 
     public float getPxPerTick() { return pxPerTick; }
+    public float getScrollTick() { return scrollTick; }
 
     public void setVisibleTickRange(long from, long to) { if (to <= from) to = from + 1L; pendingFrom = from;
         pendingTo = to; pendingRange = true; applyPendingRange(); invalidate();
@@ -588,10 +591,12 @@ public class PianoRollView extends View {
                     int nk = clampKey(origKey + Math.round((downY - y) / pxPerSemitone));
                     if (np != hitNote.pos || nk != hitNote.key) { hitNote.pos = np; hitNote.key = nk;
                         changed = true; invalidate();
+                        if (listener != null) listener.onNoteChanging();
                     }
                 } else if (mode == MODE_RESIZE && hitNote != null) { long d = (long) ((x - downX) / pxPerTick);
                     long nd = snap(origDur + d); if (nd < MIN_DUR) nd = MIN_DUR;
-                    if (nd != hitNote.dur) { hitNote.dur = nd; syncPartDur(hitPart); changed = true; invalidate(); }
+                    if (nd != hitNote.dur) { hitNote.dur = nd; syncPartDur(hitPart); changed = true; invalidate();
+                        if (listener != null) listener.onNoteChanging(); }
                 } else if (mode == MODE_VEL && hitNote != null) {
                     int nv = origVel + Math.round((downY - y) / (pxPerSemitone * 4f) * 127f);
                     if (nv < 0) nv = 0; if (nv > 127) nv = 127;
@@ -729,12 +734,8 @@ public class PianoRollView extends View {
 
     private void rebuildBars() { barsDirty = false; barCount = 0; if (song == null) return;
         long limit = Math.max(1920L, song.maxTick()) + 1920L; if (limit > 4000000L) limit = 4000000L; long t = 0L; int guard = 0;
-        while (t < limit && guard++ < 8192) { int m = 4, de = 4;
-            if (!song.timeSigs.isEmpty()) { int[] sig = song.timeSigAt(t);
-                if (sig != null && sig.length > 3) {
-                    if (sig[1] > 0) m = sig[1]; if (sig[3] > 0) de = sig[3];
-                }
-            }
+        while (t < limit && guard++ < 8192) { int[] meter = song.meterAt(t);
+            int m = Math.max(1, meter[0]), de = Math.max(1, meter[1]);
             long barLen = (long) m * (4L * 480L) / de; if (barLen < 60L) barLen = 60L;
             long beat = barLen / m; if (beat < 20L) beat = 20L; addBar(t, (int) beat); t += barLen;
         }

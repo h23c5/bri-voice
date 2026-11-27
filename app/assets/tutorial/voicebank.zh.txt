@@ -31,9 +31,10 @@
 5. 点「开始转换」，等待。
    电脑上实测约 20 秒；手机上通常是几分钟（一次性操作）。
    期间不要退出应用。
-6. 完成后会提示生成的文件名与大小，位置：
-       /sdcard/BriVoice_root/voicebanks/<名称>.v4voice
-       /sdcard/BriVoice_root/voicebanks/<名称>.v4neural
+6. 完成后会提示生成的文件名、大小和完整保存位置：
+       一般是 /sdcard/BriVoice_root/voicebanks/<id>.v4voice（或 .v4neural）
+       没给「所有文件访问」时（Android 10，或该开关没打开）落在
+       Android/data/com.bri.voice/files/BriVoice_root/voicebanks/
    生成后到「声库 → 从文件夹批量导入」选这个目录；导入后即可在歌手列表里选择，神经声库会带蓝色「AI」角标。
 
 【四、转换出来的包里有什么】
@@ -75,7 +76,8 @@ A: 不建议。它是由你已授权声库派生的数据；请自行确认授�
 4. 文件名编码：UTF-8 / Shift_JIS / GBK 都会尝试；zip 会按这三种编码依次解压重试。
 5. WAV 支持 8 / 16 / 24 bit PCM 和 32-bit float；损坏或缺失的 wav 会被跳过。
 6. 点「开始转换」，完成后显示声库名、元音数、频段数、辅音谱数与文件名。
-   生成的 .v4voice 或 .v4neural 在 /sdcard/BriVoice_root/voicebanks/；到「声库 → 从文件夹批量导入」导入后使用。
+   生成的 .v4voice / .v4neural 落在完成对话框写明的目录（一般 /sdcard/BriVoice_root/voicebanks/，没给
+   「所有文件访问」时在应用自己的目录）；到「声库 → 从文件夹批量导入」导入后使用。
 7. 失败时提示会写 oto 条目数和缺失 wav 数；把提示截图发出来即可定位。
    注意：转换器只按元音建库，多音阶 / CVVC / VCV 声库不会区分音阶；
    只测量元音、辅音起始段和谐波包络，不保存原始录音。

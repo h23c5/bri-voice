@@ -168,7 +168,7 @@ public final class StartScreen {
         LinearLayout row2 = row();
         row2.addView(card(L.t("start.singers"), L.t("start.singers.sub"), 0xFF7CE38B,
                 new View.OnClickListener() {
-                    public void onClick(View v) { go(); host.startSingers(); }
+                    public void onClick(View v) { host.startSingers(); }
                 }));
         row2.addView(card(L.t("start.more"), L.t("start.more.sub"), 0xFFFFB454,
                 new View.OnClickListener() {
@@ -240,11 +240,13 @@ public final class StartScreen {
         sub.setPadding(dp(2), dp(8), 0, dp(16));
         page.addView(sub);
 
+        // settings / tutorial / about open over the title screen and come back to it:
+        // they are not "enter a project", so the title screen must not be dismissed
         page.addView(clickRow(L.t("start.settings"), L.t("start.settings.sub"), new View.OnClickListener() {
-            public void onClick(View v) { go(); host.startSettings(); }
+            public void onClick(View v) { host.startSettings(); }
         }));
         page.addView(clickRow(L.t("start.tutorial"), L.t("start.tutorial.sub"), new View.OnClickListener() {
-            public void onClick(View v) { go(); host.startTutorial(); }
+            public void onClick(View v) { host.startTutorial(); }
         }));
         page.addView(clickRow(L.t("start.gitee"), L.t("start.gitee.sub"), new View.OnClickListener() {
             public void onClick(View v) { host.startGitee(); }
@@ -253,7 +255,7 @@ public final class StartScreen {
             public void onClick(View v) { host.startBilibili(); }
         }));
         page.addView(clickRow(L.t("start.about"), L.t("start.about.sub"), new View.OnClickListener() {
-            public void onClick(View v) { go(); host.startAbout(); }
+            public void onClick(View v) { host.startAbout(); }
         }));
 
         TextView foot = new TextView(a);

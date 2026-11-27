@@ -40,6 +40,16 @@ public class Song {
         return v;
     }
 
+    /** numerator/denominator in effect at tick. The stored entry is {tick, num, den, ...}; the extra
+     *  fields in files written by other editors are not a meter number, they repeat num/den. */
+    public int[] meterAt(long tick) {
+        int[] s = timeSigAt(tick);
+        if (s == null || s.length < 3) return new int[]{4, 4};
+        int num = s[1] > 0 ? s[1] : 4;
+        int den = s[2] > 0 ? s[2] : 4;
+        return new int[]{num, den};
+    }
+
     public Track track(int i) { return i >= 0 && i < tracks.size() ? tracks.get(i) : null; }
 
     public Voice voice(int bs, int pc) {

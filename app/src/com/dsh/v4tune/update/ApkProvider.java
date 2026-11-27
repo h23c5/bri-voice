@@ -30,7 +30,7 @@ public class ApkProvider extends ContentProvider {
         String name = uri.getLastPathSegment();
         if (name == null || name.length() == 0) throw new FileNotFoundException("no file name");
         if (name.contains("/") || name.contains("..")) throw new FileNotFoundException("bad name");
-        File f = new File(Updater.updateDir(), name);
+        File f = new File(Updater.updateDir(getContext()), name);
         if (!f.isFile()) throw new FileNotFoundException(name);
         return f;
     }

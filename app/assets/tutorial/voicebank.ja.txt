@@ -22,8 +22,10 @@ USB ケーブル、チャットのファイル転送、クラウドなど何で�
 3. 声庫名：アプリに表示したい名前（例「洛天依 BV」）。空欄ならフォルダ名を使います。
 4. 「変換を開始」を押して待ちます。PC で約 20 秒、スマホでは数分（一度きりの作業）。
    アプリは前面に置いたままにしてください。
-5. 完了するとファイル名とサイズが表示されます。出力先は
-       /sdcard/BriVoice_root/voicebanks/<名前>.v4voice
+5. 完了するとファイル名・サイズ・保存先フォルダが表示されます。
+   通常は /sdcard/BriVoice_root/voicebanks/<id>.v4voice、
+   「すべてのファイルへのアクセス」が無い場合（Android 10 など）は
+   Android/data/com.bri.voice/files/BriVoice_root/voicebanks/
    アプリが自動で認識します。ピアノロールで試聴できます。
 
 【4】パッケージの中身

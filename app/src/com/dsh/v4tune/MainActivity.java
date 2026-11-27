@@ -2,6 +2,7 @@ package com.dsh.v4tune;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.ClipData;
 import android.content.DialogInterface;
 import android.content.Intent;
@@ -16,6 +17,7 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -150,6 +152,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private VoiceModel currentVoice = null;      // BriVoice ships no voice: only installed voicebanks
     private int snapTicks = 240;
     private SliderBox snapBox, tempoBox, zoomBox;
+    /** top-bar controls that carry a state, kept so they can be refreshed after a change */
+    private com.dsh.v4tune.ui.ToolIcon snapIcon;
+    private TextView snapValue, meterBtn;
     /** zoom steps as a percentage of the 0.25 px/tick reference */
     private static final int[] ZOOM_LEVELS = {25, 50, 75, 100, 150, 200, 300, 400};
     private static final float ZOOM_REF_PX_PER_TICK = 0.25f;
@@ -161,6 +166,15 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private PianoRollView roll;
     private ParamView paramView;
     private TextView posText, statusText;
+    /** v12.4 top bar pieces: rail, track lanes, BPM and total-length readout */
+    private com.dsh.v4tune.ui.IconRail railView;
+    private View trackBarView;
+    private com.dsh.v4tune.ui.TrackStripView trackStripView;
+    private TextView modeEditBtn, modeSelBtn;
+    /** false = 选择模式: the strip only picks lanes and reorders them by dragging */
+    private boolean stripEditMode = true;
+    private ScrollView trackScroll;
+    private TextView bpmText, totalText;
     private Button playBtn;
     private Button newBtn, openBtn, exportBtn, packBtn, toolsBtn;
     private final AudioEngine engine = new AudioEngine();
@@ -191,8 +205,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             if (tick < 0L) return;
             if (roll != null) roll.setPlayheadTick(tick, followPlayhead);
             if (paramView != null) paramView.setPlayheadTick(tick);
+            if (trackStripView != null) trackStripView.setPlayhead(tick);
             String text = formatTick(tick);
-            if (!text.contentEquals(posText.getText())) posText.setText(text);
+            if (posText != null && !text.contentEquals(posText.getText())) posText.setText(text);
         }
     };
     /** set while the overlap dialog re-enters playback so the check does not ask again */
@@ -339,8 +354,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         setContentView(buildUi());
         refreshAll();
         if (cursor > 0) {
-            roll.setPlayheadTick(cursor);
-            paramView.setPlayheadTick(cursor);
+            syncCursor(cursor, true);
         }
         status(isLandscape() ? "已切换为横屏布局" : "已切换为竖屏布局");
     }
@@ -348,35 +362,36 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private View buildUi() {
         boolean land = isLandscape();
         LinearLayout root = new LinearLayout(this);
-        root.setOrientation(land ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        // v12.4 layout: one narrow icon rail on the left, then a vertical stack of
+        // track bar -> piano roll -> parameter lane -> status. Everything else lives in "more".
+        root.setOrientation(LinearLayout.HORIZONTAL);
         root.setBackgroundColor(Theme.BG_DEEP);
 
-        // In landscape the window is short and wide, so the controls move into a side column and the
-        // piano roll gets the full height; in portrait they stay as a top strip.
-        LinearLayout controls = new LinearLayout(this);
-        controls.setOrientation(land ? LinearLayout.VERTICAL : LinearLayout.VERTICAL);
-        if (!land) root.addView(toolbar(false));
-        if (land) {
-            android.widget.ScrollView side = new android.widget.ScrollView(this);
-            side.setBackgroundColor(Color.parseColor("#12141A"));
-            LinearLayout col = new LinearLayout(this);
-            col.setOrientation(LinearLayout.VERTICAL);
-            col.addView(toolbar(true));
-            col.addView(transportBar(true));
-            side.addView(col);
-            root.addView(side, new LinearLayout.LayoutParams(dp(228), ViewGroup.LayoutParams.MATCH_PARENT));
-        } else {
-            // portrait: the row now carries sliders too, so let it scroll instead of clipping
-            HorizontalScrollView hs = new HorizontalScrollView(this);
-            hs.setHorizontalScrollBarEnabled(false);
-            hs.setBackgroundColor(Theme.BG_DEEP);
-            hs.addView(transportBar(false));
-            root.addView(hs, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        }
+        railView = new com.dsh.v4tune.ui.IconRail(this);
+        railView.setPlaying(engine != null && engine.isPlaying());
+        railView.setListener(new com.dsh.v4tune.ui.IconRail.Listener() {
+            public void onRailItem(int item) {
+                switch (item) {
+                    case com.dsh.v4tune.ui.IconRail.ITEM_NEW: newProject(); break;
+                    case com.dsh.v4tune.ui.IconRail.ITEM_OPEN: openProject(); break;
+                    case com.dsh.v4tune.ui.IconRail.ITEM_SAVE: saveProject(false); break;
+                    case com.dsh.v4tune.ui.IconRail.ITEM_PLAY:
+                        if (engine.isPlaying()) stopPlay(); else playSong();
+                        break;
+                    case com.dsh.v4tune.ui.IconRail.ITEM_UNDO: doUndo(); break;
+                    case com.dsh.v4tune.ui.IconRail.ITEM_REDO: doRedo(); break;
+                    case com.dsh.v4tune.ui.IconRail.ITEM_AI: aiAskDialog(); break;
+                    default: moreSheet(); break;
+                }
+            }
+        });
+        root.addView(railView, new LinearLayout.LayoutParams(dp(64), ViewGroup.LayoutParams.MATCH_PARENT));
 
         LinearLayout right = new LinearLayout(this);
         right.setOrientation(LinearLayout.VERTICAL);
+        trackBarView = buildTrackBar();
+        right.addView(trackBarView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         roll = new PianoRollView(this);
         roll.setListener(this);
         roll.setSnapTicks(snapTicks);
@@ -413,7 +428,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             public void onViewChanged(float px, float tick, float leftInset) {
                 // read the gutter fresh: it is 0 until the roll has been laid out, and a stale 0
                 // left the whole tuning lane drawn 110 px to the left of the note grid
-                paramView.followHorizontal(px, tick, roll.keyWidth());
+                if (paramView != null) paramView.followHorizontal(px, tick, roll.keyWidth());
+                if (trackStripView != null) trackStripView.followHorizontal(px, tick, roll.keyWidth());
             }
         });
 
@@ -431,7 +447,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             public void onParamSelected(String id) { status(L.t("status.param", id)); }
         });
         right.addView(paramView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(land ? 130 : 196)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(land ? 138 : 196)));
 
         statusText = new TextView(this);
         statusText.setTextColor(Theme.TEXT_DIM);
@@ -451,6 +467,569 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 ? new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
                 : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         return root;
+    }
+
+
+    /** play/stop state lives in the rail icon, not in a text button */
+    private void setPlayUi(boolean playing) {
+        if (railView != null) railView.setPlaying(playing);
+        if (playBtn != null) playBtn.setText(playing ? L.t("transport.stop") : L.t("transport.play"));
+    }
+
+    /** everything that used to sit on the main toolbar lives here */
+    private void moreSheet() {
+        final String[] items = {
+                L.t("toolbar.save.as"),
+                L.t("toolbar.export.wav"),
+                L.t("toolbar.voicebank"),
+                L.t("track.manage"),
+                L.t("start.settings"),
+                L.t("start.tutorial"),
+                L.t("start.gitee"),
+                L.t("start.bili"),
+                L.t("toolbar.about"),
+                L.t("toolbar.demo"),
+                L.t("more.character"),
+                L.t("menu.tools")
+        };
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(14), dp(10), dp(14), dp(12));
+        final Dialog dlg = new Dialog(this);
+        TextView head = new TextView(this);
+        head.setText(L.t("start.more"));
+        head.setTextColor(Theme.ACCENT);
+        head.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f);
+        head.setTypeface(head.getTypeface(), android.graphics.Typeface.BOLD);
+        head.setPadding(dp(6), dp(2), 0, dp(8));
+        box.addView(head);
+        LinearLayout row = null;
+        for (int i = 0; i < items.length; i++) {
+            if (i % 2 == 0) {
+                row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                box.addView(row, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            }
+            Button b = small(items[i]);
+            final int which = i;
+            b.setOnClickListener(new View.OnClickListener() {
+                public void onClick(View v) {
+                    dlg.dismiss();
+                    switch (which) {
+                        case 0: saveProject(true); break;
+                        case 1: exportWav(); break;
+                        case 2: managePacks(); break;
+                        case 3: trackMenu(); break;
+                        case 4: settingsDialog(); break;
+                        case 5: showTutorial(); break;
+                        case 6: openUrl("https://gitee.com/h23c5/bri-voice"); break;
+                        case 7: openUrl("https://space.bilibili.com/3461562746538484"); break;
+                        case 8: about(); break;
+                        case 9: beginEdit(); song = Demo.twinkle(); commitEdit(); refreshAll(); scrollToContent(); status("已载入示例乐句"); break;
+                        case 10: characterDialog(); break;
+                        default: toolsMenu(); break;
+                    }
+                }
+            });
+            LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            blp.setMargins(dp(4), dp(3), dp(4), dp(3));
+            row.addView(b, blp);
+        }
+        dlg.setContentView(box);
+        Window win = dlg.getWindow();
+        if (win != null) {
+            win.setBackgroundDrawable(Theme.card(this, Theme.PANEL));
+            win.setLayout((int) (getResources().getDisplayMetrics().widthPixels * 0.62f),
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+        dlg.show();
+    }
+
+    private View buildTrackBar() {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setBackgroundColor(Theme.PANEL);
+
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(8), dp(3), dp(10), dp(3));
+
+        TextView add = new TextView(this);
+        add.setText("＋");
+        add.setTextColor(Theme.ACCENT);
+        add.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f);
+        add.setGravity(Gravity.CENTER);
+        add.setContentDescription(L.t("track.add"));
+        add.setBackground(Theme.card(this, Theme.PANEL_DK));
+        add.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { addTrackMenu(); }
+        });
+        bar.addView(add, new LinearLayout.LayoutParams(dp(30), dp(30)));
+
+        modeEditBtn = modeChip("修改");
+        modeEditBtn.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { setStripMode(true); }
+        });
+        LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        elp.setMargins(dp(8), 0, 0, 0);
+        bar.addView(modeEditBtn, elp);
+
+        modeSelBtn = modeChip("选择");
+        modeSelBtn.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { setStripMode(false); }
+        });
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        slp.setMargins(dp(4), 0, 0, 0);
+        bar.addView(modeSelBtn, slp);
+
+        bpmText = new TextView(this);
+        bpmText.setTextColor(Theme.TEXT);
+        bpmText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+        bpmText.setPadding(dp(8), dp(4), dp(8), dp(4));
+        bpmText.setBackground(Theme.card(this, Theme.PANEL_DK));
+        bpmText.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { editTempo(); }
+        });
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        blp.setMargins(dp(6), 0, 0, 0);
+        bar.addView(bpmText, blp);
+
+        View spacer = new View(this);
+        bar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+
+        // --- right side: snap (icon + value), time signature, mixer, go to start / end ---
+        LinearLayout snapBox2 = new LinearLayout(this);
+        snapBox2.setOrientation(LinearLayout.HORIZONTAL);
+        snapBox2.setGravity(Gravity.CENTER_VERTICAL);
+        snapBox2.setPadding(dp(5), dp(3), dp(8), dp(3));
+        snapBox2.setBackground(Theme.card(this, Theme.PANEL_DK));
+        snapBox2.setContentDescription("网格吸附");
+        View.OnClickListener snapClick = new View.OnClickListener() {
+            public void onClick(View v) { cycleSnap(null); }
+        };
+        snapIcon = new com.dsh.v4tune.ui.ToolIcon(this, com.dsh.v4tune.ui.ToolIcon.SNAP);
+        snapIcon.setOnClickListener(snapClick);
+        LinearLayout.LayoutParams snapIconLp = new LinearLayout.LayoutParams(dp(20), dp(20));
+        snapBox2.addView(snapIcon, snapIconLp);
+        snapValue = new TextView(this);
+        snapValue.setTextColor(Theme.TEXT);
+        snapValue.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
+        snapValue.setOnClickListener(snapClick);
+        LinearLayout.LayoutParams snapValLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        snapValLp.setMargins(dp(3), 0, 0, 0);
+        snapBox2.addView(snapValue, snapValLp);
+        LinearLayout.LayoutParams snapBoxLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        snapBoxLp.setMargins(dp(6), 0, 0, 0);
+        bar.addView(snapBox2, snapBoxLp);
+
+        meterBtn = new TextView(this);
+        meterBtn.setTextColor(Theme.TEXT);
+        meterBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
+        meterBtn.setPadding(dp(8), dp(4), dp(8), dp(4));
+        meterBtn.setBackground(Theme.card(this, Theme.PANEL_DK));
+        meterBtn.setContentDescription("拍号");
+        meterBtn.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { cycleMeter(); }
+        });
+        meterBtn.setOnLongClickListener(new View.OnLongClickListener() {
+            public boolean onLongClick(View v) {
+                boolean on = !engine.metronome;
+                engine.metronome = on;
+                status(on ? "节拍器: 开（每拍一下，小节首拍拍重）" : "节拍器: 关");
+                return true;
+            }
+        });
+        LinearLayout.LayoutParams meterLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        meterLp.setMargins(dp(6), 0, 0, 0);
+        bar.addView(meterBtn, meterLp);
+
+        toolIcon(bar, com.dsh.v4tune.ui.ToolIcon.MIXER, "混音器", new View.OnClickListener() {
+            public void onClick(View v) { showMixer(); }
+        });
+        toolIcon(bar, com.dsh.v4tune.ui.ToolIcon.TO_START, "回到开始", new View.OnClickListener() {
+            public void onClick(View v) { seekTo(0); }
+        });
+        toolIcon(bar, com.dsh.v4tune.ui.ToolIcon.TO_END, "回到末尾", new View.OnClickListener() {
+            public void onClick(View v) { seekTo(song.maxTick()); }
+        });
+        flushTopBar();
+
+        LinearLayout clock = new LinearLayout(this);
+        clock.setOrientation(LinearLayout.VERTICAL);
+        clock.setGravity(Gravity.END);
+        posText = new TextView(this);
+        posText.setTextColor(Theme.TEXT);
+        posText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+        totalText = new TextView(this);
+        totalText.setTextColor(Theme.TEXT_DIM);
+        totalText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f);
+        clock.addView(posText);
+        clock.addView(totalText);
+        bar.addView(clock);
+        col.addView(bar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        trackStripView = new com.dsh.v4tune.ui.TrackStripView(this);
+        trackStripView.setListener(new com.dsh.v4tune.ui.TrackStripView.Listener() {
+            public void onLaneSelected(int i) { selectTrack(i); }
+            public void onLaneLongPress(int i) { trackLongPress(i); }
+            public void onLaneShift(int i, long delta) { shiftTrack(i, delta); }
+            public void onLaneMute(int i, boolean mute) {
+                if (i < 0 || i >= song.tracks.size()) return;
+                beginEdit();
+                song.tracks.get(i).mute = mute;
+                commitEdit();
+                refreshTrackBar();
+                status((mute ? "已静音 " : "已取消静音 ") + trackLabel(i));
+            }
+            public void onLaneSolo(int i, boolean solo) {
+                if (i < 0 || i >= song.tracks.size()) return;
+                beginEdit();
+                song.tracks.get(i).solo = solo;
+                commitEdit();
+                refreshTrackBar();
+                status((solo ? "独奏 " : "取消独奏 ") + trackLabel(i));
+            }
+            public void onSeek(long tick) { seekTo(tick); }
+            public void onLaneMove(int from, int to) {
+                if (stripEditMode) return;       // 修改模式里上下拖动不改顺序
+                moveTrack(from, to);
+            }
+        });
+        trackStripView.setEditMode(stripEditMode);
+        styleStripMode();
+        trackScroll = new ScrollView(this);
+        trackScroll.setVerticalScrollBarEnabled(false);
+        trackScroll.setFillViewport(false);
+        trackScroll.addView(trackStripView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        col.addView(trackScroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(110)));
+        refreshTrackBar();
+        syncStripToRoll();
+        return col;
+    }
+
+    /** hand the roll's current horizontal window to the arrangement strip (same zoom, same offset) */
+    private void syncStripToRoll() {
+        if (trackStripView == null || roll == null) return;
+        trackStripView.followHorizontal(roll.getPxPerTick(), roll.getScrollTick(), roll.keyWidth());
+    }
+
+    /** rebuild every lane thumbnail from the song plus the in-memory audio clips */
+    private void refreshTrackBar() {
+        if (bpmText != null) bpmText.setText("BPM " + tempoText());
+        if (posText != null) posText.setText(formatTick(startTick));
+        if (trackStripView == null) return;
+
+        java.util.ArrayList<com.dsh.v4tune.ui.TrackStripView.Lane> lanes =
+                new java.util.ArrayList<com.dsh.v4tune.ui.TrackStripView.Lane>();
+        String singer = currentVoice == null ? "—" : singerName(currentVoice);
+        long contentEnd = 0L;
+        for (int i = 0; i < song.tracks.size(); i++) {
+            com.dsh.v4tune.model.Track t = song.tracks.get(i);
+            com.dsh.v4tune.ui.TrackStripView.Lane ln = new com.dsh.v4tune.ui.TrackStripView.Lane();
+            String defName = L.t("track.name", i + 1);
+            String raw = t.name == null ? "" : t.name.trim();
+            String title = defName;
+            if (t.audio) {
+                title = raw.isEmpty() ? defName : raw;
+            } else if (!raw.isEmpty() && !raw.equals(defName) && !raw.equals("音轨 " + (i + 1))) {
+                title = defName + " · " + raw;
+            }
+            ln.name = title;
+            ln.audio = t.audio;
+            ln.mute = t.mute;
+            ln.solo = t.solo;
+            ln.color = com.dsh.v4tune.ui.TrackStripView.colorFor(i);
+            for (Part part : t.parts) {
+                for (Note n : part.notes) {
+                    ln.notes.add(new long[]{n.pos, n.dur, n.key});
+                    contentEnd = Math.max(contentEnd, n.end());
+                }
+            }
+            for (AudioClip cl : clipsFor(i)) {
+                if (cl == null) continue;
+                ln.clips.add(cl);
+                contentEnd = Math.max(contentEnd, cl.endTick((int) Math.round(song.tempoAt(0) * 100)));
+            }
+            String shortSinger = singer;
+            int cut = shortSinger.indexOf("（");
+            if (cut > 0) shortSinger = shortSinger.substring(0, cut).trim();
+            ln.sub = t.audio
+                    ? (ln.clips.isEmpty() ? "音频轨（空）" : ln.clips.size() + " 个音频片段")
+                    : shortSinger;
+            lanes.add(ln);
+        }
+        long len = Math.max(song.maxTick(), contentEnd);
+        if (totalText != null) totalText.setText("/ " + formatDuration(len));
+        trackStripView.setSongLength(len);
+        trackStripView.setTempo((int) Math.round(song.tempoAt(0) * 100));
+        trackStripView.setPlayhead(startTick);
+        trackStripView.setLanes(lanes, trackIndex);
+        syncStripToRoll();
+
+        int rows = Math.max(1, song.tracks.size());
+        int h = dp(18) + dp(38) * rows + dp(2);
+        int maxH = dp(150);
+        if (trackScroll != null) {
+            ViewGroup.LayoutParams lp = trackScroll.getLayoutParams();
+            if (lp != null && lp.height != Math.min(h, maxH)) {
+                lp.height = Math.min(h, maxH);
+                trackScroll.setLayoutParams(lp);
+            }
+        }
+    }
+
+    private String formatDuration(long tick) {
+        double sec = TimeUtil.tickToSec(song, Math.max(0L, tick));
+        int m = (int) (sec / 60), s = (int) Math.round(sec - m * 60);
+        return String.format(java.util.Locale.US, "%d:%02d", m, s);
+    }
+
+    /** track name, or a positional fallback when the project stores an empty one */
+    private String trackLabel(int i) {
+        if (i < 0 || i >= song.tracks.size()) return "?";
+        String n = song.tracks.get(i).name;
+        return n == null || n.trim().isEmpty() ? ("音轨 " + (i + 1)) : n;
+    }
+
+    private void selectTrack(int idx) {
+        if (idx < 0 || idx >= song.tracks.size()) return;
+        String shown = trackLabel(idx);
+        if (idx == trackIndex) { status("当前音轨: " + shown); return; }
+        beginEdit();
+        trackIndex = idx;
+        commitEdit();
+        refreshAll();
+        roll.showKeyRange(48, 84);
+        scrollToContent();
+        status("当前音轨: " + shown);
+    }
+
+    /** small toggle above the arrangement strip */
+    private TextView modeChip(String label) {
+        TextView v = new TextView(this);
+        v.setText(label);
+        v.setTextColor(Theme.TEXT_DIM);
+        v.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
+        v.setGravity(Gravity.CENTER);
+        v.setPadding(dp(9), dp(4), dp(9), dp(4));
+        return v;
+    }
+
+    /**
+     * 修改 = every direct manipulation the strip always had (M/S, long press menu, drag to shift
+     * the content). 选择 = none of those, so a slip of the finger cannot change the song; the strip
+     * only picks a lane and moves it to another row.
+     */
+    private void setStripMode(boolean edit) {
+        stripEditMode = edit;
+        if (trackStripView != null) trackStripView.setEditMode(edit);
+        styleStripMode();
+        status(edit ? "音轨栏：修改模式" : "音轨栏：选择模式（长按音轨再拖动可排序）");
+    }
+
+    private void styleStripMode() {
+        if (modeEditBtn != null) {
+            modeEditBtn.setTextColor(stripEditMode ? Theme.ACCENT : Theme.TEXT_DIM);
+            modeEditBtn.setBackground(stripEditMode ? Theme.card(this, Theme.PANEL_DK) : null);
+        }
+        if (modeSelBtn != null) {
+            modeSelBtn.setTextColor(stripEditMode ? Theme.TEXT_DIM : Theme.ACCENT);
+            modeSelBtn.setBackground(stripEditMode ? null : Theme.card(this, Theme.PANEL_DK));
+        }
+    }
+
+    /** starts at the same place the old add button was: a menu instead of a guess */
+    private void addTrackMenu() {
+        final String[] items = {"新建歌声轨", "添加音频轨（WAV）"};
+        new AlertDialog.Builder(this)
+                .setTitle(L.t("track.add"))
+                .setItems(items, new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int which) {
+                        if (which == 0) addTrack(); else addAudioTrack();
+                    }
+                })
+                .setNegativeButton(L.t("dlg.cancel"), null)
+                .show();
+    }
+
+    private void addTrack() {
+        beginEdit();
+        com.dsh.v4tune.model.Track t = new com.dsh.v4tune.model.Track();
+        t.no = song.tracks.size() + 1;
+        t.name = "音轨 " + (song.tracks.size() + 1);
+        t.parts.add(new Part());
+        song.tracks.add(t);
+        trackIndex = song.tracks.size() - 1;
+        commitEdit();
+        refreshAll();
+        scrollToContent();
+        status("已新建 " + t.name);
+    }
+
+    /** creates an empty audio track, then reuses the WAV picker so the clip lands on it */
+    private void addAudioTrack() {
+        beginEdit();
+        com.dsh.v4tune.model.Track t = new com.dsh.v4tune.model.Track();
+        t.no = song.tracks.size() + 1;
+        t.audio = true;
+        t.name = "音频 " + (song.tracks.size() + 1);
+        song.tracks.add(t);
+        trackIndex = song.tracks.size() - 1;
+        commitEdit();
+        refreshAll();
+        status("音频轨已建好，请选择 WAV");
+        importWav();
+    }
+
+    /** moves the whole content of a track along the timeline (drag on the lane / 更改 → 相对位置) */
+    private void shiftTrack(int index, long deltaTicks) {
+        if (index < 0 || index >= song.tracks.size() || deltaTicks == 0L) return;
+        beginEdit();
+        com.dsh.v4tune.model.Track t = song.tracks.get(index);
+        for (Part part : t.parts) {
+            part.pos = Math.max(0L, part.pos + deltaTicks);
+            for (Note n : part.notes) n.pos = Math.max(0L, n.pos + deltaTicks);
+        }
+        for (AudioClip cl : clipsFor(index)) {
+            if (cl != null) cl.startTick = Math.max(0L, cl.startTick + deltaTicks);
+        }
+        commitEdit();
+        refreshAll();
+        status("音轨内容平移 " + (deltaTicks > 0 ? "+" : "") + deltaTicks + " tick");
+    }
+
+    private long contentStart(int index) {
+        long min = Long.MAX_VALUE;
+        com.dsh.v4tune.model.Track t = song.tracks.get(index);
+        for (Part part : t.parts) {
+            if (!part.notes.isEmpty()) min = Math.min(min, part.pos);
+            for (Note n : part.notes) min = Math.min(min, n.pos);
+        }
+        for (AudioClip cl : clipsFor(index)) if (cl != null) min = Math.min(min, cl.startTick);
+        return min == Long.MAX_VALUE ? 0L : min;
+    }
+
+    private void trackLongPress(final int idx) {
+        if (idx < 0 || idx >= song.tracks.size()) return;
+        final com.dsh.v4tune.model.Track t = song.tracks.get(idx);
+        new AlertDialog.Builder(this)
+                .setTitle(t.name)
+                .setItems(new String[]{"更改", "删除"}, new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int which) {
+                        if (which == 0) trackEditMenu(idx); else confirmDeleteTrack(idx);
+                    }
+                })
+                .show();
+    }
+
+    private void trackEditMenu(final int idx) {
+        final com.dsh.v4tune.model.Track t = song.tracks.get(idx);
+        final String[] items = {
+                "重命名",
+                t.audio ? "重新选择音频" : "更换歌手",
+                "调整相对位置（起始小节）",
+                "上移",
+                "下移"
+        };
+        new AlertDialog.Builder(this)
+                .setTitle("更改 · " + t.name)
+                .setItems(items, new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int which) {
+                        switch (which) {
+                            case 0:
+                                selectTrack(idx);
+                                renameTrack();
+                                break;
+                            case 1:
+                                selectTrack(idx);
+                                if (t.audio) {
+                                    clipsFor(idx).clear();
+                                    importWav();
+                                } else {
+                                    pickSinger();
+                                }
+                                break;
+                            case 2: askTrackStart(idx); break;
+                            case 3: moveTrack(idx, idx - 1); break;
+                            default: moveTrack(idx, idx + 1); break;
+                        }
+                    }
+                })
+                .setNegativeButton(L.t("dlg.cancel"), null)
+                .show();
+    }
+
+    private void askTrackStart(final int idx) {
+        final EditText et = new EditText(this);
+        et.setInputType(InputType.TYPE_CLASS_NUMBER);
+        et.setText(String.valueOf(contentStart(idx) / 1920L + 1));
+        new AlertDialog.Builder(this)
+                .setTitle("起始小节（第几小节开始）")
+                .setView(et)
+                .setPositiveButton(L.t("dlg.ok"), new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) {
+                        long bar;
+                        try { bar = Long.parseLong(et.getText().toString().trim()); }
+                        catch (Throwable x) { status("请输入小节号"); return; }
+                        if (bar < 1) bar = 1;
+                        long target = (bar - 1) * 1920L;
+                        shiftTrack(idx, target - contentStart(idx));
+                    }
+                })
+                .setNegativeButton(L.t("dlg.cancel"), null)
+                .show();
+    }
+
+    private void moveTrack(int from, int to) {
+        if (from < 0 || from >= song.tracks.size()) return;
+        if (to < 0 || to >= song.tracks.size() || to == from) return;
+        beginEdit();
+        com.dsh.v4tune.model.Track t = song.tracks.remove(from);
+        song.tracks.add(to, t);
+        // the clip lists are parallel to the track list: move them together or clips will follow
+        // the wrong track after the first reorder
+        while (clips.size() < song.tracks.size()) clips.add(new java.util.ArrayList<AudioClip>());
+        java.util.ArrayList<AudioClip> cs = clips.remove(from);
+        clips.add(to, cs);
+        trackIndex = to;
+        for (int i = 0; i < song.tracks.size(); i++) song.tracks.get(i).no = i + 1;
+        commitEdit();
+        refreshAll();
+        status("音轨已移动，当前: " + trackLabel(trackIndex));
+    }
+
+    private void confirmDeleteTrack(final int idx) {
+        if (song.tracks.size() <= 1) { status("至少要保留一条音轨"); return; }
+        final com.dsh.v4tune.model.Track t = song.tracks.get(idx);
+        new AlertDialog.Builder(this)
+                .setTitle("删除音轨")
+                .setMessage("确定删除「" + t.name + "」及其内容？可以撤销。")
+                .setPositiveButton("删除", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) {
+                        beginEdit();
+                        song.tracks.remove(idx);
+                        if (idx < clips.size()) clips.remove(idx);
+                        if (trackIndex >= song.tracks.size()) trackIndex = song.tracks.size() - 1;
+                        for (int i = 0; i < song.tracks.size(); i++) song.tracks.get(i).no = i + 1;
+                        commitEdit();
+                        refreshAll();
+                        status("已删除音轨: " + t.name);
+                    }
+                })
+                .setNegativeButton(L.t("dlg.cancel"), null)
+                .show();
     }
 
     /** dedicated sheet so the character feature is not buried at the bottom of settings */
@@ -633,6 +1212,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         if (!fromUser) return;
                         snapTicks = snapTicksAt(pr);
                         roll.setSnapTicks(snapTicks);
+                        syncSnapIcon();
                         snapBox.setValue(snapValueText());
                         status(snapTicks == 0 ? L.t("status.snap.off") : L.t("status.snap", 1920 / snapTicks));
                     }
@@ -835,7 +1415,13 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     public void onNoteEdited(Note n, String what) {
         commitEdit();
         roll.refresh();
+        refreshTrackBar();          // the strip is a thumbnail of the same notes: it changes with them
         status("编辑: " + what + (n != null ? "  " + n.lyric : ""));
+    }
+
+    /** the roll is still dragging a note: follow along without snapshotting undo on every frame */
+    public void onNoteChanging() {
+        refreshTrackBar();
     }
 
     public void onRequestLyricEdit(Note n) {
@@ -859,11 +1445,37 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         }, "v4tune-audition").start();
     }
 
-    /** playback cursor dragged */
+    /** playback cursor dragged on the roll ruler */
     public void onPlayheadMoved(long tick) {
-        startTick = Math.max(0L, tick);
-        posText.setText(formatTick(startTick));
-        paramView.setPlayheadTick(startTick);
+        syncCursor(tick, false);
+        status("播放位置: " + formatTick(startTick));
+    }
+
+    /**
+     * One cursor, several views. Every seek path (roll ruler, arrangement ruler, AI "play",
+     * stop, end of song) goes through here so the piano roll, the strip, the parameter lane
+     * and the clock can never drift apart.
+     */
+    private void syncCursor(long tick, boolean follow) {
+        if (tick < 0L) tick = 0L;
+        startTick = tick;
+        if (roll != null) roll.setPlayheadTick(tick, follow);
+        if (paramView != null) paramView.setPlayheadTick(tick);
+        if (trackStripView != null) trackStripView.setPlayhead(tick);
+        if (posText != null) posText.setText(formatTick(tick));
+    }
+
+    /** arrangement ruler tap/drag: park every cursor on that tick and stop whatever was running */
+    private void seekTo(long tick) {
+        // A render or a playback callback would otherwise keep writing the old position over the
+        // one the finger just picked, so both are cancelled before the cursor moves. Pressing play
+        // afterwards starts from this tick (playSong reads startTick).
+        if (engine.isPlaying()) {
+            cancelPlayheadRefresh();
+            engine.stop();
+            setPlayUi(false);
+        }
+        syncCursor(tick, true);
         status("播放位置: " + formatTick(startTick));
     }
 
@@ -873,10 +1485,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         roll.setSongKeepView(song);      // keep the view still while editing
         roll.setTrackIndex(trackIndex);
         if (roll != null) roll.setClips(clipsFor(trackIndex));
-        if (trackBtn != null) {
-            String tn = (song.tracks != null && trackIndex < song.tracks.size()) ? song.tracks.get(trackIndex).name : null;
-            trackBtn.setText(L.t("track.name", trackIndex + 1) + (tn == null || tn.isEmpty() ? "" : (" " + tn)));
-        }
+        refreshTrackBar();
+        flushTopBar();
         roll.setSnapTicks(snapTicks);
         Part p = currentPart();
         paramView.setSong(song);
@@ -1330,6 +1940,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         else if (snapTicks == 60) snapTicks = 0;
         else snapTicks = 480;
         roll.setSnapTicks(snapTicks);
+        syncSnapIcon();
         if (b != null) b.setText(snapText());
         status(snapTicks == 0 ? "网格吸附已关闭" : ("网格吸附: " + (1920 / snapTicks) + " 分音符"));
     }
@@ -1846,6 +2457,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             status(moved ? L.t("status.wav.added.atstart", nm, d.frames / 44100.0)
                            : L.t("status.wav.added", nm, d.frames / 44100.0));
             toast(L.t("status.wav.added", nm, d.frames / 44100.0));
+            refreshTrackBar();
         } catch (Throwable t) {
             status(L.t("status.wav.fail", String.valueOf(t.getMessage())));
         }
@@ -2455,16 +3067,14 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
     /** First-run coach marks: each step highlights the real button it is talking about. */
     private void showOnboarding() {
-        if (newBtn == null || packBtn == null || playBtn == null || toolsBtn == null) {
+        if (railView == null || trackBarView == null || roll == null) {
             status("请先把窗口转成横屏或竖屏再试"); return;
         }
         com.dsh.v4tune.ui.OnboardingOverlay.Step[] steps = new com.dsh.v4tune.ui.OnboardingOverlay.Step[]{
-                new com.dsh.v4tune.ui.OnboardingOverlay.Step(newBtn, "1. 新建工程", "点这里从空白开始；也可以点「打开」导入 .vsqx / .ustx / .ust / .svip3。"),
-                new com.dsh.v4tune.ui.OnboardingOverlay.Step(openBtn, "2. 打开工程", "支持 VOCALOID4 .vsqx、OpenUtau .ustx、UTAU .ust、XStudio .svip3。"),
-                new com.dsh.v4tune.ui.OnboardingOverlay.Step(packBtn, "3. 导入声库", "先装一个声库：.v4voice 或神经声库 .v4neural，或菜单里的「导入 UTAU 声库」支持 oto.ini 文件夹和 zip。"),
-                new com.dsh.v4tune.ui.OnboardingOverlay.Step(playBtn, "4. 试听", "点播放边渲边播；再点一次停止。参数和音符编辑后会自动保存。"),
-                new com.dsh.v4tune.ui.OnboardingOverlay.Step(exportBtn, "5. 导出 WAV", "满意后导出 44.1kHz WAV，文件在 BriVoice_root/export。"),
-                new com.dsh.v4tune.ui.OnboardingOverlay.Step(toolsBtn, "6. 工具与设置", "合成方式、音色、自动保存、教程都在这里；随时可以重看这个引导。")
+                new com.dsh.v4tune.ui.OnboardingOverlay.Step(railView, "1. 左边图标栏", "新建 / 打开 / 保存 / 播放 / 撤销 / 重做 / AI 调音都在左边。"),
+                new com.dsh.v4tune.ui.OnboardingOverlay.Step(trackBarView, "2. 音轨栏", "「＋」新建歌声轨或音频轨；点缩略图切换轨；左右拖动改内容位置；长按改设置或删除。"),
+                new com.dsh.v4tune.ui.OnboardingOverlay.Step(roll, "3. 画音符", "双击空白处加音符，拖动移动，点音符改歌词；下面是参数曲线。"),
+                new com.dsh.v4tune.ui.OnboardingOverlay.Step(railView, "4. 其它都在「更多」", "另存为、导出 WAV、声库、设置、教程、链接和关于都收进了左边最下面的「更多」。")
         };
         com.dsh.v4tune.ui.OnboardingOverlay.show(this, steps);
     }
@@ -2480,18 +3090,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             updateToast(L.t("tuto.missing"));
             return;
         }
-        if (tutorialTitles == null || tutorialTitles.length == 0) {
-            showTutorialPage(0);
-            return;
-        }
-        final String[] items = tutorialTitles;
-        new AlertDialog.Builder(this)
-                .setTitle("教程 · 选择章节")
-                .setItems(items, new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface d, int which) { showTutorialPage(which); }
-                })
-                .setNegativeButton("关闭", null)
-                .show();
+        // chapter rail on the left, page jumping and search on top of the same parsed text
+        new com.dsh.v4tune.ui.TutorialScreen(this, tutorialText).show();
     }
 
     private void loadTutorial() {
@@ -2535,35 +3135,6 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         }
     }
 
-    /** one chapter, scrolled to its heading, with a "目录" button back to the picker */
-    private void showTutorialPage(int index) {
-        final android.widget.ScrollView sv = new android.widget.ScrollView(this);
-        final android.widget.TextView tv = new android.widget.TextView(this);
-        tv.setText(tutorialText);
-        tv.setTextSize(13);
-        tv.setPadding(dp(18), dp(10), dp(18), dp(14));
-        sv.addView(tv);
-        final AlertDialog dlg = new AlertDialog.Builder(this)
-                .setTitle(index >= 0 && index < tutorialTitles.length ? tutorialTitles[index] : "教程")
-                .setView(sv)
-                .setPositiveButton("好", null)
-                .setNeutralButton("目录", new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface d, int w) { showTutorial(); }
-                })
-                .show();
-        if (index >= 0 && index < tutorialStarts.length) {
-            final int line = tutorialText.substring(0, tutorialStarts[index]).split("\n", -1).length - 1;
-            sv.post(new Runnable() {
-                public void run() {
-                    android.text.Layout l = tv.getLayout();
-                    if (l != null && line >= 0 && line < l.getLineCount()) {
-                        sv.scrollTo(0, Math.max(0, l.getLineTop(line) - dp(6)));
-                    }
-                }
-            });
-        }
-    }
-
     private void updateToast(String s) {
         android.widget.Toast.makeText(this, s, android.widget.Toast.LENGTH_LONG).show();
     }
@@ -2592,7 +3163,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         pd.setMax(1000);
         pd.setCancelable(false);
         pd.show();
-        com.dsh.v4tune.update.Updater.download(e, new com.dsh.v4tune.update.Updater.DownloadCb() {
+        com.dsh.v4tune.update.Updater.download(this, e, new com.dsh.v4tune.update.Updater.DownloadCb() {
             public void progress(final int permille) {
                 runOnUiThread(new Runnable() { public void run() { pd.setProgress(permille); } });
             }
@@ -3160,6 +3731,62 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         return b;
     }
 
+    /** a compact canvas-drawn icon button for the top bar: no text, size fixed by the caller */
+    private com.dsh.v4tune.ui.ToolIcon toolIcon(LinearLayout bar, int kind, String desc,
+                                                View.OnClickListener l) {
+        com.dsh.v4tune.ui.ToolIcon ic = new com.dsh.v4tune.ui.ToolIcon(this, kind);
+        ic.setContentDescription(desc);
+        ic.setBackground(Theme.card(this, Theme.PANEL_DK));
+        ic.setOnClickListener(l);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(26), dp(26));
+        lp.setMargins(dp(4), 0, 0, 0);
+        bar.addView(ic, lp);
+        return ic;
+    }
+
+    /** keeps the snap icon + its value lit/in step, wherever the value was changed */
+    private void syncSnapIcon() {
+        if (snapIcon != null) snapIcon.setActive(snapTicks != 0);
+        if (snapValue != null) snapValue.setText(snapTicks == 0 ? "关" : ("1/" + (1920 / snapTicks)));
+    }
+
+    private String meterText() {
+        int[] m = (song == null) ? new int[]{4, 4} : song.meterAt(0);
+        return m[0] + "/" + m[1];
+    }
+
+    /** one bar in ticks for the current time signature (a bar used to be hard coded to 4/4) */
+    private long meterBarTicks() {
+        int[] m = (song == null) ? new int[]{4, 4} : song.meterAt(0);
+        long bar = (long) Math.max(1, m[0]) * 4L * 480L / Math.max(1, m[1]);
+        return Math.max(240L, bar);
+    }
+
+    /** refresh everything in the top bar that mirrors model state, plus the strip ruler */
+    private void flushTopBar() {
+        syncSnapIcon();
+        if (meterBtn != null) meterBtn.setText(meterText());
+        if (trackStripView != null) trackStripView.setBarTicks(meterBarTicks());
+    }
+
+    private static final int[][] METER_PRESETS = {{4, 4}, {3, 4}, {2, 4}, {6, 8}, {5, 4}, {7, 8}};
+
+    /** tap the meter button: step through the usual signatures and re-draw the bar grid */
+    private void cycleMeter() {
+        int[] cur = (song == null) ? new int[]{4, 4} : song.meterAt(0);
+        int idx = 0;
+        for (int i = 0; i < METER_PRESETS.length; i++) {
+            if (METER_PRESETS[i][0] == cur[0] && METER_PRESETS[i][1] == cur[1]) { idx = i; break; }
+        }
+        int[] next = METER_PRESETS[(idx + 1) % METER_PRESETS.length];
+        beginEdit();
+        song.timeSigs.clear();
+        song.timeSigs.add(new int[]{0, next[0], next[1]});
+        commitEdit();
+        refreshAll();
+        status("拍号: " + next[0] + "/" + next[1]);
+    }
+
     private int snapIndex(int ticks) {
         for (int i = 0; i < SNAP_STEPS; i++) if (SNAP_CHOICES[i] == ticks) return i;
         return 1;
@@ -3249,7 +3876,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         streamProducer = new StreamProducer(song, vm);
         final long startFrame = (long) (TimeUtil.tickToSec(song, startTick) * 44100);
         status(L.t("status.stream.start"));
-        playBtn.setText(L.t("transport.stop"));
+        setPlayUi(true);
         streamProducer.start();
         engine.playStream(streamProducer, startFrame, new AudioEngine.Callback() {
             public void onProgress(long frame) {
@@ -3268,11 +3895,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 cancelPlayheadRefresh();
                 ui.post(new Runnable() {
                     public void run() {
-                        playBtn.setText(L.t("transport.play"));
-                        startTick = 0L;
-                        roll.setPlayheadTick(0L);
-                        if (paramView != null) paramView.setPlayheadTick(0L);
-                        posText.setText(formatTick(0L));
+                        setPlayUi(false);
+                        syncCursor(0L, true);
                         status(L.t("status.play.done"));
                     }
                 });
@@ -3283,7 +3907,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     public void run() {
                         // The engine has already stopped. Without this the button stayed on "stop"
                         // and the playhead looked frozen while nothing was playing.
-                        playBtn.setText(L.t("transport.play"));
+                        setPlayUi(false);
                         status(L.t("status.stream.fail", m));
                     }
                 });
@@ -3311,13 +3935,13 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     final long previewFrom = (long) (TimeUtil.tickToSec(song, p.pos) * 44100);
                     ui.post(new Runnable() {
                         public void run() {
-                            playBtn.setText(L.t("transport.stop"));
+                            setPlayUi(true);
                             engine.play(r, previewFrom, new AudioEngine.Callback() {
                                 public void onProgress(long tick) { }
                                 public void onDone() {
                                     ui.post(new Runnable() {
                                         public void run() {
-                                            playBtn.setText(L.t("transport.play"));
+                                            setPlayUi(false);
                                             status("试听结束");
                                         }
                                     });
@@ -3337,11 +3961,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private void playFromStart() {
         boolean wasPlaying = engine.isPlaying();
         if (wasPlaying) engine.stop();                 // silent stop: do not keep the old cursor
-        startTick = 0L;
-        roll.setPlayheadTick(0L);
-        if (paramView != null) paramView.setPlayheadTick(0L);
-        posText.setText(formatTick(0L));
-        playBtn.setText(L.t("transport.play"));
+        syncCursor(0L, true);
+        setPlayUi(false);
         if (wasPlaying) ui.postDelayed(new Runnable() { public void run() { playSong(); } }, 150L);
         else playSong();
     }
@@ -3351,12 +3972,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         if (streamProducer != null) { streamProducer.cancel(); streamProducer = null; }
         long at = engine.playTick();
         engine.stop();
-        playBtn.setText(L.t("transport.play"));
+        setPlayUi(false);
         // leave the cursor where playback stopped so it can be resumed or dragged
         if (at > 0) startTick = at;
-        roll.setPlayheadTick(startTick);
-        paramView.setPlayheadTick(startTick);
-        posText.setText(formatTick(startTick));
+        syncCursor(startTick, true);
         status("已停止 · 光标停在 " + formatTick(startTick));
     }
 
@@ -4571,9 +5190,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             if ("play".equals(action)) {
                 double from = com.dsh.v4tune.ai.Json.num(args, "fromTick", -1);
                 if (from >= 0) {
-                    startTick = (long) from;
-                    roll.setPlayheadTick(startTick);
-                    if (paramView != null) paramView.setPlayheadTick(startTick);
+                    syncCursor((long) from, true);
                 }
                 if (!engine.isPlaying()) playSong();
                 return com.dsh.v4tune.ai.Json.obj("ok", Boolean.TRUE, "playing", Boolean.TRUE, "from", Long.valueOf(startTick));
@@ -7708,6 +8325,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     @Override
     public void onBackPressed() {
         if (engine.isPlaying()) { stopPlay(); return; }
+        // inside a project, "back" means back to the title screen, not out of the app
+        if (startScreen == null || !startScreen.isShowing()) { showStartScreen(); return; }
         super.onBackPressed();
     }
 }

@@ -86,6 +86,25 @@ public final class Storage {
         return created && canWriteRoot(ctx);
     }
 
+    /**
+     * Really-writable probe: a directory can be creatable yet refuse new files (that is exactly how
+     * the old "voicebank generation failed / EPERM" reports happened). Writes one byte, deletes it,
+     * and reports the truth, so callers never have to guess from a permission API.
+     */
+    public static boolean probeWritable(File dir) {
+        if (dir == null) return false;
+        try {
+            if (!ensureDir(dir)) return false;
+            File p = new File(dir, ".write_probe_" + System.nanoTime());
+            java.io.FileOutputStream fo = new java.io.FileOutputStream(p);
+            try { fo.write(1); } finally { fo.close(); }
+            p.delete();
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     private static boolean ensureDir(File d) {
         try {
             if (d.isDirectory()) return true;

@@ -24,8 +24,10 @@ Copy the whole folder to the phone, e.g. /sdcard/VoiceDB/BK8H76TAEHXWSKDB/ .
    Leave it blank to use the folder name.
 4. Press Start and wait. It takes about 20 s on a PC and a few minutes on a phone
    (a one-off job). Keep the app in the foreground.
-5. When it finishes the file name and size are reported; the pack lands in
-       /sdcard/BriVoice_root/voicebanks/<name>.v4voice
+5. When it finishes the file name, size and the full output folder are reported.
+   Normally that is /sdcard/BriVoice_root/voicebanks/<id>.v4voice; without the
+   "all files access" grant (Android 10, or the switch off) it goes to
+   Android/data/com.bri.voice/files/BriVoice_root/voicebanks/
    The app picks it up automatically - try it in the piano roll.
 
 [4] What is inside the pack

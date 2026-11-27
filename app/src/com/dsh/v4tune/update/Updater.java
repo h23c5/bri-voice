@@ -144,17 +144,27 @@ public final class Updater {
 
     // ------------------------------------------------------------------ download
 
-    /** Where downloads land: next to the projects, so the file survives a reinstall. */
+    /**
+     * Where downloads land: next to the projects, so the file survives a reinstall. Uses Storage so
+     * the folder is one the app can really write (the public root needs the "all files" grant on
+     * Android 11+ and is unwritable on Android 10); the old hard-coded path made every download
+     * fail with the same ENOENT/EPERM as the voicebank builder.
+     */
+    public static File updateDir(Context ctx) {
+        return com.dsh.v4tune.io.Storage.sub(ctx, "update");
+    }
+
+    /** Legacy context-free lookup; keep it only for callers that cannot pass a Context. */
     public static File updateDir() {
         File f = new File(Environment.getExternalStorageDirectory(), "BriVoice_root/update");
         if (!f.exists()) f.mkdirs();
         return f;
     }
 
-    public static void download(final Entry e, final DownloadCb cb) {
+    public static void download(final Context ctx, final Entry e, final DownloadCb cb) {
         new Thread(new Runnable() {
             public void run() {
-                File out = new File(updateDir(), "BriVoice-" + e.versionName + ".apk");
+                File out = new File(updateDir(ctx), "BriVoice-" + e.versionName + ".apk");
                 try {
                     HttpURLConnection c = (HttpURLConnection) new URL(e.apkUrl).openConnection();
                     c.setConnectTimeout(CONNECT_TIMEOUT);

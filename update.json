@@ -1,9 +1,9 @@
 {
-  "versionCode": 103,
-  "versionName": "12.3.1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v12.3.1/BriVoice-12.3.1.apk",
-  "sha256": "7db97fb5b446b876279a3026b37d75e21b7da1a433b92d32471f36d66bd885d5",
-  "size": 817682,
-  "notes": "release 12.3.1：音高线（PIT）按半音显示与吸附，控制点可以左右拖；画笔/直线/拖点都能落到整半音，画颤音时可关闭。",
-  "publishedAt": "2026-11-26 22:12:57"
+  "versionCode": 104,
+  "versionName": "26H1127V1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v26H1127V1/BriVoice-26H1127V1.apk",
+  "sha256": "f813eded2b9aeef6c2c43c1e81403bebe15392a427ec93814a4f611c1dabd227",
+  "size": 838162,
+  "notes": "release 26H1127V1：修掉导入/生成声库时的「声库生成失败」（ENOENT / EPERM）——写入目录改成先试写再决定，完成时给出完整保存路径；「检查更新」的下载目录同样修好；教程换成阅读器（左侧章节栏 + 跳页 + 搜索）；顶栏加上节拍 / 吸附 / 混音器 / 回到开始 / 回到末尾，拍号随工程变化。",
+  "publishedAt": "2026-11-27 20:53:45"
 }
