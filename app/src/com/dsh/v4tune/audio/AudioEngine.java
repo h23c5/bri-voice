@@ -62,6 +62,22 @@ public class AudioEngine {
     /** metronome click, mixed into the stream exactly on every quarter beat (480 ticks) */
     public volatile boolean metronome = false;
 
+    /**
+     * Peak level (0..1+) of each track in the last render, so the mixer strips can show a real
+     * meter instead of a decorative bar. Filled during {@link #render}; index = track number.
+     */
+    private final float[] peaks = new float[Mixer.MAX_TRACKS];
+
+    public float[] trackPeaks() { return peaks; }
+
+    /** Record a meter reading for one track (also called by the streaming player). */
+    public void noteTrackPeak(int index, float peak) { trackPeak(index, peak); }
+
+    private void trackPeak(int index, float peak) {
+        if (index < 0 || index >= peaks.length) return;
+        if (peak > peaks[index]) peaks[index] = peak;
+    }
+
     /** map a project voice slot onto one of the built-in singers */
     public static VoiceModel modelFor(Voice v, VoiceModel fallback) {
         if (v == null) return fallback;
@@ -126,6 +142,7 @@ public class AudioEngine {
     /** Render the whole song (all unmuted tracks) into a stereo buffer. Runs on the caller thread. */
     public Rendered render(Song song, VoiceModel defaultVoice, Renderer.Cfg cfg, Callback cb) {
         cancelRender = false;
+        for (int i = 0; i < peaks.length; i++) peaks[i] = 0f;
         Rendered r = new Rendered();
         r.song = song;
         double total = TimeUtil.tickToSec(song, Math.max(1, song.maxTick())) + 1.0;
@@ -148,7 +165,7 @@ public class AudioEngine {
             boolean mixed = (mixer != null && trackNo < mixer.trackCount());
             if (mixed) {                                          // the mixer overrides the file values
                 if (!mixer.isAudible(trackNo)) continue;
-                vol = mixer.getGain(trackNo);
+                vol = mixer.getGain(trackNo) * mixer.getTrim(trackNo);   // fader x channel trim
                 pan = mixer.getPan(trackNo);
             }
             double gl = vol * Math.min(1.0, 1.0 - pan);
@@ -167,12 +184,17 @@ public class AudioEngine {
                 // part.pos seconds: on a project whose parts start at 8 s the whole song played 8 s
                 // behind the cursor and the tail ran past the end of the buffer.
                 float[] mono = Renderer.renderPart(song, p, vm, cfg);
+                float peak = 0f;
                 for (int i = 0; i < mono.length; i++) {
                     long k = i;
                     if (k < 0 || k >= n) continue;
-                    r.left[(int) k] += (float) (mono[i] * gl);
+                    float vl = (float) (mono[i] * gl);
+                    r.left[(int) k] += vl;
                     r.right[(int) k] += (float) (mono[i] * gr);
+                    float a = vl < 0f ? -vl : vl;
+                    if (a > peak) peak = a;
                 }
+                if (trackNo >= 0) trackPeak(trackNo, peak);
                 if (cb != null) cb.onProgress(p.end());
             }
         }
@@ -345,6 +367,24 @@ public class AudioEngine {
         Song song();
         float[] left();
         float[] right();
+
+        /**
+         * Frames of <b>singer</b> audio in {@link #left()}/{@link #right()}. May be shorter than
+         * {@link #total()} when imported audio clips reach past the last note: the clip audio is
+         * streamed from disk through {@link #mixExtras} and never enters the render buffers, so a
+         * long backing track no longer has to be held (or rendered) as part of the song mix.
+         */
+        default int vocalFrames() { return total(); }
+
+        /**
+         * Fills the scratch buffers with the imported audio clips covering {@code [from, from+n)}.
+         * Implementations must <b>overwrite</b> the buffers (a silent block is all zeros) and may
+         * read from disk. Called on the writer thread right before the samples are handed out.
+         */
+        default void mixExtras(int from, int n, float[] left, float[] right) {
+            java.util.Arrays.fill(left, 0, n, 0f);
+            java.util.Arrays.fill(right, 0, n, 0f);
+        }
     }
 
     /** frames a full render of this song produces (kept in step with render()) */
@@ -425,12 +465,14 @@ public class AudioEngine {
                     // then wrote nothing for several seconds; AudioFlinger removed that track before
                     // the first sample. Wait for two seconds of audio (or the whole short song) while
                     // the track is still stopped.
-                    final long needReady = Math.min(total, start + prebufferFrames);
+                    final int vocalTotal = Math.max(0, Math.min(src.vocalFrames(), total));
+                    final long needReady = (start >= vocalTotal)
+                            ? 0L : Math.min(vocalTotal, start + prebufferFrames);
                     while (playing && src.ready() < needReady && !src.finished()) {
                         try { Thread.sleep(20); } catch (InterruptedException ignored) { }
                     }
                     if (!playing) return;
-                    if (src.ready() <= start) {
+                    if (start < vocalTotal && src.ready() <= start) {
                         if (cb != null) cb.onError("渲染失败：音频数据未就绪");
                         return;
                     }
@@ -537,18 +579,38 @@ public class AudioEngine {
                     int clickLeft = 0;
                     double clickPhase = 0, clickFreq = 0;
                     float clickAmp = 0;
+                    // Scratch for the streamed audio clips. The singer buffer only spans the notes, so
+                    // anything past it (a backing track that outlasts the vocal) is read from the clip
+                    // sidecar files block by block and mixed in right here, never stored whole.
+                    final float[] extraL = new float[bufFrames];
+                    final float[] extraR = new float[bufFrames];
                     while (playing && pos < total) {
-                        int ready = src.ready();
                         boolean done = src.finished();
-                        if (ready <= pos) {
-                            if (done) break;
-                            try { Thread.sleep(15); } catch (InterruptedException ignored) { }
-                            waitedMs += 15;
-                            continue;
+                        int vocalReady = (pos < vocalTotal)
+                                ? Math.min(src.ready(), vocalTotal) : vocalTotal;
+                        if (pos < vocalTotal && vocalReady <= pos) {
+                            if (done) {
+                                // the singer part has ended; the clip audio still runs to its own end
+                                vocalReady = vocalTotal;
+                            } else {
+                                try { Thread.sleep(15); } catch (InterruptedException ignored) { }
+                                waitedMs += 15;
+                                continue;
+                            }
                         }
-                        int cnt = Math.min(bufFrames, Math.min(ready, total) - pos);
+                        int cnt = Math.min(bufFrames, total - pos);
+                        if (pos < vocalTotal) cnt = Math.min(cnt, vocalReady - pos);
+                        if (cnt <= 0) break;
+                        src.mixExtras(pos, cnt, extraL, extraR);
                         for (int i = 0; i < cnt; i++) {
-                            float l = src.left()[pos + i], rr = src.right()[pos + i];
+                            float l = 0f, rr = 0f;
+                            int k = pos + i;
+                            if (k < vocalTotal) {
+                                l = src.left()[k];
+                                rr = src.right()[k];
+                            }
+                            l += extraL[i];
+                            rr += extraR[i];
                             // fire a click when this sample reaches a beat frame (accents on the bar)
                             while (beatAt < beatN && beatFrames[beatAt] <= pos + i) {
                                 if (metronome) {

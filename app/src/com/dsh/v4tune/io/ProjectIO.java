@@ -120,6 +120,20 @@ public class ProjectIO {
         else VsqxWriter.write(s, out);
     }
 
+    /** true when this file name can hold the full project (control curves + phonemes) */
+    public static boolean isNativeName(String nameOrUri) {
+        return nameOrUri != null && nameOrUri.toLowerCase(java.util.Locale.US).endsWith(".vsqx");
+    }
+
+    /** always write the native format: the .ust/.ustx exporters drop curves and phonemes */
+    public static void saveNative(File f, Song s) throws Exception {
+        FileOutputStream out = new FileOutputStream(f);
+        try {
+            VsqxWriter.write(s, out);
+            out.flush();
+        } finally { out.close(); }
+    }
+
     public static void savePath(File f, Song s) throws Exception {
         FileOutputStream out = new FileOutputStream(f);
         try {

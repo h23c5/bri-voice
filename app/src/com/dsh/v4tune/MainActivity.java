@@ -149,6 +149,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private final PluginChain pluginChain = new PluginChain();
     private final java.util.ArrayList<java.util.ArrayList<com.dsh.v4tune.model.AudioClip>> clips
             = new java.util.ArrayList<java.util.ArrayList<com.dsh.v4tune.model.AudioClip>>();
+    /** clip lists snapshotted with each edit, so undo/redo covers imported audio too */
+    private final java.util.ArrayDeque<java.util.ArrayList<java.util.ArrayList<com.dsh.v4tune.model.AudioClip>>> undoClips
+            = new java.util.ArrayDeque<java.util.ArrayList<java.util.ArrayList<com.dsh.v4tune.model.AudioClip>>>();
+    private final java.util.ArrayDeque<java.util.ArrayList<java.util.ArrayList<com.dsh.v4tune.model.AudioClip>>> redoClips
+            = new java.util.ArrayDeque<java.util.ArrayList<java.util.ArrayList<com.dsh.v4tune.model.AudioClip>>>();
+    private java.util.ArrayList<java.util.ArrayList<com.dsh.v4tune.model.AudioClip>> clipsBaseline;
     private VoiceModel currentVoice = null;      // BriVoice ships no voice: only installed voicebanks
     private int snapTicks = 240;
     private SliderBox snapBox, tempoBox, zoomBox;
@@ -762,7 +768,6 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
         java.util.ArrayList<com.dsh.v4tune.ui.TrackStripView.Lane> lanes =
                 new java.util.ArrayList<com.dsh.v4tune.ui.TrackStripView.Lane>();
-        String singer = currentVoice == null ? "—" : singerName(currentVoice);
         long contentEnd = 0L;
         for (int i = 0; i < song.tracks.size(); i++) {
             com.dsh.v4tune.model.Track t = song.tracks.get(i);
@@ -791,7 +796,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 ln.clips.add(cl);
                 contentEnd = Math.max(contentEnd, cl.endTick((int) Math.round(song.tempoAt(0) * 100)));
             }
-            String shortSinger = singer;
+            // the second line is THIS track's singer, not the app-wide one: long press switches it
+            String shortSinger = t.audio ? "" : singerName(singerOfTrack(t));
+            if (shortSinger.isEmpty()) shortSinger = "未选择歌手";
             int cut = shortSinger.indexOf("（");
             if (cut > 0) shortSinger = shortSinger.substring(0, cut).trim();
             ln.sub = t.audio
@@ -950,7 +957,149 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         return min == Long.MAX_VALUE ? 0L : min;
     }
 
+    /**
+     * Long press on a lane shows THIS track's singer list: the names are the switcher, one tap
+     * assigns that singer to that one track. The old 更改 / 删除 dialog stays reachable as the
+     * last row, and audio tracks (which have no singer) still open it directly.
+     */
     private void trackLongPress(final int idx) {
+        if (idx < 0 || idx >= song.tracks.size()) return;
+        final com.dsh.v4tune.model.Track t = song.tracks.get(idx);
+        if (t.audio) {                       // an audio track has no voice: its clip is what gets edited
+            audioTrackMenu(idx);
+            return;
+        }
+        final java.util.List<VoiceModel> all = SingerLibrary.all();
+        final VoiceModel cur = singerOfTrack(t);
+        java.util.List<com.dsh.v4tune.ui.Dialogs.Row> rows = com.dsh.v4tune.ui.Dialogs.rows();
+        for (int i = 0; i < all.size(); i++) {
+            final VoiceModel v = all.get(i);
+            if (v.neural == null) attachNeural(v);      // decide the engine badge accurately
+            boolean on = cur != null && cur.id != null && cur.id.equals(v.id);
+            String engine;
+            if (v.neuralBank) {
+                engine = v.neuralEnabled ? "神经声库" : "神经声库（需训练基座）";
+            } else {
+                engine = v.neuralEnabled ? "神经合成" : "传统合成";
+            }
+            rows.add(com.dsh.v4tune.ui.Dialogs.row(
+                    com.dsh.v4tune.ui.Dialogs.badgeFor(singerName(v)),
+                    com.dsh.v4tune.ui.Dialogs.PALETTE[i % com.dsh.v4tune.ui.Dialogs.PALETTE.length],
+                    singerLabel(v), engine + (on ? " · 当前" : ""), on, new Runnable() {
+                        public void run() { setTrackSinger(idx, v); }
+                    }));
+        }
+        if (rows.isEmpty()) {
+            rows.add(com.dsh.v4tune.ui.Dialogs.row("!", Theme.ACCENT2, "还没有安装声库",
+                    "先在「更多 → 声库」里导入一个", false, null));
+        }
+        rows.add(com.dsh.v4tune.ui.Dialogs.row("…", Theme.TEXT_DIM, "更多音轨设置",
+                "重命名 / 相对位置 / 上下移 / 删除", false, new Runnable() {
+                    public void run() { trackActionsDialog(idx); }
+                }));
+        com.dsh.v4tune.ui.Dialogs.menu(this, trackLabel(idx) + " · 歌手",
+                cur == null ? "点一个名字即可把这条轨切成该歌手" : ("当前：" + singerLabel(cur)),
+                rows);
+    }
+
+    /** assign one singer to one track, then refresh the strip (its second line is that name) */
+    private void setTrackSinger(int idx, VoiceModel vm) {
+        if (idx < 0 || idx >= song.tracks.size() || vm == null) return;
+        beginEdit();
+        applyVoiceToTrack(song.tracks.get(idx), vm);
+        if (idx == trackIndex) {             // keep the app-wide singer in step with the selected track
+            currentVoice = vm;
+            attachNeural(currentVoice);
+        }
+        cacheL = null; cacheR = null; cacheKey = 0L; cacheTotal = -1;   // the mix sounds different now
+        commitEdit();
+        refreshAll();
+        status(trackLabel(idx) + " 歌手: " + singerLabel(vm));
+    }
+
+    /**
+     * Long press on an audio track: the imported clip is the thing the user wants to change, so it
+     * comes first - 更换音频 / 删除片段 - and the track-level actions stay one tap away.
+     */
+    private void audioTrackMenu(final int idx) {
+        if (idx < 0 || idx >= song.tracks.size()) return;
+        final com.dsh.v4tune.model.Track t = song.tracks.get(idx);
+        final java.util.List<AudioClip> cs = clipsFor(idx);
+        String line;
+        if (cs.isEmpty()) {
+            line = "这一轨还没有音频，点「更换音频」选一个 WAV";
+        } else {
+            AudioClip c0 = cs.get(0);
+            line = cs.size() == 1
+                    ? (c0.name == null ? "audio" : c0.name) + String.format(java.util.Locale.US, " · %.1f 秒", c0.frames() / 44100.0)
+                    : (cs.size() + " 个音频片段");
+        }
+        java.util.List<com.dsh.v4tune.ui.Dialogs.Row> rows = com.dsh.v4tune.ui.Dialogs.rows();
+        rows.add(com.dsh.v4tune.ui.Dialogs.row(
+                com.dsh.v4tune.ui.Dialogs.badgeFor("更换音频"), com.dsh.v4tune.ui.Dialogs.PALETTE[0],
+                "更换音频…", "重新选一个 WAV，替换这一轨的音频", false, new Runnable() {
+                    public void run() { replaceAudio(idx); }
+                }));
+        if (!cs.isEmpty()) {
+            rows.add(com.dsh.v4tune.ui.Dialogs.row(
+                    com.dsh.v4tune.ui.Dialogs.badgeFor("删除音频"), com.dsh.v4tune.ui.Dialogs.PALETTE[5],
+                    cs.size() > 1 ? ("删除音频片段（" + cs.size() + " 个）") : "删除音频片段",
+                    "只清掉波形，音轨留着（可撤销）", false, new Runnable() {
+                        public void run() { confirmRemoveClips(idx); }
+                    }));
+        }
+        rows.add(com.dsh.v4tune.ui.Dialogs.row(
+                com.dsh.v4tune.ui.Dialogs.badgeFor("重命名音轨"), com.dsh.v4tune.ui.Dialogs.PALETTE[2],
+                "重命名音轨", t.name == null ? "" : t.name, false, new Runnable() {
+                    public void run() { selectTrack(idx); renameTrack(); }
+                }));
+        rows.add(com.dsh.v4tune.ui.Dialogs.row(
+                "…", Theme.TEXT_DIM, "更多音轨设置",
+                "相对位置 / 上移 / 下移 / 删除音轨", false, new Runnable() {
+                    public void run() { trackActionsDialog(idx); }
+                }));
+        com.dsh.v4tune.ui.Dialogs.menu(this, trackLabel(idx) + " · 音频", line, rows);
+    }
+
+    /** 更换音频：先清掉这一轨的旧片段，再走同一个 WAV 导入（导入会落到当前这条音频轨） */
+    private void replaceAudio(final int idx) {
+        if (idx < 0 || idx >= song.tracks.size()) return;
+        selectTrack(idx);                    // addWavFrom() puts the clip on the current audio track
+        final java.util.List<AudioClip> cs = clipsFor(idx);
+        boolean had = !cs.isEmpty();
+        beginEdit();
+        cs.clear();
+        commitEdit();
+        refreshAll();
+        if (had) status("已移除旧音频，请选择新的 WAV");
+        importWav();
+    }
+
+    /** 删除这一轨的音频片段（音轨本身保留），可撤销 */
+    private void confirmRemoveClips(final int idx) {
+        if (idx < 0 || idx >= song.tracks.size()) return;
+        final java.util.List<AudioClip> cs = clipsFor(idx);
+        if (cs.isEmpty()) { status("这一轨没有音频片段"); return; }
+        new AlertDialog.Builder(this)
+                .setTitle("删除音频")
+                .setMessage("删掉「" + trackLabel(idx) + "」上的 " + cs.size() + " 个音频片段？\n音轨会保留，之后可以用撤销找回。")
+                .setPositiveButton("删除", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) {
+                        beginEdit();
+                        int n = cs.size();
+                        cs.clear();
+                        // the sidecar file is kept on purpose: undo restores the clip object, and a
+                        // deleted file would make the restored clip silent
+                        commitEdit();
+                        refreshAll();
+                        status("已删除 " + n + " 个音频片段（可撤销）");
+                    }
+                })
+                .setNegativeButton(L.t("dlg.cancel"), null)
+                .show();
+    }
+
+    private void trackActionsDialog(final int idx) {
         if (idx < 0 || idx >= song.tracks.size()) return;
         final com.dsh.v4tune.model.Track t = song.tracks.get(idx);
         new AlertDialog.Builder(this)
@@ -982,11 +1131,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                                 renameTrack();
                                 break;
                             case 1:
-                                selectTrack(idx);
                                 if (t.audio) {
-                                    clipsFor(idx).clear();
-                                    importWav();
+                                    replaceAudio(idx);
                                 } else {
+                                    selectTrack(idx);
                                     pickSinger();
                                 }
                                 break;
@@ -1570,7 +1718,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             b.append(com.dsh.v4tune.ai.Json.obj("index", Integer.valueOf(i),
                     "name", c.name == null ? "" : c.name,
                     "startTick", Long.valueOf(c.startTick),
-                    "frames", Integer.valueOf(c.data == null ? 0 : c.data.frames)));
+                    "frames", Integer.valueOf(c.frames())));
         }
         return b.append(']').toString();
     }
@@ -1642,7 +1790,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         private final Song sng;
         private final Renderer.Cfg cfg;
         private final VoiceModel fallback;
+        /** frames of the whole playback: the singer render length, or the end of the last clip */
         private final int total;
+        /** frames the singer render fills; the clip audio is streamed past this point */
+        private final int vocalTotal;
         private final float[] bufL, bufR;
         private volatile int ready;
         private volatile boolean finished, cancelled;
@@ -1651,20 +1802,33 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             sng = s;
             fallback = fb;
             cfg = new Renderer.Cfg();
-            total = Math.max(1, com.dsh.v4tune.audio.AudioEngine.trackFrames(s, cfg));
-            bufL = new float[total];
-            bufR = new float[total];
+            vocalTotal = Math.max(1, com.dsh.v4tune.audio.AudioEngine.trackFrames(s, cfg));
+            // A backing track may reach past the last note. The timeline (playhead, end detection)
+            // covers the clip, but the singer buffers stay note-sized: the clip audio is read from
+            // disk while writing, so a 4-minute WAV never becomes part of the song render.
+            total = Math.max(vocalTotal, clipsEndFrame(s));
+            bufL = new float[vocalTotal];
+            bufR = new float[vocalTotal];
+        }
+
+        /** the singer part only; the engine streams the clips itself past this frame */
+        public int vocalFrames() { return vocalTotal; }
+
+        /** engine callback: overlay the audio clips for this block, straight from disk */
+        public void mixExtras(int from, int n, float[] l, float[] r) {
+            mixClipsInto(from, n, l, r);
         }
 
         void start() {
             // cache hit: nothing that affects the sound changed, so replay the stored render
             final long key = renderAccel ? songFingerprint(sng, cfg.sampleRate, fallback) : 0L;
-            if (renderAccel && key != 0L && key == cacheKey && cacheTotal == total && cacheL != null && cacheR != null) {
-                System.arraycopy(cacheL, 0, bufL, 0, total);
-                System.arraycopy(cacheR, 0, bufR, 0, total);
-                ready = total;
+            if (renderAccel && key != 0L && key == cacheKey && cacheTotal == vocalTotal
+                    && cacheL != null && cacheR != null) {
+                System.arraycopy(cacheL, 0, bufL, 0, vocalTotal);
+                System.arraycopy(cacheR, 0, bufR, 0, vocalTotal);
+                ready = vocalTotal;
                 finished = true;
-                android.util.Log.i("V4Tune", "render cache HIT: " + total + " frames reused");
+                android.util.Log.i("V4Tune", "render cache HIT: " + vocalTotal + " frames reused");
                 return;
             }
             Thread t = new Thread(new Runnable() { public void run() { produce(); } }, "brivoice-render");
@@ -1689,11 +1853,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 // the whole prefix on every round and the total work came to about twice the final pass:
                 // measured on a 167 s song, 94 s of rendering of which roughly 47 s was redundant. One pass
                 // halves it with identical output. Short songs keep the 1 s first-chunk behaviour.
-                final boolean fullRender = renderAccel && total > com.dsh.v4tune.audio.AudioEngine.FULL_RENDER_FRAMES;
+                final boolean fullRender = renderAccel && vocalTotal > com.dsh.v4tune.audio.AudioEngine.FULL_RENDER_FRAMES;
                 // The full pass is CPU bound and runs before playback starts; dropping it to background
                 // priority keeps touches and the "rendering" animation responsive on slower phones.
                 if (fullRender) android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
-                int limit = fullRender ? total : Math.min(total, Math.max(1024, cfg.sampleRate));
+                int limit = fullRender ? vocalTotal : Math.min(vocalTotal, Math.max(1024, cfg.sampleRate));
                 final long startedMs = System.currentTimeMillis();
                 final long lookaheadMs = 4000L;   // stay at most ~4 s ahead of the audio clock
                 while (!cancelled) {
@@ -1706,7 +1870,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     // Full-render songs must not be throttled at all: -1 makes aheadMs negative so the
                     // wait loop below is skipped. (Using Long.MAX_VALUE here made aheadMs enormous and the
                     // producer slept for ever, which stalled the whole playback.)
-                    long readyMs = total > com.dsh.v4tune.audio.AudioEngine.FULL_RENDER_FRAMES
+                    long readyMs = vocalTotal > com.dsh.v4tune.audio.AudioEngine.FULL_RENDER_FRAMES
                             ? -1L
                             : (long) ((double) limit * 1000.0 / cfg.sampleRate);
                     long aheadMs = readyMs - lookaheadMs - (System.currentTimeMillis() - startedMs);
@@ -1727,11 +1891,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         double pan = (t.pan - 64) / 64.0;
                         if (mixer != null && trackNo < mixer.trackCount()) {
                             if (!mixer.isAudible(trackNo)) continue;
-                            vol = mixer.getGain(trackNo);
+                            vol = mixer.getGain(trackNo) * mixer.getTrim(trackNo);   // fader x trim
                             pan = mixer.getPan(trackNo);
                         }
                         double gl = vol * Math.min(1.0, 1.0 - pan);
                         double gr = vol * Math.min(1.0, 1.0 + pan);
+                        float peak = 0f;
                         for (com.dsh.v4tune.model.Part p : t.parts) {
                             if (cancelled) return;
                             VoiceModel vm2 = com.dsh.v4tune.audio.AudioEngine.modelFor(sng.voice(p.bs, p.pc), fallback);
@@ -1743,10 +1908,14 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                             float[] mono = Renderer.renderPart(sng, p, vm2, cfg, limit);
                             int n = Math.min(mono.length, limit);
                             for (int i = 0; i < n; i++) {
-                                mixL[i] += (float) (mono[i] * gl);
+                                float vl = (float) (mono[i] * gl);
+                                mixL[i] += vl;
                                 mixR[i] += (float) (mono[i] * gr);
+                                float a = vl < 0f ? -vl : vl;
+                                if (a > peak) peak = a;
                             }
                         }
+                        engine.noteTrackPeak(trackNo, peak);   // mixer meters read this
                     }
                     System.arraycopy(mixL, 0, bufL, 0, limit);
                     System.arraycopy(mixR, 0, bufR, 0, limit);
@@ -1758,18 +1927,18 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     android.util.Log.i("V4Tune", "render round: limit=" + limit + " total=" + total
                             + " elapsed=" + (System.currentTimeMillis() - startedMs) + "ms");
                     if (total > com.dsh.v4tune.audio.AudioEngine.FULL_RENDER_FRAMES) {
-                        final int pct = (int) (100L * limit / Math.max(1, total));
+                        final int pct = (int) (100L * limit / Math.max(1, vocalTotal));
                         final int secs = (int) (limit / (double) cfg.sampleRate);
                         ui.post(new Runnable() { public void run() { status(L.t("status.rendering",
-                                String.valueOf(pct) + "  " + secs + "s / " + (total / cfg.sampleRate) + "s")); } });
+                                String.valueOf(pct) + "  " + secs + "s / " + (vocalTotal / cfg.sampleRate) + "s")); } });
                     }
-                    if (limit >= total) {
+                    if (limit >= vocalTotal) {
                         if (!renderAccel) { finished = true; return; }
                         cacheKey = songFingerprint(sng, cfg.sampleRate, fallback);
-                        cacheTotal = total;
+                        cacheTotal = vocalTotal;
                         cacheL = bufL.clone();
                         cacheR = bufR.clone();
-                        android.util.Log.i("V4Tune", "render cache STORE: " + total + " frames");
+                        android.util.Log.i("V4Tune", "render cache STORE: " + vocalTotal + " frames");
                         finished = true;
                         return;
                     }
@@ -1778,7 +1947,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     // and reported 'finished' early - the player then stopped before the last
                     // notes. Doubling in a long and clamping to total always reaches the end.
                     long nextLimit = (long) limit * 2L;
-                    limit = (int) Math.min((long) total, nextLimit);
+                    limit = (int) Math.min((long) vocalTotal, nextLimit);
                 }
             } catch (Throwable t) {
                 android.util.Log.e("V4Tune", "render failed: " + t, t);
@@ -1790,30 +1959,16 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         }
     }
 
-    /** clips and the plugin chain for one freshly rendered slice */
+    /**
+     * The plugin chain for one freshly rendered slice.
+     *
+     * <p>Audio clips are <b>not</b> mixed here any more: they are streamed from their sidecar files
+     * straight into the output by {@code StreamSource.mixExtras}, so the singer render buffer never
+     * holds a backing track (that buffer is what made the 3-minute cap necessary).</p>
+     */
     private void applyPostDspRange(com.dsh.v4tune.audio.AudioEngine.Rendered r, int from, int to) {
         if (r == null || r.left == null || to <= from) return;
         if (to > r.left.length) to = r.left.length;
-        for (int ti = 0; ti < clips.size() && ti < song.tracks.size(); ti++) {
-            if (mixer.trackCount() > ti && !mixer.isAudible(ti)) continue;
-            float g = (mixer.trackCount() > ti) ? mixer.getGain(ti) : 1f;
-            float pn = (mixer.trackCount() > ti) ? mixer.getPan(ti) : 0f;
-            double gl = Mixer.panLeftGain(pn) * g, gr = Mixer.panRightGain(pn) * g;
-            for (AudioClip c : clips.get(ti)) {
-                if (c == null || c.data == null) continue;
-                int at = c.startFrame(song);
-                int s0 = Math.max(from, at);
-                int s1 = Math.min(to, at + c.data.frames);
-                int len = s1 - s0;
-                if (len <= 0) continue;
-                float[] tl = new float[len], tr = new float[len];
-                c.mixInto(tl, tr, -(s0 - at));
-                for (int i = 0; i < len; i++) {
-                    r.left[s0 + i] += (float) (tl[i] * gl);
-                    if (r.right != null) r.right[s0 + i] += (float) (tr[i] * gr);
-                }
-            }
-        }
         if (pluginChain.size() > 0) {
             float[] l = java.util.Arrays.copyOfRange(r.left, from, to);
             float[] rr2 = (r.right == null) ? null : java.util.Arrays.copyOfRange(r.right, from, to);
@@ -1837,6 +1992,74 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         com.dsh.v4tune.audio.AudioEngine.writeWav(f, r);
         return f;
     }
+    /** end frame of the last audio clip on the timeline (0 when there is none) */
+    private int clipsEndFrame(com.dsh.v4tune.model.Song s) {
+        if (s == null) return 0;
+        long end = 0L;
+        for (int ti = 0; ti < clips.size(); ti++) {
+            for (AudioClip c : clips.get(ti)) {
+                if (c == null || c.frames() <= 0) continue;
+                long e = (long) c.startFrame(s) + c.frames();
+                if (e > end) end = e;
+            }
+        }
+        return end > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) end;
+    }
+
+    /** scratch buffers for the streamed clip mix (one writer block, reused) */
+    private float[] clipMixL, clipMixR;
+
+    /**
+     * Mixes every audible audio clip into {@code [from, from+n)} by reading the sidecar files, so a
+     * long backing track is never held in the heap. Called by the playback writer per block, and by
+     * nothing else: the singer render must not contain clip audio (that is what made the old
+     * 3-minute cap necessary).
+     */
+    private void mixClipsInto(int from, int n, float[] l, float[] r) {
+        if (l == null || r == null || n <= 0) return;
+        java.util.Arrays.fill(l, 0, n, 0f);
+        java.util.Arrays.fill(r, 0, n, 0f);
+        if (song == null) return;
+        boolean anySolo = false;
+        for (com.dsh.v4tune.model.Track t : song.tracks) if (t.solo) anySolo = true;
+        if (clipMixL == null || clipMixL.length < n) {
+            int cap = Math.max(n, 8192);
+            clipMixL = new float[cap];
+            clipMixR = new float[cap];
+        }
+        final int to = from + n;
+        for (int ti = 0; ti < clips.size() && ti < song.tracks.size(); ti++) {
+            com.dsh.v4tune.model.Track t = song.tracks.get(ti);
+            if (t.mute) continue;
+            if (anySolo && !t.solo) continue;
+            if (mixer != null && mixer.trackCount() > ti && !mixer.isAudible(ti)) continue;
+            float g = (mixer != null && mixer.trackCount() > ti) ? mixer.getGain(ti) : 1f;
+            float pn = (mixer != null && mixer.trackCount() > ti) ? mixer.getPan(ti) : 0f;
+            double gl = Mixer.panLeftGain(pn) * g, gr = Mixer.panRightGain(pn) * g;
+            float peak = 0f;
+            for (AudioClip c : clips.get(ti)) {
+                if (c == null || c.frames() <= 0) continue;
+                int at = c.startFrame(song);
+                int s0 = Math.max(from, at);
+                int s1 = Math.min(to, at + c.frames());
+                int len = s1 - s0;
+                if (len <= 0) continue;
+                java.util.Arrays.fill(clipMixL, 0, len, 0f);
+                java.util.Arrays.fill(clipMixR, 0, len, 0f);
+                int mixed = Math.min(c.mixInto(clipMixL, clipMixR, -(s0 - at)), len);
+                if (mixed <= 0) continue;
+                int base = s0 - from;
+                for (int i = 0; i < mixed; i++) {
+                    l[base + i] += (float) (clipMixL[i] * gl);
+                    r[base + i] += (float) (clipMixR[i] * gr);
+                    float a = Math.abs(l[base + i]);
+                    if (a > peak) peak = a;
+                }
+            }
+            if (engine != null) engine.noteTrackPeak(ti, peak);   // mixer meters read this
+        }
+    }
+
     /** the clip list of a track, created on demand */
     private java.util.List<AudioClip> clipsFor(int ti) {
         while (clips.size() <= ti) clips.add(new java.util.ArrayList<AudioClip>());
@@ -1866,6 +2089,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     /** call BEFORE we change the model ourselves (dialogs, tempo, singer, open file) */
     private void beginEdit() {
         if (song != null) baseline = song.copy();
+        clipsBaseline = copyClips();
     }
 
     /**
@@ -1882,6 +2106,38 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             redo.clear();
         }
         baseline = song.copy();
+        pushClips(undoClips, clipsBaseline);
+        redoClips.clear();
+        clipsBaseline = copyClips();
+    }
+
+    /** deep-enough copy: new lists, copied clips (the audio itself is shared) */
+    private java.util.ArrayList<java.util.ArrayList<com.dsh.v4tune.model.AudioClip>> copyClips() {
+        java.util.ArrayList<java.util.ArrayList<com.dsh.v4tune.model.AudioClip>> out =
+                new java.util.ArrayList<java.util.ArrayList<com.dsh.v4tune.model.AudioClip>>(clips.size());
+        for (int i = 0; i < clips.size(); i++) {
+            java.util.ArrayList<com.dsh.v4tune.model.AudioClip> src = clips.get(i);
+            java.util.ArrayList<com.dsh.v4tune.model.AudioClip> copy =
+                    new java.util.ArrayList<com.dsh.v4tune.model.AudioClip>(src.size());
+            for (com.dsh.v4tune.model.AudioClip c : src) copy.add(c == null ? null : c.copy());
+            out.add(copy);
+        }
+        return out;
+    }
+
+    private void pushClips(java.util.ArrayDeque<java.util.ArrayList<java.util.ArrayList<com.dsh.v4tune.model.AudioClip>>> stack,
+                           java.util.ArrayList<java.util.ArrayList<com.dsh.v4tune.model.AudioClip>> snap) {
+        if (snap == null) return;
+        stack.push(snap);
+        while (stack.size() > 24) stack.removeLast();
+    }
+
+    private void setClips(java.util.ArrayList<java.util.ArrayList<com.dsh.v4tune.model.AudioClip>> snap) {
+        if (snap == null) return;
+        clips.clear();
+        for (int i = 0; i < snap.size(); i++) {
+            clips.add(new java.util.ArrayList<com.dsh.v4tune.model.AudioClip>(snap.get(i)));
+        }
     }
 
     /** (re)arm the autosave timer; called on start, resume and after settings change */
@@ -1907,32 +2163,54 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         final Song snapshot = song.copy();
         final Uri uri = currentUri;
         final String name = projectName;
+        // An imported .ust / .ustx (or .mid / .svip3) can only be written back through an exporter that
+        // has no control curves and no phonemes. Autosaving into it silently destroyed both, which is
+        // exactly what happened after going back to the start screen and reopening from the recent list.
+        final String uriName = uri == null ? null : String.valueOf(uri.getLastPathSegment());
+        final boolean lossySource = uri != null && !ProjectIO.isNativeName(uriName);
         autoSaving = true;
         new Thread(new Runnable() {
             public void run() {
                 String err = null;
+                File written = null;
                 try {
-                    if (uri != null) {
+                    if (uri != null && !lossySource) {
                         ProjectIO.save(MainActivity.this, uri, snapshot);
+                    } else if (lossySource) {
+                        written = importedCopyFile(uri, name);
+                        ProjectIO.saveNative(written, snapshot);
                     } else {
-                        File dir = Storage.projects(MainActivity.this);
-                        if (!dir.exists()) dir.mkdirs();
-                        ProjectIO.savePath(new File(dir, ProjectIO.sanitize(name) + ".vsqx"), snapshot);
+                        written = localProjectFile(name);
+                        ProjectIO.saveNative(written, snapshot);
                     }
                 } catch (Throwable t) {
                     err = String.valueOf(t.getMessage());
                 }
                 final String e = err;
+                final File saved = written;
                 autoSaving = false;
                 runOnUiThread(new Runnable() {
                     public void run() {
                         if (e == null) {
                             dirty = false;
+                            if (saved != null) {
+                                projectName = stripProjectExt(saved.getName());
+                                if (lossySource) {
+                                    // keep editing the native copy, and offer that one from now on
+                                    currentUri = null;
+                                    if (uri != null) {
+                                        String recentKey = "file".equals(uri.getScheme()) && uri.getPath() != null
+                                                ? uri.getPath() : uri.toString();
+                                        forgetRecent(recentKey);
+                                    }
+                                }
+                                noteRecent(saved);
+                            }
                             String hhmm;
                             try {
                                 hhmm = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(new java.util.Date());
                             } catch (Throwable t) { hhmm = ""; }
-                            status("已自动保存 " + hhmm);
+                            status((lossySource ? "已转存为本地工程并自动保存 " : "已自动保存 ") + hhmm);
                         } else {
                             status("自动保存失败: " + e);
                         }
@@ -1959,7 +2237,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         if (undo.isEmpty()) { status("没有可撤销的操作"); return; }
         redo.push(song.copy());
         song = undo.pop();
+        if (!undoClips.isEmpty()) {
+            pushClips(redoClips, copyClips());
+            setClips(undoClips.pop());
+        }
         baseline = song.copy();
+        clipsBaseline = copyClips();
         refreshAll();
         status("已撤销（可重做 " + redo.size() + " 步）");
     }
@@ -1969,7 +2252,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         undo.push(song.copy());
         while (undo.size() > 24) undo.removeLast();
         song = redo.pop();
+        if (!redoClips.isEmpty()) {
+            pushClips(undoClips, copyClips());
+            setClips(redoClips.pop());
+        }
         baseline = song.copy();
+        clipsBaseline = copyClips();
         refreshAll();
         status("已重做（可撤销 " + undo.size() + " 步）");
     }
@@ -2007,6 +2295,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         if (raw == null) return null;
         String low = raw.toLowerCase();
         if (low.contains("miku") || raw.contains("初音") || raw.contains("ミク")) return "Miku BV";
+        if (low.contains("lingxi") || raw.contains("灵溪")) return "灵溪 AI";
         if (low.contains("tianyi") || low.contains("luo") || raw.contains("洛天依")) return "洛天依 BV";
         return raw;
     }
@@ -2031,6 +2320,31 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             n = n + " " + L.t("singer.tag.mine");
         }
         return n;
+    }
+
+    /**
+     * Name for a singer *picker*: two installed packs can carry the same display name (the same bank
+     * imported twice, or two recordings exported under one name), and a list that renders them
+     * identically turns the row the user taps into a coin toss. Colliding names get a short id tail;
+     * unique names are left untouched.
+     */
+    private String singerLabel(VoiceModel v) {
+        String base = singerName(v);
+        if (v == null || v.id == null || v.id.trim().isEmpty()) return base;
+        int same = 0;
+        for (VoiceModel o : SingerLibrary.all()) {
+            if (singerName(o).equals(base)) same++;
+        }
+        return same < 2 ? base : (base + " · " + shortId(v.id));
+    }
+
+    /** tail of a pack id, short enough to sit in a menu row: "utau-fa034bc" -> "fa034bc" */
+    private static String shortId(String id) {
+        String s = id == null ? "" : id.trim();
+        int cut = s.lastIndexOf('-');
+        if (cut >= 0 && cut + 1 < s.length()) s = s.substring(cut + 1);
+        if (s.length() > 8) s = s.substring(s.length() - 8);
+        return s;
     }
 
     private void chooseInitialVoice() {
@@ -2173,7 +2487,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             com.dsh.v4tune.ui.Dialogs.Row row = com.dsh.v4tune.ui.Dialogs.row(
                     com.dsh.v4tune.ui.Dialogs.badgeFor(singerName(v)),
                     com.dsh.v4tune.ui.Dialogs.PALETTE[i % com.dsh.v4tune.ui.Dialogs.PALETTE.length],
-                    singerName(v), info + " · " + engine, cur, new Runnable() {
+                    singerLabel(v), info + " · " + engine, cur, new Runnable() {
                         public void run() { selectVoice(v); }
                     });
             if (v.neuralBank || (v.neural != null && v.neuralEnabled)) row.tag("AI");
@@ -2189,40 +2503,57 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 L.t("dlg.singer.sub", rows.size()), rows);
     }
 
+    /** the song's voice slot for a singer, created on first use */
+    private com.dsh.v4tune.model.Voice voiceEntryFor(VoiceModel vm) {
+        for (com.dsh.v4tune.model.Voice x : song.voices) {
+            boolean sameName = x.name != null && x.name.equals(vm.name);
+            boolean sameId = x.compID != null && x.compID.equals(vm.compID);
+            if (sameName && sameId) return x;   // an imported pack may share the official compID
+        }
+        com.dsh.v4tune.model.Voice v = new com.dsh.v4tune.model.Voice();
+        int maxBs = 0;
+        for (com.dsh.v4tune.model.Voice x : song.voices) maxBs = Math.max(maxBs, x.bs);
+        v.bs = maxBs + 4;
+        v.pc = 0;
+        v.compID = vm.compID;
+        v.name = vm.name;
+        v.lang = vm.lang;
+        song.voices.add(v);
+        return v;
+    }
+
+    /**
+     * A singer belongs to a TRACK, not just to one part: every part of the track is switched
+     * together, so a multi-part track never mixes two voices. (In the vsqx format the singer
+     * lives on each vsPart, which is why this writes through to all of them rather than to a
+     * track level field.)
+     */
+    private void applyVoiceToTrack(com.dsh.v4tune.model.Track t, VoiceModel vm) {
+        if (t == null || vm == null) return;
+        com.dsh.v4tune.model.Voice v = voiceEntryFor(vm);
+        for (Part q : t.parts) { q.bs = v.bs; q.pc = v.pc; }
+    }
+
+    /** the singer a track actually renders with (audio tracks have none of their own) */
+    private VoiceModel singerOfTrack(com.dsh.v4tune.model.Track t) {
+        if (t == null || t.audio || t.parts.isEmpty()) return currentVoice;
+        Part p = t.parts.get(0);
+        return com.dsh.v4tune.audio.AudioEngine.modelFor(song.voice(p.bs, p.pc), currentVoice);
+    }
+
     private void applyVoiceToPart(VoiceModel vm) {
         if (vm == null) return;
         Part p = currentPart();
         if (p == null) return;
-        com.dsh.v4tune.model.Voice v = null;
-        for (com.dsh.v4tune.model.Voice x : song.voices) {
-            boolean sameName = x.name != null && x.name.equals(vm.name);
-            boolean sameId = x.compID != null && x.compID.equals(vm.compID);
-            if (sameName && sameId) { v = x; break; }   // an imported pack may share the official compID
-        }
-        if (v == null) {
-            v = new com.dsh.v4tune.model.Voice();
-            int maxBs = 0;
-            for (com.dsh.v4tune.model.Voice x : song.voices) maxBs = Math.max(maxBs, x.bs);
-            v.bs = maxBs + 4;
-            v.pc = 0;
-            v.compID = vm.compID;
-            v.name = vm.name;
-            v.lang = vm.lang;
-            song.voices.add(v);
-        }
-        // A singer belongs to a TRACK here, not just to one part: every part of the track the
-        // selection came from is switched together, so a multi-part track never mixes two voices.
-        // (In the vsqx format the singer lives on each vsPart, which is why this writes through
-        // to all of them rather than to a track level field.)
         boolean done = false;
         for (com.dsh.v4tune.model.Track t : song.tracks) {
-            if (t.parts.contains(p)) {
-                for (Part q : t.parts) { q.bs = v.bs; q.pc = v.pc; }
-                done = true;
-                break;
-            }
+            if (t.parts.contains(p)) { applyVoiceToTrack(t, vm); done = true; break; }
         }
-        if (!done) { p.bs = v.bs; p.pc = v.pc; }
+        if (!done) {
+            com.dsh.v4tune.model.Voice v = voiceEntryFor(vm);
+            p.bs = v.bs;
+            p.pc = v.pc;
+        }
     }
 
     // ------------------------------------------------------------- voice packs
@@ -2298,6 +2629,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             java.util.HashSet<String> ids = new java.util.HashSet<String>(
                     getSharedPreferences("brivoice", MODE_PRIVATE).getStringSet("builtinIds",
                             new java.util.HashSet<String>()));
+            // A build may swap the bundled singer (v26H1127V3 ships 灵溪 AI instead of 洛天依 BV).
+            // The old pack was already copied into the voicebank folder by an earlier version, so it
+            // has to be retired explicitly - otherwise the previous bundled singer stays listed
+            // forever and the swap only happens on a clean install.
+            retireReplacedBundled(names, ids);
+            SingerLibrary.setBuiltinIds(ids);
             for (String n : names) {
                 if (n == null || !n.toLowerCase(java.util.Locale.US).endsWith(".v4voice")) continue;
                 String flag = "builtin_sig_" + n;
@@ -2325,6 +2662,43 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         } catch (Throwable t) {
             android.util.Log.w("V4Tune", "bundled voicebank install failed: " + t);
         }
+    }
+
+    /**
+     * Asset file names that earlier builds shipped as the bundled singer. A build that swaps the
+     * bundled voicebank must delete the one it replaced, otherwise the old pack stays installed
+     * (and listed as 内置) forever on every device that ever ran the previous version.
+     */
+    private static final String[] LEGACY_BUNDLED = { "luotianyi_chn_meng_bank.v4voice" };
+
+    /** delete bundled packs of an earlier build that this build no longer ships */
+    private void retireReplacedBundled(String[] current, java.util.HashSet<String> ids) {
+        android.content.SharedPreferences sp = getSharedPreferences("brivoice", MODE_PRIVATE);
+        java.util.HashSet<String> now = new java.util.HashSet<String>();
+        for (String n : current) if (n != null) now.add(n);
+        java.util.HashSet<String> gone = new java.util.HashSet<String>();
+        java.util.Set<String> before = sp.getStringSet("builtin_files", new java.util.HashSet<String>());
+        for (String old : before) if (old != null && !now.contains(old)) gone.add(old);
+        for (String old : LEGACY_BUNDLED) if (!now.contains(old)) gone.add(old);
+        boolean idsChanged = false;
+        for (String old : gone) {
+            java.io.File victim = new java.io.File(packStore.directory(), old);
+            if (!victim.isFile()) continue;
+            try {
+                VoicePack.Result r = VoicePack.load(victim);
+                if (r != null && r.ok() && r.model != null && r.model.id != null
+                        && ids.remove(r.model.id)) {
+                    idsChanged = true;
+                }
+            } catch (Throwable ignored) {
+            }
+            if (victim.delete()) {
+                sp.edit().remove("builtin_sig_" + old).apply();
+                android.util.Log.i("V4Tune", "retired bundled voicebank " + old);
+            }
+        }
+        if (idsChanged) sp.edit().putStringSet("builtinIds", ids).apply();
+        sp.edit().putStringSet("builtin_files", now).apply();
     }
 
     private void reloadPacksAsync(final boolean announce) {
@@ -2473,35 +2847,103 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         startActivityForResult(i, REQ_WAV);
     }
 
-    private void addWavFrom(Uri uri) {
-        try {
-            java.io.InputStream in = ProjectIO.openAny(this, uri);
-            WavReader.AudioData d = WavReader.read(in, 44100 * 180);       // up to 3 minutes (memory)
-            try { in.close(); } catch (Throwable ignored) { }
-            if (d == null || !d.ok()) {
-                status(L.t("status.wav.fail", d == null ? "?" : d.error));
-                new AlertDialog.Builder(this).setTitle(L.t("dlg.wav.fail.title"))
-                        .setMessage(d == null ? "?" : d.error).setPositiveButton(L.t("dlg.ok"), null).show();
-                return;
-            }
-            String nm = uri.getLastPathSegment();
-            // A clip dropped past the end of the song would never be mixed in: the render buffer
-            // stops at the last note. Fall back to the start instead of a silent "imported".
-            long songEnd = song.maxTick();
-            long at = Math.max(0L, startTick);
-            boolean moved = false;
-            if (songEnd > 0 && at >= songEnd) { at = 0L; moved = true; }
-            AudioClip c = AudioClip.fromWav(d, at, nm == null ? "audio" : nm);
-            if (c == null) { status(L.t("status.wav.fail", "?")); return; }
-            while (clips.size() <= trackIndex) clips.add(new java.util.ArrayList<AudioClip>());
-            clips.get(trackIndex).add(c);
-            status(moved ? L.t("status.wav.added.atstart", nm, d.frames / 44100.0)
-                           : L.t("status.wav.added", nm, d.frames / 44100.0));
-            toast(L.t("status.wav.added", nm, d.frames / 44100.0));
-            refreshTrackBar();
-        } catch (Throwable t) {
-            status(L.t("status.wav.fail", String.valueOf(t.getMessage())));
+    /**
+     * Frame cap handed to the WAV importer: one hour. The samples are streamed into a sidecar file
+     * instead of being decoded into the heap, so this is no longer a memory bound - the old
+     * 3-minute cap was there only because a 4-minute clip cost ~63 MB of float arrays.
+     */
+    private static final int WAV_MAX_FRAMES = 44100 * 60 * 60;
+
+    /** folder that keeps the decoded clip audio (one .pcm per imported WAV) */
+    private java.io.File clipDir() {
+        java.io.File d = new java.io.File(getFilesDir(), "clips");
+        if (!d.exists()) d.mkdirs();
+        return d;
+    }
+
+    /**
+     * The audio track an imported WAV belongs to: the current track when that one already is an
+     * audio track, else an empty audio track, else a new one. A backing track is never dropped onto
+     * a singer track - its waveform would share the lane with the notes and the vocal would look
+     * like it "has" the accompaniment. Must be called between beginEdit() and commitEdit().
+     */
+    private int audioTrackForImport() {
+        if (trackIndex >= 0 && trackIndex < song.tracks.size() && song.tracks.get(trackIndex).audio) {
+            return trackIndex;
         }
+        for (int i = 0; i < song.tracks.size(); i++) {
+            if (song.tracks.get(i).audio && clipsFor(i).isEmpty()) return i;
+        }
+        com.dsh.v4tune.model.Track t = new com.dsh.v4tune.model.Track();
+        t.no = song.tracks.size() + 1;
+        t.audio = true;
+        t.name = "音频 " + (song.tracks.size() + 1);
+        song.tracks.add(t);
+        while (clips.size() < song.tracks.size()) clips.add(new java.util.ArrayList<AudioClip>());
+        return song.tracks.size() - 1;
+    }
+
+    /** imports a WAV: stream it into a sidecar file off the UI thread, then place it on an audio track */
+    private void addWavFrom(final Uri uri) {
+        final java.io.File pcm = com.dsh.v4tune.io.PcmFile.newFile(clipDir(), "clip");
+        if (pcm == null) { status(L.t("status.wav.fail", "no storage")); return; }
+        final android.app.ProgressDialog pd = new android.app.ProgressDialog(this);
+        pd.setMessage(L.t("dlg.wav.importing"));
+        pd.setCancelable(false);
+        pd.show();
+        new Thread(new Runnable() {
+            public void run() {
+                WavReader.PcmInfo info = null;
+                java.io.InputStream in = null;
+                try {
+                    in = ProjectIO.openAny(MainActivity.this, uri);
+                    info = WavReader.exportPcm(in, pcm, WAV_MAX_FRAMES);
+                } catch (Throwable t) {
+                    info = null;
+                } finally {
+                    try { if (in != null) in.close(); } catch (Throwable ignored) { }
+                }
+                final WavReader.PcmInfo fi = info;
+                ui.post(new Runnable() {
+                    public void run() {
+                        try { pd.dismiss(); } catch (Throwable ignored) { }
+                        if (fi == null || !fi.ok()) {
+                            com.dsh.v4tune.io.PcmFile.delete(pcm);
+                            String why = (fi == null) ? "?" : fi.error;
+                            status(L.t("status.wav.fail", why));
+                            new AlertDialog.Builder(MainActivity.this).setTitle(L.t("dlg.wav.fail.title"))
+                                    .setMessage(why).setPositiveButton(L.t("dlg.ok"), null).show();
+                            return;
+                        }
+                        String nm = uri.getLastPathSegment();
+                        if (nm == null || nm.length() == 0) nm = "audio";
+                        long songEnd = song.maxTick();
+                        long at = Math.max(0L, startTick);
+                        boolean moved = false;
+                        if (songEnd > 0 && at >= songEnd) { at = 0L; moved = true; }
+                        beginEdit();
+                        int ti = audioTrackForImport();
+                        AudioClip c = AudioClip.fromPcm(pcm, fi.frames, at, nm);
+                        if (c == null) {
+                            commitEdit();
+                            status(L.t("status.wav.fail", "?"));
+                            return;
+                        }
+                        c.peaks = fi.peaks;
+                        clipsFor(ti).add(c);
+                        trackIndex = ti;
+                        commitEdit();
+                        refreshAll();
+                        String msg = (moved ? L.t("status.wav.added.atstart", nm, fi.seconds())
+                                            : L.t("status.wav.added", nm, fi.seconds()))
+                                + " · " + trackLabel(ti);
+                        status(msg);
+                        toast(msg);
+                        if (fi.truncated) toast("音频超过 60 分钟，已截断");
+                    }
+                });
+            }
+        }, "wav-import").start();
     }
 
     // ------------------------------------------- audio-driven expression (v10.1, AudioTune)
@@ -2614,7 +3056,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         for (int i = 0; i < list.size(); i++) {
             AudioClip c = list.get(i);
             items[i] = c.name + String.format("  @%d  %.1fs", c.startTick,
-                    c.data == null ? 0 : c.data.frames / 44100.0);
+                    c.frames() / 44100.0);
         }
         menu(L.t("dlg.clips.title"), null, items, -1, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, final int which) {
@@ -2623,8 +3065,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         .setMessage(L.t("clip.remove"))
                         .setPositiveButton(L.t("clip.remove"), new DialogInterface.OnClickListener() {
                             public void onClick(DialogInterface d2, int w) {
+                                // keep the sidecar file: undo puts the clip object back, and a
+                                // deleted file would make the restored clip silent
                                 list.remove(which);
                                 status(L.t("status.clip.removed"));
+                                refreshAll();
                             }
                         })
                         .setNegativeButton(L.t("dlg.cancel"), null)
@@ -2633,48 +3078,42 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         });
     }
 
-    /** mix the audio clips of every track into the rendered buffer, then run the plugin chain */
+    /**
+     * Mixes the audio clips of every track into a fully rendered song (export path), then runs the
+     * plugin chain. The clips are read from their sidecar files block by block: only one 5 s window
+     * of float samples exists at a time, not the whole backing track.
+     */
     private void applyPostDsp(final com.dsh.v4tune.audio.AudioEngine.Rendered r) {
         if (r == null || r.left == null) return;
-        int scratch = 0;
-        for (int ti = 0; ti < clips.size() && ti < song.tracks.size(); ti++) {
-            for (AudioClip c : clips.get(ti)) {
-                if (c.data != null && c.data.frames > scratch) scratch = c.data.frames;
-            }
-        }
-        if (scratch == 0) {
-            runPlugins(r);
-            return;
-        }
         // a clip may reach past the last note: grow the rendered buffers so nothing is cut off
-        int need = 0;
-        for (int ti = 0; ti < clips.size(); ti++) {
-            for (AudioClip c : clips.get(ti)) {
-                if (c == null || c.data == null) continue;
-                need = Math.max(need, c.startFrame(song) + c.data.frames);
-            }
-        }
+        int need = clipsEndFrame(song);
         if (need > r.left.length) {
             r.left = java.util.Arrays.copyOf(r.left, need);
             if (r.right != null) r.right = java.util.Arrays.copyOf(r.right, need);
         }
-        float[] tl = new float[scratch], tr = new float[scratch];
+        final int block = 44100 * 5;
+        final float[] tl = new float[block], tr = new float[block];
         for (int ti = 0; ti < clips.size() && ti < song.tracks.size(); ti++) {
             if (mixer.trackCount() > ti && !mixer.isAudible(ti)) continue;
             float g = (mixer.trackCount() > ti) ? mixer.getGain(ti) : 1f;
             float p = (mixer.trackCount() > ti) ? mixer.getPan(ti) : 0f;
             double gl = Mixer.panLeftGain(p) * g, gr = Mixer.panRightGain(p) * g;
             for (AudioClip c : clips.get(ti)) {
-                if (c.data == null) continue;
-                java.util.Arrays.fill(tl, 0f);
-                java.util.Arrays.fill(tr, 0f);
-                int n = c.mixInto(tl, tr, 0);        // handles mono->stereo, gain and mute
-                int at = c.startFrame(song);
-                for (int i = 0; i < n; i++) {
-                    int k = at + i;
-                    if (k < 0 || k >= r.left.length) continue;
-                    r.left[k] += (float) (tl[i] * gl);
-                    r.right[k] += (float) (tr[i] * gr);
+                if (c == null || c.frames() <= 0) continue;
+                final int at = c.startFrame(song);
+                final int total = c.frames();
+                for (int off = 0; off < total; off += block) {
+                    final int len = Math.min(block, total - off);
+                    java.util.Arrays.fill(tl, 0, len, 0f);
+                    java.util.Arrays.fill(tr, 0, len, 0f);
+                    int mixed = Math.min(c.mixInto(tl, tr, -off), len);
+                    if (mixed <= 0) break;
+                    for (int i = 0; i < mixed; i++) {
+                        int k = at + off + i;
+                        if (k < 0 || k >= r.left.length) continue;
+                        r.left[k] += (float) (tl[i] * gl);
+                        if (r.right != null && k < r.right.length) r.right[k] += (float) (tr[i] * gr);
+                    }
                 }
             }
         }
@@ -2696,78 +3135,84 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private void showMixer() {
         if (mixer == null) { status(L.t("status.mixer.unavailable")); return; }
         ensureMixerTracks();
-        android.widget.ScrollView sc = new android.widget.ScrollView(this);
-        LinearLayout col = new LinearLayout(this);
-        col.setOrientation(LinearLayout.VERTICAL);
-        col.setPadding(dp(12), dp(8), dp(12), dp(8));
-        for (int i = 0; i < song.tracks.size(); i++) {
-            final int ti = i;
-            String nm = song.tracks.get(i).name;
-            TextView h = new TextView(this);
-            h.setText((i == trackIndex ? "▶ " : "   ") + (nm == null ? ("音轨 " + (i + 1)) : nm));
-            h.setTextColor(Color.parseColor("#E8F1FF"));
-            h.setPadding(0, dp(8), 0, dp(2));
-            col.addView(h);
-            col.addView(sliderRow(L.t("mixer.volume"), 0, 200, (int) (mixer.getGain(i) * 100),
-                    new android.widget.SeekBar.OnSeekBarChangeListener() {
-                        public void onProgressChanged(android.widget.SeekBar sb, int p, boolean u) {
-                            mixer.setGain(ti, p / 100f);
-                        }
-                        public void onStartTrackingTouch(android.widget.SeekBar sb) { }
-                        public void onStopTrackingTouch(android.widget.SeekBar sb) { }
-                    }));
-            col.addView(sliderRow(L.t("mixer.pan"), 0, 200, (int) ((mixer.getPan(i) + 1) * 100),
-                    new android.widget.SeekBar.OnSeekBarChangeListener() {
-                        public void onProgressChanged(android.widget.SeekBar sb, int p, boolean u) {
-                            mixer.setPan(ti, p / 100f - 1f);
-                        }
-                        public void onStartTrackingTouch(android.widget.SeekBar sb) { }
-                        public void onStopTrackingTouch(android.widget.SeekBar sb) { }
-                    }));
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            android.widget.CheckBox mute = new android.widget.CheckBox(this);
-            mute.setText(L.t("mixer.mute"));
-            mute.setChecked(mixer.isMuted(i));
-            mute.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
-                public void onCheckedChanged(android.widget.CompoundButton b, boolean v) { mixer.setMute(ti, v); }
-            });
-            android.widget.CheckBox solo = new android.widget.CheckBox(this);
-            solo.setText(L.t("mixer.solo"));
-            solo.setChecked(mixer.isSolo(i));
-            solo.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
-                public void onCheckedChanged(android.widget.CompoundButton b, boolean v) { mixer.setSolo(ti, v); }
-            });
-            row.addView(mute);
-            row.addView(solo);
-            col.addView(row);
-        }
-        col.addView(sliderRow(L.t("mixer.master"), 0, 200, (int) (mixer.getMasterGain() * 100),
-                new android.widget.SeekBar.OnSeekBarChangeListener() {
-                    public void onProgressChanged(android.widget.SeekBar sb, int p, boolean u) {
-                        mixer.setMasterGain(p / 100f);
-                    }
-                    public void onStartTrackingTouch(android.widget.SeekBar sb) { }
-                    public void onStopTrackingTouch(android.widget.SeekBar sb) { }
-                }));
-        sc.addView(col);
-        new AlertDialog.Builder(this)
+        final com.dsh.v4tune.ui.MixerPanelView[] viewRef = new com.dsh.v4tune.ui.MixerPanelView[1];
+        com.dsh.v4tune.ui.MixerPanelView.Host host = new com.dsh.v4tune.ui.MixerPanelView.Host() {
+            public Mixer mixer() { return mixer; }
+            public int trackCount() { return song.tracks.size(); }
+            public String trackName(int i) { return trackLabel(i); }
+            public boolean isCurrent(int i) { return i == trackIndex; }
+            public float peak(int t) {
+                float[] pk = engine.trackPeaks();
+                return (t >= 0 && pk != null && t < pk.length) ? pk[t] : 0f;
+            }
+            public float masterPeak() {
+                float[] pk = engine.trackPeaks();
+                if (pk == null) return 0f;
+                float m = 0f;
+                for (int i = 0; i < song.tracks.size() && i < pk.length; i++) m = Math.max(m, pk[i]);
+                return Math.min(1f, m * mixer.getMasterGain());
+            }
+            public void onChanged(String what) { status(what); }
+            public void onEmptyInsert(int track) {
+                toast("通道插入槽还没有实现：插件挂在总线上（更多 → 工具 → 插件）");
+            }
+            public int insertCount() { return pluginChain == null ? 0 : pluginChain.size(); }
+            public String insertName(int slot) {
+                Plugin p = pluginChain == null ? null : pluginChain.get(slot);
+                return p == null ? "—" : p.name();
+            }
+            public boolean insertBypassed(int slot) {
+                return pluginChain != null && pluginChain.isBypassed(slot);
+            }
+            public void onToggleInsert(int slot) {
+                if (pluginChain == null || slot < 0 || slot >= pluginChain.size()) return;
+                boolean now = !pluginChain.isBypassed(slot);
+                pluginChain.setBypass(slot, now);
+                status("插入 " + (slot + 1) + (now ? " 已旁通" : " 已启用"));
+                if (viewRef[0] != null) viewRef[0].invalidate();
+            }
+        };
+        final com.dsh.v4tune.ui.MixerPanelView panel = new com.dsh.v4tune.ui.MixerPanelView(this, host);
+        viewRef[0] = panel;
+        android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
+        hs.setBackgroundColor(Theme.BG_DEEP);
+        hs.setHorizontalScrollBarEnabled(true);
+        hs.addView(panel, new android.widget.FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        hs.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(400)));
+        final AlertDialog dlg = new AlertDialog.Builder(this)
                 .setTitle(L.t("dlg.mixer.title"))
-                .setView(sc)
+                .setView(hs)
                 .setPositiveButton(L.t("dlg.ok"), null)
                 .setNeutralButton(L.t("mixer.reset"), new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface d, int w) {
                         for (int i = 0; i < song.tracks.size(); i++) {
                             mixer.setGain(i, 1f);
+                            mixer.setTrimDb(i, 0f);
                             mixer.setPan(i, 0f);
                             mixer.setMute(i, false);
                             mixer.setSolo(i, false);
                         }
                         mixer.setMasterGain(1f);
+                        mixer.setMasterPan(0f);
                         status(L.t("status.mixer.reset"));
                     }
                 })
                 .show();
+        // the meters only move while something is rendered: repaint ~12 fps until the dialog closes
+        final Runnable tick = new Runnable() {
+            public void run() {
+                if (panel.isShown()) {
+                    panel.invalidate();
+                    panel.postDelayed(this, 80L);
+                }
+            }
+        };
+        dlg.setOnDismissListener(new DialogInterface.OnDismissListener() {
+            public void onDismiss(DialogInterface d) { panel.removeCallbacks(tick); }
+        });
+        panel.postDelayed(tick, 80L);
     }
 
     private View sliderRow(String label, int min, int max, int value,
@@ -4045,10 +4490,11 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private void saveIntoRoot(String name) {
         try {
             File dir = Storage.projects(this);
-            File f = new File(dir, ProjectIO.sanitize(name) + ".vsqx");
-            ProjectIO.savePath(f, song);
+            String base = ProjectIO.sanitize(stripProjectExt(name));
+            File f = new File(dir, base + ".vsqx");
+            ProjectIO.saveNative(f, song);
             currentUri = null;
-            projectName = ProjectIO.sanitize(name);
+            projectName = base;
             noteRecent(f);
             dirty = false;
             status("已保存到 " + f.getAbsolutePath());
@@ -4404,6 +4850,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     /** preference key: one recent project per line, tab separated path / label / time */
     private static final String RECENT_PREF = "recentProjects";
     private static final int RECENT_MAX = 5;
+    private static final String IMPORT_MAP_PREF = "importMap";
 
     /** full-screen entry point: four ways in, plus the five most recent projects */
     private void showStartScreen() {
@@ -4448,7 +4895,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         try {
             String old = getSharedPreferences("brivoice", MODE_PRIVATE).getString(RECENT_PREF, "");
             StringBuilder sb = new StringBuilder();
-            sb.append(path).append('\t').append(label == null ? "工程" : label)
+            sb.append(path).append('\t').append(label == null ? "工程" : stripProjectExt(label))
                     .append('\t').append(System.currentTimeMillis());
             int kept = 1;
             if (old != null) {
@@ -4471,7 +4918,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         if (f == null || !f.isFile()) return;
         try {
             String path = f.getAbsolutePath();
-            String label = baseName(f.getName());
+            String label = stripProjectExt(baseName(f.getName()));
             String old = getSharedPreferences("brivoice", MODE_PRIVATE).getString(RECENT_PREF, "");
             StringBuilder sb = new StringBuilder();
             sb.append(path).append('\t').append(label).append('\t').append(System.currentTimeMillis());
@@ -4508,7 +4955,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 if (parts.length >= 3) {
                     try { time = Long.parseLong(parts[2].trim()); } catch (Throwable ignored) { }
                 }
-                map.put(stored, new com.dsh.v4tune.ui.StartScreen.Recent(parts[1], stored, time,
+                map.put(stored, new com.dsh.v4tune.ui.StartScreen.Recent(displayName(parts[1]), stored, time,
                         f == null ? 0L : f.length()));
             }
         }
@@ -4524,7 +4971,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 String path = f.getAbsolutePath();
                 if (map.containsKey(path)) continue;
                 map.put(path, new com.dsh.v4tune.ui.StartScreen.Recent(
-                        baseName(f.getName()), path, f.lastModified(), f.length()));
+                        displayName(f.getName()), path, f.lastModified(), f.length()));
             }
         }
         java.util.ArrayList<com.dsh.v4tune.ui.StartScreen.Recent> out =
@@ -4547,18 +4994,19 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             toast("这个工程文件不见了（可能被移动或删掉）");
             return;
         }
+        String label = content ? projectNameOf(Uri.parse(r.path)) : displayName(r.label);
         try {
             beginEdit();
             song = content ? ProjectIO.open(this, Uri.parse(r.path)) : ProjectIO.openPath(f);
             commitEdit();
             currentUri = null;
-            projectName = r.label;
+            projectName = label;
             trackIndex = 0;
             chooseInitialVoice();
             refreshAll();
             scrollToContent();
-            if (f != null) noteRecent(f); else noteRecentUri(Uri.parse(r.path), r.label);
-            status("已打开 " + r.label + "（" + song.tracks.size() + " 轨 / " + countNotes() + " 音符）");
+            if (f != null) noteRecent(f); else noteRecentUri(Uri.parse(r.path), label);
+            status("已打开 " + label + "（" + song.tracks.size() + " 轨 / " + countNotes() + " 音符）");
         } catch (Throwable t) {
             toast("打开失败：" + msgOf(t));
             status("打开失败：" + msgOf(t));
@@ -4586,15 +5034,20 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
     private void saveProject(boolean as) {
         if (!as && currentUri != null) {
-            try {
-                ProjectIO.save(this, currentUri, song);
-                dirty = false;
-                status("已保存到原文件");
-                toast("已保存");
-            } catch (Exception e) {
-                status("保存失败: " + e.getMessage());
+            String last = currentUri.getLastPathSegment();
+            if (ProjectIO.isNativeName(last)) {
+                try {
+                    ProjectIO.save(this, currentUri, song);
+                    dirty = false;
+                    status("已保存到原文件");
+                    toast("已保存");
+                } catch (Exception e) {
+                    status("保存失败: " + e.getMessage());
+                }
+                return;
             }
-            return;
+            // writing the project back into a .ust/.ustx file would drop curves and phonemes
+            currentUri = null;
         }
         // direct save into BriVoice_root/projects - that is what the user asked for, and it works
         // without any picker once "all files access" is granted
@@ -4689,9 +5142,13 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             song = ProjectIO.open(this, uri);       // must land in the field, not a local
             commitEdit();
             currentUri = uri;
-            projectName = (name == null) ? "未命名" : name.replaceAll("\\.[A-Za-z0-9]+$", "");
+            projectName = projectNameOf(uri);
             trackIndex = 0;
             noteRecentUri(uri, projectName);
+            if (!ProjectIO.isNativeName(name)) {
+                // the importer gave us a format we can only export to; make sure the edits survive
+                status("已导入 " + name + "（保存时转为本地 .vsqx 工程）");
+            }
             chooseInitialVoice();
             refreshAll();
             scrollToContent();
@@ -4749,7 +5206,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 commitEdit();
                 currentUri = uri;
                 String last = uri.getLastPathSegment();
-                projectName = last == null ? "未命名" : last.replaceAll("\\.[A-Za-z0-9]+$", "");
+                projectName = projectNameOf(uri);
                 trackIndex = 0;
                 noteRecentUri(uri, projectName);
                 refreshAll();
@@ -4763,10 +5220,24 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         } else if (req == REQ_SAVE) {
             try {
                 ProjectIO.save(this, uri, song);
-                currentUri = uri;
-                noteRecentUri(uri, projectName);
-                status("已保存");
-                toast("已保存");
+                String last = uri.getLastPathSegment();
+                if (ProjectIO.isNativeName(last)) {
+                    currentUri = uri;
+                    projectName = projectNameOf(uri);
+                    noteRecentUri(uri, projectName);
+                    status("已保存");
+                    toast("已保存");
+                } else {
+                    // exported into a format that has no curves/phonemes: keep an editable native copy
+                    currentUri = null;
+                    projectName = ProjectIO.sanitize(projectNameOf(uri));
+                    File f = localProjectFile(projectName);
+                    ProjectIO.saveNative(f, song);
+                    projectName = stripProjectExt(f.getName());
+                    noteRecent(f);
+                    status("已导出 " + last + "，可编辑工程为 " + f.getName());
+                    toast("已导出；" + Storage.ROOT_NAME + "/projects 里保留了可编辑工程");
+                }
             } catch (Exception e) {
                 status("保存失败: " + e.getMessage());
             }
@@ -5260,21 +5731,33 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 if (path.length() == 0) throw new IllegalArgumentException("need path");
                 java.io.File f = new java.io.File(path);
                 if (!f.isFile()) throw new IllegalArgumentException("no such file: " + path);
-                com.dsh.v4tune.io.WavReader.AudioData d =
-                        com.dsh.v4tune.io.WavReader.read(new java.io.FileInputStream(f), 44100 * 180);
-                if (d == null || !d.ok()) throw new IllegalStateException("wav: " + (d == null ? "?" : d.error));
+                java.io.File pcm = com.dsh.v4tune.io.PcmFile.newFile(clipDir(), "clip");
+                java.io.InputStream wavIn = new java.io.FileInputStream(f);
+                com.dsh.v4tune.io.WavReader.PcmInfo info;
+                try {
+                    info = com.dsh.v4tune.io.WavReader.exportPcm(wavIn, pcm, WAV_MAX_FRAMES);
+                } finally {
+                    try { wavIn.close(); } catch (Throwable ignored) { }
+                }
+                if (info == null || !info.ok()) {
+                    throw new IllegalStateException("wav: " + (info == null ? "?" : info.error));
+                }
                 long songEnd = song.maxTick();
                 long at = (long) com.dsh.v4tune.ai.Json.num(args, "at tick", Math.max(0L, startTick));
                 if (songEnd > 0 && at >= songEnd) at = 0L;
-                AudioClip c = AudioClip.fromWav(d, at, f.getName());
-                if (c == null) throw new IllegalStateException("clip build failed");
                 beginEdit();
-                clipsFor(trackIndex).add(c);
+                int apiTrack = audioTrackForImport();
+                AudioClip c = AudioClip.fromPcm(pcm, info.frames, at, f.getName());
+                if (c == null) throw new IllegalStateException("clip build failed");
+                c.peaks = info.peaks;
+                clipsFor(apiTrack).add(c);
+                trackIndex = apiTrack;
                 commitEdit();
                 refreshAll();
                 return com.dsh.v4tune.ai.Json.obj("ok", Boolean.TRUE, "name", c.name,
-                        "seconds", Double.valueOf(d.frames / 44100.0), "startTick", Long.valueOf(c.startTick),
-                        "clips", Integer.valueOf(clipsFor(trackIndex).size()));
+                        "seconds", Double.valueOf(info.seconds()), "startTick", Long.valueOf(c.startTick),
+                        "track", Integer.valueOf(apiTrack),
+                        "clips", Integer.valueOf(clipsFor(apiTrack).size()));
             }
             if ("exportWav".equals(action)) {
                 String path = com.dsh.v4tune.ai.Json.str(args, "path", "");
@@ -6176,10 +6659,19 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         return briNetingVoice;
     }
 
-    /** load the shared universal prior once (it is a few dozen KB) */
+    /**
+     * Load the shared universal prior once (it is a few dozen KB).
+     *
+     * <p>The base now ships inside the APK (assets/net/brineting-base.v4neural) so a fresh install
+     * already has BriNeting trained with the retrained 灵溪 AI voicebank instead of asking the user
+     * to train it by hand. Like the bundled voicebank, it is installed ONCE per shipped build:
+     * the signature of the asset is remembered, so a rebuilt base reaches devices that already
+     * installed the old one, while a user who deletes it keeps it deleted.</p>
+     */
     private NeuralSpectrum ensureUniversalNeural() {
         if (!universalNeuralTried) {
             universalNeuralTried = true;
+            installBundledNeuralBase();
             File f = universalNeuralFile();
             if (f.isFile()) {
                 try {
@@ -6190,6 +6682,45 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             }
         }
         return universalNeural;
+    }
+
+    /** copy assets/net/brineting-base.v4neural into files/neural once per shipped signature */
+    private void installBundledNeuralBase() {
+        final String name = "brineting-base.v4neural";
+        java.io.InputStream in = null;
+        try {
+            java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+            long total = 0;
+            byte[] buf = new byte[8192];
+            try {
+                in = getAssets().open("net/" + name);
+            } catch (Throwable missing) {
+                return;                                  // no bundled base in this build
+            }
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream(64 * 1024);
+            int n;
+            while ((n = in.read(buf)) > 0) { crc.update(buf, 0, n); bos.write(buf, 0, n); total += n; }
+            in.close();
+            in = null;
+            String sig = total + ":" + crc.getValue();
+            android.content.SharedPreferences sp = getSharedPreferences("brivoice", MODE_PRIVATE);
+            if (sig.equals(sp.getString("base_sig", null))) return;
+            File dst = universalNeuralFile();
+            File dir = dst.getParentFile();
+            if (dir != null && !dir.exists()) dir.mkdirs();
+            java.io.FileOutputStream out = new java.io.FileOutputStream(dst);
+            try {
+                bos.writeTo(out);
+            } finally {
+                out.close();
+            }
+            sp.edit().putString("base_sig", sig).apply();
+            android.util.Log.i("V4Tune", "bundled BriNeting base installed: " + total + " bytes");
+        } catch (Throwable t) {
+            android.util.Log.w("V4Tune", "bundled base install failed: " + t);
+        } finally {
+            try { if (in != null) in.close(); } catch (Throwable ignored) { }
+        }
     }
 
     private void saveNeuralEnabled(VoiceModel vm, boolean on) {
@@ -7355,6 +7886,128 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         } finally {
             try { in.close(); } catch (Throwable ignored) { }
         }
+    }
+
+    /** every extension the reader understands; used to keep project names free of them */
+    private static final String[] PROJECT_EXTS = {".vsqx", ".vsq", ".ustx", ".ust", ".mid", ".midi", ".svip3"};
+
+    /** "primary:BriVoice_root/projects/song.vsqx" -> "song": old builds stored SAF document ids as names */
+    private static String displayName(String raw) {
+        String s = raw == null ? "" : raw.trim();
+        int k = Math.max(s.lastIndexOf('/'), s.lastIndexOf(':'));
+        if (k >= 0) s = s.substring(k + 1);
+        return stripProjectExt(s);
+    }
+
+    /** a clean project name from any uri (SAF document ids are "primary:folder/name.vsqx") */
+    private static String projectNameOf(Uri uri) {
+        if (uri == null) return "未命名";
+        String s = null;
+        try { s = uri.getLastPathSegment(); } catch (Throwable ignored) { }
+        if (s == null) return "未命名";
+        try { s = Uri.decode(s); } catch (Throwable ignored) { }
+        return displayName(s);
+    }
+
+    /** "song.vsqx.vsqx" -> "song": older builds appended .vsqx to a name that already had one */
+    private static String stripProjectExt(String name) {
+        String n = name == null ? "" : name.trim();
+        boolean cut = true;
+        while (cut) {
+            cut = false;
+            String low = n.toLowerCase(java.util.Locale.US);
+            for (String ext : PROJECT_EXTS) {
+                if (low.endsWith(ext) && n.length() > ext.length()) {
+                    n = n.substring(0, n.length() - ext.length());
+                    cut = true;
+                    break;
+                }
+            }
+        }
+        n = n.trim();
+        return n.isEmpty() ? "未命名" : n;
+    }
+
+    /** the native project file for this name, inside BriVoice_root/projects */
+    private File localProjectFile(String base) {
+        File dir = Storage.projects(this);
+        if (dir != null && !dir.exists()) dir.mkdirs();
+        return new File(dir, ProjectIO.sanitize(stripProjectExt(base)) + ".vsqx");
+    }
+
+    private String adoptedPathFor(String sourceKey) {
+        if (sourceKey == null || sourceKey.isEmpty()) return null;
+        try {
+            String raw = getSharedPreferences("brivoice", MODE_PRIVATE).getString(IMPORT_MAP_PREF, "");
+            if (raw == null) return null;
+            for (String line : raw.split("\n")) {
+                int t = line.indexOf('\t');
+                if (t > 0 && line.substring(0, t).equals(sourceKey)) return line.substring(t + 1);
+            }
+        } catch (Throwable ignored) { }
+        return null;
+    }
+
+    private void rememberAdopted(String sourceKey, File f) {
+        if (sourceKey == null || sourceKey.isEmpty() || f == null) return;
+        try {
+            String old = getSharedPreferences("brivoice", MODE_PRIVATE).getString(IMPORT_MAP_PREF, "");
+            StringBuilder sb = new StringBuilder();
+            sb.append(sourceKey).append('\t').append(f.getAbsolutePath());
+            int kept = 1;
+            if (old != null) {
+                for (String line : old.split("\n")) {
+                    int t = line.indexOf('\t');
+                    if (t <= 0) continue;
+                    if (line.substring(0, t).equals(sourceKey)) continue;
+                    if (kept >= 12) continue;
+                    sb.append('\n').append(line);
+                    kept++;
+                }
+            }
+            getSharedPreferences("brivoice", MODE_PRIVATE).edit().putString(IMPORT_MAP_PREF, sb.toString()).apply();
+        } catch (Throwable ignored) { }
+    }
+
+    /** the local .vsqx that an imported (lossy-format) source is copied into */
+    private File importedCopyFile(Uri source, String base) {
+        String key = source == null ? "" : source.toString();
+        if (!key.isEmpty()) {
+            String known = adoptedPathFor(key);
+            if (known != null) {
+                File k = new File(known);
+                if (k.isFile()) return k;
+            }
+        }
+        File dir = Storage.projects(this);
+        if (dir != null && !dir.exists()) dir.mkdirs();
+        String stemName = ProjectIO.sanitize(stripProjectExt(base));
+        File f = new File(dir, stemName + ".vsqx");
+        if (f.exists()) {
+            int n = 2;
+            do { f = new File(dir, stemName + "（导入" + n + "）.vsqx"); n++; } while (f.exists() && n < 1000);
+        }
+        if (!key.isEmpty()) rememberAdopted(key, f);
+        return f;
+    }
+
+    /** drop one entry from the recent list (the imported source is no longer the thing to reopen) */
+    private void forgetRecent(String pathOrUri) {
+        if (pathOrUri == null) return;
+        try {
+            String old = getSharedPreferences("brivoice", MODE_PRIVATE).getString(RECENT_PREF, "");
+            if (old == null) return;
+            StringBuilder sb = new StringBuilder();
+            for (String line : old.split("\n")) {
+                if (line.trim().isEmpty()) continue;
+                int t = line.indexOf('\t');
+                if (t <= 0) continue;
+                if (line.substring(0, t).equals(pathOrUri)) continue;
+                if (sb.length() > 0) sb.append('\n');
+                sb.append(line);
+            }
+            getSharedPreferences("brivoice", MODE_PRIVATE).edit().putString(RECENT_PREF, sb.toString()).apply();
+        } catch (Throwable ignored) { }
     }
 
     /** last path segment, cleaned up, used both as the pack entry name and the phoneme hint */

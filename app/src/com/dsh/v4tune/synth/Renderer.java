@@ -183,6 +183,11 @@ public class Renderer {
             }
         }
 
+        // Scratch grid for the vocal-tract-length warp. A measured envelope carries the formants of
+        // whoever was recorded; formantScale is a singer trait, so the ENVELOPE has to move too —
+        // the harmonic path never runs through the formant filter at all.
+        double[] envWarp = (hv != null) ? new double[vm.harmonicFreqs.length] : null;
+
         // The pack shelf is the average spectral envelope measured from the user's own voicebank.
         // Applied raw it also changes the overall level and over-dips the presence band, so the
         // curve is centred on 0 dB (level preserved) and damped to 60% before it is used as colour.
@@ -248,8 +253,20 @@ public class Renderer {
                 double genResp = neuralBank ? (0.5 + 0.5 * np.tension) : 0.5;
                 genMul = Math.pow(2.0, (pv[5] - 0.5) * (0.5 * (genResp / 0.5)));  // GEN: vocal tract length
                 for (int k = 0; k < 5; k++) ff.setFormant(k, fm[k] * genMul, bw[k] * bwScale);
-                ff.setFricGain(clamp(cur.noise, 0, 1));
-                ff.setFricBand(0, Math.max(150, cur.noiseFc), Math.max(100, cur.noiseBw), 1.0);
+                // A stop's release is mostly noise through the place band. It used to run through the
+                // formant cascade alone, whose F1 sits at 250 Hz for every place, so p/t/k all came
+                // out with the same low-frequency blip. Driving the parallel band hard makes the
+                // burst's spectrum follow noiseFc/noiseBw, which is what carries the place cue.
+                // The stop burst has to be dominated by the place band, not by the formant cascade:
+                // the cascade's second resonance sits near 1.5 kHz for p, t and k alike, which is why
+                // the three releases still measured the same after the bands were narrowed. The
+                // parallel band (noiseFc/noiseBw) is what carries the place, so it is driven well
+                // above unity for a stop.
+                // setFricGain clamps at 1.0, so the place band is lifted with its OWN peak gain
+                // instead: at gain 1.0 the cascade still dominated and p/t/k kept measuring the same.
+                ff.setFricGain(clamp(cur.type == PhonemeDef.T_STOP ? 1.0 : cur.noise, 0, 1));
+                ff.setFricBand(0, Math.max(150, cur.noiseFc), Math.max(100, cur.noiseBw),
+                        cur.type == PhonemeDef.T_STOP ? 6.0 : 1.0);
                 ff.setTilt(clamp((0.5 - pv[2] + vm.tiltBias + npBright) * 0.6, -1, 1));
 
                 if (hv != null) {
@@ -295,7 +312,8 @@ public class Renderer {
                             for (int k = 0; k < slen; k++) envMix[k] += stilt * octAbove1k[k];
                         }
                         seqGain = 1.0;
-                        if (fv != null) fv.setFrame(f0, vm.harmonicFreqs, envMix, true, FRAME_GAIN);
+                        if (fv != null) fv.setFrame(f0, vm.harmonicFreqs,
+                                warpEnvelope(vm.harmonicFreqs, envMix, vm.formantScale, envWarp), true, FRAME_GAIN);
                         if (ns != null) ns.reset();
                     } else if (b1 != null || b2 != null) {
                         int len = vm.harmonicFreqs.length;
@@ -314,7 +332,9 @@ public class Renderer {
                         seqGain = Math.pow(10.0, lvlDb / 20.0);
                         if (fv != null) {
                             if (b1 != null) {
-                                fv.setFrame(f0, vm.harmonicFreqs, envMix, voicedCur, seqGain * FRAME_GAIN);
+                                fv.setFrame(f0, vm.harmonicFreqs,
+                                        warpEnvelope(vm.harmonicFreqs, envMix, vm.formantScale, envWarp),
+                                        voicedCur, seqGain * FRAME_GAIN);
                             } else {
                                 // this phoneme was never measured: sing it with the formant path
                                 fv.clear();
@@ -350,12 +370,21 @@ public class Renderer {
                                 }
                             }
                         }
-                        hv.setShape(vm.harmonicFreqs, envMix, f0);
+                        hv.setShape(vm.harmonicFreqs,
+                                warpEnvelope(vm.harmonicFreqs, envMix, vm.formantScale, envWarp), f0);
                         hTarget = (b1 != null && voicedCur) ? 1.0 : ((b2 != null && w2 > 0.2) ? 1.0 : 0.0);
                     } else {
                         hTarget = 0.0;
                     }
                     hv.setBreath(clamp(pv[1] + vm.breathBias * 0.35 + npBreath, 0, 1) * 0.5);
+                // A voicebank that was measured from recordings keeps a little aspiration under the
+                // harmonics: a pure harmonic stack has no aperiodic energy, which is heard as the
+                // dry "digital" tone. The amount follows the bank's own breath character so a bright
+                // bank does not turn breathy.
+                // a slow flutter (0.7 Hz, +-35 %) on the aspiration amount: a frozen noise bed is as
+                // much of a tell as a frozen spectrum - a real voice's breathiness breathes.
+                double flutter = 1.0 + 0.35 * Math.sin(2 * Math.PI * 0.7 * (i / (double) fs));
+                hv.setAiry(clamp((0.18 + vm.breathBias * 0.55 + npBreath * 0.6) * flutter, 0.0, 0.45));
                 }
                 hw += (hTarget - hw) * smoothCtl;
                 if (hw < 0.001) hw = 0; else if (hw > 0.999) hw = 1;
@@ -389,7 +418,15 @@ public class Renderer {
             }
 
             float exc = src.sample(f0, oq, tilt, breath * 0.35);
-            float noise = src.noiseOnly(breath * 0.5 + 0.05);
+            // voicing is a property of the phoneme, not a constant: the glottal pulse used to run at
+            // full level for every segment, so a voiceless stop or fricative was sung *with* voicing
+            // and its place cue was buried under a voiced blip (p/t/k measured 0.5 dB apart).
+            exc *= (float) clamp(cur.voiced, 0, 1);
+            // A stop's release is a burst of broadband noise through the place band, not the
+            // breath-dependent hiss the other phonemes use: noiseOnly(breath*0.5+0.05) left the
+            // parallel band at a fraction of the cascade, which is why p/t/k all began with the
+            // cascade's 1.5 kHz smudge and measured under 1 dB apart.
+            float noise = src.noiseOnly(cur.type == PhonemeDef.T_STOP ? 0.85 : breath * 0.5 + 0.05);
             if (gwl > 0.02) {
                 exc *= (float) (1.0 - gwl * 0.25 * (0.5 + 0.5 * Math.sin(2 * Math.PI * 24.0 * i / fs)));
             }
@@ -449,13 +486,16 @@ public class Renderer {
             // the vowel (s: +4.8 dB, peak 0.38) which is heard as a "burst" in front of each syllable.
             // In real singing the consonant sits well below the vowel, so scale by manner:
             //   fricatives / affricates  ~ -7 dB,  nasals / liquids / glides ~ -4 dB,  stops ~ -10 dB
+            // Voiceless phonemes lost the glottal source they used to be sung with (see the
+            // exc *= cur.voiced gate), which took ~9 dB off every fricative; the manner balance
+            // below is re-scaled so the consonant sits at the same place under the vowel as before.
             switch (cur.type) {
                 case PhonemeDef.T_FRIC:
                 case PhonemeDef.T_AFFRIC:
-                    g *= 0.45 * vm.consonantGain;    // -12 dB made syllables unrecognisable
+                    g *= 1.9 * vm.consonantGain;
                     break;
                 case PhonemeDef.T_ASPIR:
-                    g *= 0.35 * vm.consonantGain;
+                    g *= 1.5 * vm.consonantGain;
                     break;
                 case PhonemeDef.T_NASAL:
                 case PhonemeDef.T_LIQUID:
@@ -736,16 +776,48 @@ public class Renderer {
         return eq.isBypassed() ? null : eq;
     }
 
+    /**
+     * Moves a measured spectral envelope along the frequency axis by {@code scale}: the value that
+     * sat at f now sits at f*scale, which is what a shorter vocal tract does to every formant at
+     * once. Interpolation is linear over log-frequency so peaks keep their shape instead of being
+     * smeared into a staircase. scale == 1 returns the input untouched (zero cost, no copy).
+     */
+    static double[] warpEnvelope(double[] freqs, double[] db, double scale, double[] buf) {
+        if (buf == null || db == null || freqs == null || Math.abs(scale - 1.0) < 1e-6) return db;
+        int n = Math.min(freqs.length, db.length);
+        for (int k = 0; k < n; k++) {
+            double want = freqs[k] / scale;
+            if (want <= freqs[0]) { buf[k] = db[0]; continue; }
+            int lo = 0, hi = n - 1;
+            if (want >= freqs[hi]) { buf[k] = db[hi]; continue; }
+            while (hi - lo > 1) {
+                int mid = (lo + hi) >>> 1;
+                if (freqs[mid] <= want) lo = mid; else hi = mid;
+            }
+            double f0 = freqs[lo], f1 = freqs[hi];
+            double w = (f1 > f0) ? (want - f0) / (f1 - f0) : 0.0;
+            w = w < 0 ? 0 : (w > 1 ? 1 : w);
+            buf[k] = db[lo] + (db[hi] - db[lo]) * w;
+        }
+        for (int k = n; k < buf.length; k++) buf[k] = db[Math.min(k, db.length - 1)];
+        return buf;
+    }
+
     static double formantOf(PhonemeDef ph, int i, VoiceModel vm) {
         double[] ov = vm.override(ph.sym);
-        if (ov != null && i < ov.length && ov[i] > 0) return ov[i];
         double f;
-        switch (i) {
-            case 0: f = ph.f1; break;
-            case 1: f = ph.f2; break;
-            case 2: f = ph.f3; break;
-            case 3: f = ph.f4; break;
-            default: f = ph.f5; break;
+        if (ov != null && i < ov.length && ov[i] > 0) {
+            // measured formant of the pack: still goes through the same sex/age scaling,
+            // otherwise formantScale / f*Mul would silently do nothing for packs with data.
+            f = ov[i];
+        } else {
+            switch (i) {
+                case 0: f = ph.f1; break;
+                case 1: f = ph.f2; break;
+                case 2: f = ph.f3; break;
+                case 3: f = ph.f4; break;
+                default: f = ph.f5; break;
+            }
         }
         double mul;
         switch (i) {
@@ -833,10 +905,17 @@ public class Renderer {
             // Closure then release burst. The burst used to run at full phoneme gain, which made
             // every plosive syllable start with an audible "pop"; a real stop release sits far
             // below the vowel (aspirated ones louder than unaspirated) and is only a few ms long.
-            double burst = Math.min(sg.ph.aspirated ? 0.010 : 0.006, d * 0.30);
+            // v26H1127V3: the burst was 35 dB under the vowel, so p/t/k all started with the same
+            // inaudible blip and "清晰" was impossible. A real release sits ~12-18 dB below the
+            // vowel and carries the place of articulation; the parallel fricative branch is driven
+            // with the stop's own noiseFc/noiseBw (see the setFricBand call), which is what makes
+            // labial / alveolar / velar bursts different instead of three copies of one click.
+            double burst = Math.min(sg.ph.aspirated ? 0.014 : 0.009, d * 0.35);
             if (a < d - burst) return 0.008;                        // closure: nearly silent
             double u = (a - (d - burst)) / burst;
-            double amp = sg.ph.gain * (sg.ph.aspirated ? 0.22 : 0.11);
+            // the burst is now driven by the noise branch (the glottal source is off for a
+            // voiceless stop), so its level is set here rather than by the resonance cascade
+            double amp = sg.ph.gain * (sg.ph.aspirated ? 0.42 : 0.26);
             double atk = Math.min(0.0015, burst * 0.4);              // 1.5 ms rise, no click
             if (u * burst < atk) return amp * (u * burst / atk);
             return amp * Math.max(0.0, 1.0 - (u * burst - atk) / Math.max(1e-6, burst - atk));
@@ -851,8 +930,11 @@ public class Renderer {
         // hole in the middle of every phrase
         double atk = Math.min(sg.legatoIn ? 0.010 : 0.02, d * 0.15);
         double rel = Math.min(sg.legatoOut ? 0.018 : 0.06, d * 0.25);
-        if (a < atk) return (a / atk) * sg.ph.gain;
-        if (a > d - rel) return Math.max(0, (d - a) / rel) * sg.ph.gain;
+        // smoothstep instead of a straight line: a linear ramp leaves a corner in the amplitude
+        // envelope, and a corner is a broadband click. It is also what makes an attack read as
+        // "gated/robotic" rather than sung - real notes swell and fall along a curve.
+        if (a < atk) { double x = a / atk; return x * x * (3.0 - 2.0 * x) * sg.ph.gain; }
+        if (a > d - rel) { double x = Math.max(0.0, (d - a) / rel); return x * x * (3.0 - 2.0 * x) * sg.ph.gain; }
         return sg.ph.gain;
     }
 

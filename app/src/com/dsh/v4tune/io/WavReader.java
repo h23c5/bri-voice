@@ -30,6 +30,12 @@ public final class WavReader {
     public static final int OUT_RATE = 44100;
     /** Frame cap applied when {@code maxFrames <= 0}: 2 minutes at {@link #OUT_RATE}. */
     public static final int DEFAULT_MAX_FRAMES = OUT_RATE * 120;
+    /**
+     * Frame cap for {@link #exportPcm} when no explicit cap is given: one hour at
+     * {@link #OUT_RATE}. The old in-heap decode was capped at 3 minutes because the samples had to
+     * fit in memory; a streamed sidecar only costs disk, so backing tracks are no longer cut.
+     */
+    public static final int MAX_PCM_FRAMES = OUT_RATE * 60 * 60;
     /** fmt chunks are small; a larger declared size is treated as a lie and clamped. */
     private static final int FMT_MAX = 256;
     /** Upper bound for buffering a data chunk that shows up before the fmt chunk. */
@@ -110,6 +116,154 @@ public final class WavReader {
         }
     }
 
+    /**
+     * Streaming counterpart of {@link #read}: decodes a WAV into a header-less int16 stereo
+     * {@link PcmFile} sidecar while holding at most one block of samples in memory.
+     *
+     * <p>This is what lifts the old 180 s import cap: the clip audio no longer has to fit in the
+     * heap, so a four minute backing track costs disk space instead of tens of megabytes of
+     * floats, and the waveform thumbnail comes out of the same pass.</p>
+     *
+     * @param in        RIFF/WAVE bytes (the caller keeps ownership, the stream is not closed here)
+     * @param out       destination sidecar file
+     * @param maxFrames output frame cap, {@code <= 0} selects {@link #MAX_PCM_FRAMES}
+     * @return what was written, or the reason it failed in {@link PcmInfo#error}
+     */
+    public static PcmInfo exportPcm(InputStream in, java.io.File out, int maxFrames) {
+        if (in == null) return PcmInfo.fail("no input stream");
+        if (out == null) return PcmInfo.fail("no destination file");
+        final int cap = (maxFrames > 0) ? maxFrames : MAX_PCM_FRAMES;
+        java.io.FileOutputStream fos = null;
+        try {
+            Header h = scan(in, true);
+            if (h.fmt == null) return PcmInfo.fail("missing fmt chunk (no format information)");
+            final Fmt f = h.fmt;
+            long dataBytes;
+            if (h.stash != null) {
+                if (h.stash.n <= 0) return PcmInfo.fail("data chunk is empty (0 bytes of audio)");
+                in = new ByteArrayInputStream(h.stash.b, 0, h.stash.n);
+                dataBytes = h.stash.n;
+            } else {
+                if (h.dataOffset < 0) return PcmInfo.fail("missing data chunk");
+                dataBytes = h.dataBytes;
+            }
+            final int frameBytes = f.sampleBytes * f.channels;
+            if (dataBytes < frameBytes) {
+                return PcmInfo.fail("data chunk too small: " + dataBytes + " byte(s), one "
+                        + f.channels + "x" + f.bits + "-bit frame needs " + frameBytes);
+            }
+            final long declared = dataBytes / frameBytes;
+            final double step = (f.rate == OUT_RATE) ? 1.0 : (double) f.rate / OUT_RATE;
+            long outTotal = (f.rate == OUT_RATE) ? declared : Math.round(declared / step);
+            boolean cut = outTotal > cap;
+            if (outTotal > cap) outTotal = cap;
+            if (outTotal <= 0) return PcmInfo.fail("no audio frames");
+
+            final int buckets = PcmFile.PEAK_BUCKETS;
+            float[] peaks = new float[buckets];
+            final int srcBlock = Math.max(2, IO_BLOCK / frameBytes);
+            float[] bl = new float[srcBlock + 2];
+            float[] br = (f.channels == 2) ? new float[srcBlock + 2] : null;
+            byte[] raw = new byte[srcBlock * frameBytes];
+            long bufStart = 0;          // absolute source frame held in bl[0]
+            int have = 0;               // valid source frames in bl
+            long readBudget = dataBytes;
+            boolean sourceEnded = false;
+
+            fos = new java.io.FileOutputStream(out);
+            java.io.DataOutputStream os = new java.io.DataOutputStream(
+                    new java.io.BufferedOutputStream(fos, 1 << 16));
+            final int outChunk = (int) Math.max(1L, Math.min(4096L,
+                    (long) Math.floor(srcBlock / Math.max(1.0, step))));
+            float[] ol = new float[outChunk];
+            float[] orr = new float[outChunk];
+            long k = 0;
+            while (k < outTotal) {
+                int n = (int) Math.min(outChunk, outTotal - k);
+                long needLo = (long) Math.floor(k * step);
+                long needHi = (long) Math.floor((k + n - 1) * step) + 1L;
+                if (needLo > bufStart) {                       // slide the window forward
+                    int drop = (int) Math.min(needLo - bufStart, have);
+                    if (drop > 0) {
+                        System.arraycopy(bl, drop, bl, 0, have - drop);
+                        if (br != null) System.arraycopy(br, drop, br, 0, have - drop);
+                        bufStart += drop;
+                        have -= drop;
+                    }
+                }
+                while (bufStart + have <= needHi && !sourceEnded) {
+                    int space = bl.length - have;
+                    if (space <= 0) break;
+                    int want = (int) Math.min(Math.min((long) space, (long) srcBlock),
+                            Math.max(0L, readBudget / frameBytes));
+                    if (want <= 0) { sourceEnded = true; break; }
+                    int got = readFully(in, raw, 0, want * frameBytes);
+                    int frames = got / frameBytes;
+                    if (frames <= 0) { sourceEnded = true; break; }
+                    readBudget -= (long) frames * frameBytes;
+                    decodeFrames(raw, frames, f, bl, br, have);
+                    have += frames;
+                    if (frames < want) sourceEnded = true;
+                }
+                // Only a missing *first* sample means the source really ended early. The last block
+                // of a complete file has no lookahead frame; that one is clamped to the last sample
+                // instead of being reported as a truncation (it used to show "已截断" for every file).
+                if (have <= 0 || needLo >= bufStart + have) { cut = true; break; }
+                for (int i = 0; i < n; i++) {
+                    double p = (k + i) * step;
+                    long i0 = (long) p;
+                    double frac = p - i0;
+                    int idx = (int) (i0 - bufStart);
+                    if (idx < 0) idx = 0;
+                    if (idx >= have) idx = have - 1;
+                    int idx2 = Math.min(idx + 1, have - 1);
+                    float a = bl[idx], b = bl[idx2];
+                    float sl = (float) (a + ((double) b - a) * frac);
+                    float sr;
+                    if (br == null) sr = sl;
+                    else {
+                        float c0 = br[idx], c1 = br[idx2];
+                        sr = (float) (c0 + ((double) c1 - c0) * frac);
+                    }
+                    ol[i] = sl;
+                    orr[i] = sr;
+                }
+                for (int i = 0; i < n; i++) {
+                    int bk = (int) ((double) (k + i) * buckets / (double) outTotal);
+                    if (bk < 0) bk = 0; else if (bk >= buckets) bk = buckets - 1;
+                    float a = Math.abs(ol[i]);
+                    if (a > peaks[bk]) peaks[bk] = a;
+                    float c = Math.abs(orr[i]);
+                    if (c > peaks[bk]) peaks[bk] = c;
+                }
+                for (int i = 0; i < n; i++) {
+                    int l = (int) (ol[i] * 32767.0f);
+                    int r = (int) (orr[i] * 32767.0f);
+                    if (l > 32767) l = 32767; else if (l < -32768) l = -32768;
+                    if (r > 32767) r = 32767; else if (r < -32768) r = -32768;
+                    os.write(l & 0xFF); os.write((l >> 8) & 0xFF);
+                    os.write(r & 0xFF); os.write((r >> 8) & 0xFF);
+                }
+                k += n;
+            }
+            os.flush();
+            os.close();
+            fos = null;
+            float maxPeak = 0f;
+            for (int i = 0; i < buckets; i++) if (peaks[i] > maxPeak) maxPeak = peaks[i];
+            if (maxPeak > 0f) for (int i = 0; i < buckets; i++) peaks[i] /= maxPeak;
+            return new PcmInfo(out, (int) k, f.rate, f.channels, cut, null, peaks);
+        } catch (WavError e) {
+            PcmFile.delete(out);
+            return PcmInfo.fail(e.getMessage());
+        } catch (Throwable t) {
+            PcmFile.delete(out);
+            return PcmInfo.fail("unreadable WAV: " + t);
+        } finally {
+            if (fos != null) { try { fos.close(); } catch (Throwable ignored) { } }
+        }
+    }
+
     // ------------------------------------------------------------------ result type
 
     /**
@@ -175,6 +329,52 @@ public final class WavReader {
         static AudioData fail(String msg) {
             return new AudioData(new float[0], null, 0, 0,
                     (msg == null || msg.length() == 0) ? "unreadable WAV" : msg, false, 0);
+        }
+    }
+
+    /**
+     * What {@link #exportPcm} produced: the sidecar file, its length and a ready waveform
+     * thumbnail. {@code error} is null on success.
+     */
+    public static final class PcmInfo {
+        /** Sidecar file holding int16 stereo 44100 Hz frames; null on failure. */
+        public final java.io.File file;
+        /** Frames written to the sidecar (44100 Hz). */
+        public final int frames;
+        /** Sample rate of the source file (kept for information). */
+        public final int sourceRate;
+        /** Channels of the source file. */
+        public final int channels;
+        /** True when the source held more audio than the cap allowed (or ended early). */
+        public final boolean truncated;
+        /** Null on success, otherwise a readable reason. */
+        public final String error;
+        /** Normalised 0..1 waveform thumbnail ({@link PcmFile#PEAK_BUCKETS} buckets). */
+        public final float[] peaks;
+
+        PcmInfo(java.io.File file, int frames, int sourceRate, int channels, boolean truncated,
+                String error, float[] peaks) {
+            this.file = file;
+            this.frames = frames;
+            this.sourceRate = sourceRate;
+            this.channels = channels;
+            this.truncated = truncated;
+            this.error = error;
+            this.peaks = (peaks == null) ? new float[0] : peaks;
+        }
+
+        public boolean ok() {
+            return error == null;
+        }
+
+        /** Seconds of audio written to the sidecar. */
+        public double seconds() {
+            return frames / (double) OUT_RATE;
+        }
+
+        static PcmInfo fail(String msg) {
+            return new PcmInfo(null, 0, 0, 0, false,
+                    (msg == null || msg.length() == 0) ? "unreadable WAV" : msg, null);
         }
     }
 

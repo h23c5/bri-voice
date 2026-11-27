@@ -220,12 +220,17 @@ public final class PhonemeTable {
     // velar pinch F2 ~ F3 ~ 1900-2200 (Kewley-Port 1982; Stevens 1998 ch. 8).
     // Unaspirated (pinyin b/d/g) have a short-lag VOT: a weak burst only.
     // Aspirated (_h, pinyin p/t/k) add 30-60 ms of broadband aspiration noise.
-    stop("p",   250,  800, 2200, 3300, 4300, false, 1000, 3000, 0.10, 0.00); // pinyin b
-    stop("p_h", 250,  800, 2200, 3300, 4300, true,  1500, 3500, 0.35, 0.00); // pinyin p
-    stop("t",   250, 1700, 2600, 3400, 4400, false, 3500, 3000, 0.10, 0.00); // pinyin d
-    stop("t_h", 250, 1700, 2600, 3400, 4400, true,  2000, 3500, 0.35, 0.00); // pinyin t
-    stop("k",   250, 1900, 2200, 3200, 4200, false, 2000, 2500, 0.12, 0.00); // pinyin g, velar pinch
-    stop("k_h", 250, 1900, 2200, 3200, 4200, true,  1800, 3500, 0.35, 0.00); // pinyin k
+    // v26H1127V3: the burst bandwidth used to be 2500-3500 Hz, i.e. wider than the whole speech
+    // band, so the labial / alveolar / velar releases all came out as the same broadband click and
+    // p/t/k measured 0.5 dB apart. A real burst is a short resonance of the cavity in front of the
+    // constriction: ~1 kHz for the labial, ~2 kHz for the velar pinch, ~3.8 kHz for the alveolar
+    // (Stevens 1998 ch.8; Kent & Read 2002 tab.6-1), each about an octave wide.
+    stop("p",   250,  800, 2200, 3300, 4300, false,  900, 1200, 0.55, 0.00); // pinyin b
+    stop("p_h", 250,  800, 2200, 3300, 4300, true,  1100, 1800, 0.60, 0.00); // pinyin p
+    stop("t",   250, 1700, 2600, 3400, 4400, false, 3900, 1500, 0.55, 0.00); // pinyin d
+    stop("t_h", 250, 1700, 2600, 3400, 4400, true,  3900, 2200, 0.60, 0.00); // pinyin t
+    stop("k",   250, 1900, 2200, 3200, 4200, false, 2000, 1100, 0.55, 0.00); // pinyin g, velar pinch
+    stop("k_h", 250, 1900, 2200, 3200, 4200, true,  1900, 1600, 0.60, 0.00); // pinyin k
 
     // ------------------------------------------------------------ fricatives
     // Noise centre/bandwidth from Stevens (1998) ch. 6 and Kent & Read (2002):
@@ -241,10 +246,13 @@ public final class PhonemeTable {
     // Stop locus of the homorganic place plus the fricative release band above.
     affricate("ts\\_h", 250, 2200, 3000, 3600, 4500, 4800, 2500, 0.70, 0.00, true);  // pinyin q
     affricate("ts\\",   250, 2200, 3000, 3600, 4500, 4800, 2500, 0.55, 0.00, false); // pinyin j
-    affricate("ts`_h", 250, 1500, 2000, 3200, 4200, 3000, 2000, 0.70, 0.00, true);   // pinyin ch
-    affricate("ts_h",   250, 1700, 2600, 3400, 4400, 6000, 2500, 0.70, 0.00, true);  // pinyin c
-    affricate("ts`",   250, 1500, 2000, 3200, 4200, 3000, 2000, 0.55, 0.00, false);  // pinyin zh
-    affricate("ts",     250, 1700, 2600, 3400, 4400, 6000, 2000, 0.55, 0.00, false); // pinyin z
+    // v26H1127V3: an affricate is a stop release plus a SHORT frication, so its noise band sits
+    // lower and narrower than the homorganic fricative it gets confused with (ch vs sh and
+    // z vs s measured 0.7 dB apart while both used the fricative own band).
+    affricate("ts`_h", 250, 1500, 2000, 3200, 4200, 2300, 1400, 0.70, 0.00, true);   // pinyin ch
+    affricate("ts_h",   250, 1700, 2600, 3400, 4400, 5200, 1800, 0.70, 0.00, true);  // pinyin c
+    affricate("ts`",   250, 1500, 2000, 3200, 4200, 2300, 1400, 0.55, 0.00, false);  // pinyin zh
+    affricate("ts",     250, 1700, 2600, 3400, 4400, 5200, 1500, 0.55, 0.00, false); // pinyin z
 
     // ------------------------------------------------- other CHN phonemes
     // "?" is the glottal plosive VOCALOID uses for a hard onset: a short

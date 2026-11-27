@@ -1,9 +1,9 @@
 {
-  "versionCode": 106,
-  "versionName": "26H1127V2.1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v26H1127V2.1/BriVoice-26H1127V2.1.apk",
-  "sha256": "01dfe9bd08855d7a5580a5a56eb146ad737d20ffb86721cb91d860bfe836248c",
-  "size": 838162,
-  "notes": "release 26H1127V2.1：「更多」里多了一项「手动切换横竖屏」，不用转动机器就能换方向；开始界面的「更多」页也有同一项，进工程之前就能选好朝向。",
-  "publishedAt": "2026-11-27 22:09:08"
+  "versionCode": 107,
+  "versionName": "26H1128V1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v26H1128V1/BriVoice-26H1128V1.apk",
+  "sha256": "723a2b0f6a7fd565dbdd4ade899f2f73e30681301c4c326561f6973c154b5784",
+  "size": 1215060,
+  "notes": "release 26H1128V1：修掉导入工程后参数（控制曲线）和音节（音素）丢失——自动保存以前会按扩展名挑写出器，.ust / .ustx 的写出器没有曲线也没有音素，导入后一保存就把源文件改写成只剩音符的文本。现在自动保存只写原生 .vsqx，导入的源文件不再被改写；最近工程改成指向本地副本，从列表重开能拿到完整工程。",
+  "publishedAt": "2026-11-28 02:27:28"
 }

@@ -378,23 +378,18 @@ public class TrackStripView extends View {
             c.drawRoundRect(Math.max(x0, laneX), yTop, Math.min(x1, w), yBottom, dp(3f), dp(3f),
                     Theme.paint(Theme.withAlpha(ln.color, 0x33), 0f, true));
             waveP.setColor(ln.color);
-            if (cl.data != null && cl.data.ok() && cl.data.left != null) {
-                float[] s = cl.data.left;
-                int n = s.length;
-                int steps = Math.max(1, (int) ((Math.min(x1, w) - Math.max(x0, laneX)) / dp(2f)));
-                float mid = (yTop + yBottom) * 0.5f;
-                float amp = (yBottom - yTop) * 0.45f;
-                for (int i = 0; i < steps; i++) {
-                    int from = i * n / steps, to = Math.max(from + 1, (i + 1) * n / steps);
-                    float peak = 0f;
-                    for (int j = from; j < to; j += Math.max(1, (to - from) / 8)) {
-                        peak = Math.max(peak, Math.abs(s[j]));
-                    }
-                    float x = Math.max(x0, laneX) + i * dp(2f);
-                    if (x > w) break;
-                    float hh = Math.max(dp(0.6f), peak * amp);
-                    c.drawLine(x, mid - hh, x, mid + hh, waveP);
-                }
+            // The audio is no longer in memory (it lives in a sidecar file), so the thumbnail comes
+            // from AudioClip.wave(): the stored peaks for streamed clips, a long-safe sample scan for
+            // the small in-memory ones. The old inline scan overflowed int on long clips and crashed.
+            int steps = Math.max(1, (int) ((Math.min(x1, w) - Math.max(x0, laneX)) / dp(2f)));
+            float[] pk = cl.wave(steps);
+            float mid = (yTop + yBottom) * 0.5f;
+            float amp = (yBottom - yTop) * 0.45f;
+            for (int i = 0; i < steps; i++) {
+                float x = Math.max(x0, laneX) + i * dp(2f);
+                if (x > w) break;
+                float hh = Math.max(dp(0.6f), pk[i] * amp);
+                c.drawLine(x, mid - hh, x, mid + hh, waveP);
             }
         }
     }
@@ -454,7 +449,10 @@ public class TrackStripView extends View {
                 shiftTicks = 0L;
                 handler.removeCallbacks(longPress);
                 handler.removeCallbacks(laneDrag);
-                if (editMode && pressed >= 0 && hitMs == 0 && x >= laneX) handler.postDelayed(longPress, 480L);
+                // The name column (left of laneX) counts too: that is where the singer name is drawn,
+                // and long press is how it is switched. Only the track number strip and the M/S chips
+                // stay excluded, so a press on a name opens the singer list instead of doing nothing.
+                if (editMode && pressed >= 0 && hitMs == 0 && x >= headW) handler.postDelayed(longPress, 480L);
                 if (!editMode && pressed >= 0 && x >= laneX) handler.postDelayed(laneDrag, 320L);
                 invalidate();
                 return true;

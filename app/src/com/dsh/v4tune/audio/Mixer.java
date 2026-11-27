@@ -35,6 +35,8 @@ public class Mixer {
     private static final double SQRT2 = 1.4142135623730951;
 
     private int trackCount;
+    /** Channel trim (input gain), a linear factor 0.25..4 = -12..+12 dB, default unity. */
+    private float[] trim = new float[0];
     private float[] gain = new float[0];
     private float[] pan = new float[0];
     private boolean[] mute = new boolean[0];
@@ -87,6 +89,25 @@ public class Mixer {
 
     public float getPan(int i) {
         return (i >= 0 && i < pan.length) ? pan[i] : 0.0f;
+    }
+
+    /** Set a channel trim in dB (-12..+12), stored as a linear factor. */
+    public void setTrimDb(int i, float db) {
+        if (i < 0) return;
+        ensure(i + 1);
+        if (db != db) db = 0f;
+        if (db < -12f) db = -12f;
+        if (db > 12f) db = 12f;
+        trim[i] = (float) Math.pow(10.0, db / 20.0);
+    }
+
+    public float getTrimDb(int i) {
+        if (i < 0 || i >= trim.length || trim[i] <= 0f) return 0f;
+        return (float) (20.0 * Math.log10(trim[i]));
+    }
+
+    public float getTrim(int i) {
+        return (i >= 0 && i < trim.length && trim[i] > 0f) ? trim[i] : 1.0f;
     }
 
     public void setMute(int i, boolean m) {
@@ -278,15 +299,17 @@ public class Mixer {
         if (cap > MAX_TRACKS) cap = MAX_TRACKS;
         if (cap < n) cap = n;
         float[] ng = new float[cap];
+        float[] ntr = new float[cap];
         float[] np = new float[cap];
         boolean[] nm = new boolean[cap];
         boolean[] ns = new boolean[cap];
         for (int i = 0; i < cap; i++) {
+            ntr[i] = i < trim.length && trim[i] > 0f ? trim[i] : 1.0f;
             ng[i] = i < gain.length ? gain[i] : 1.0f;
             np[i] = i < pan.length ? pan[i] : 0.0f;
             nm[i] = i < mute.length && mute[i];
             ns[i] = i < solo.length && solo[i];
         }
-        gain = ng; pan = np; mute = nm; solo = ns;
+        gain = ng; trim = ntr; pan = np; mute = nm; solo = ns;
     }
 }

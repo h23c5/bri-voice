@@ -46,12 +46,30 @@ public class HarmonicVoice {
     private static final double PEAK_LIMIT = 1.2;
     /** Accepted envelope range in dB. */
     private static final double MAX_DB = 24.0, MIN_DB = -120.0;
-    /** Rebuild thresholds: f0 by 0.5 %, any envelope value by 0.25 dB. */
-    private static final double F0_TOL = 0.005, DB_TOL = 0.25;
+    /**
+     * Rebuild thresholds: any envelope value by 0.25 dB, f0 by {@value #F0_TOL_PCT} %.
+     *
+     * <p>The pitch threshold used to be 0.5 %, which is *narrower than a natural vibrato*: a 22 cent
+     * swing is +-1.3 %, so a plain sustained note rebuilt its wavetable about 42 times a second.
+     * Every rebuild re-lays the harmonic phases and cross-fades 3 ms of the old table into the new
+     * one, and that is heard as a warble riding on the tone - the single biggest source of the
+     * "electronic" character. Pitch itself never needed a rebuild: the phase accumulator already
+     * runs at the real f0, so the table is just read faster or slower.</p>
+     */
+    private static final double F0_TOL = 0.035, DB_TOL = 0.25;
+    /** Divisor of the Schroeder phase dispersion. Fixed (not kMax) so a rebuild does not re-phase
+     *  every harmonic - see {@link #buildTable}. */
+    private static final double DISPERSION = 64.0;
+    /** Natural irregularity of a sung note: per-period pitch jitter and level shimmer (fractions). */
+    private static final double JITTER = 0.0035, SHIMMER = 0.022;
+    /** 1 = natural singing (default), 0 = perfectly periodic (used by the spectral self test). */
+    private double humanize = 1.0;
     /** Length of the old/new table cross-fade in milliseconds. */
     private static final double XFADE_MS = 3.0;
     /** Breath noise: level at b = 1, the noise high-pass corner and its smoothing time. */
     private static final double BREATH_LEVEL = 0.12, BREATH_HZ = 3500.0, BREATH_SMOOTH_SEC = 0.005;
+    /** Level of the aspiration that is mixed under the voiced harmonics at airy = 1. */
+    private static final double AIRY_LEVEL = 0.10;
     /** Sample rates accepted by {@link #setSampleRate}. */
     private static final double MIN_SR = 4000.0, MAX_SR = 384000.0;
     /** Largest envelope handed to the table builder; points beyond this are ignored. */
@@ -94,6 +112,11 @@ public class HarmonicVoice {
     private final Noise noise = new Noise(NOISE_SEED);
     private double breath = 0.0, breathCur = 0.0;
     private double breathCoef = 0.01, lpCoef = 0.4, lpState = 0.0;
+    /** aspiration mixed into the voiced part (fraction of the table output) */
+    private double airy = 0.0;
+    /** current irregularity of the period: pitch jitter and level shimmer, updated once per period */
+    private double jit = 1.0, shim = 1.0;
+    private double lastPeriodSec = 0.0, periodClock = 0.0;
 
     public HarmonicVoice() {
         // twiddles + bit reversal are built once so that setShape() and sample() allocate nothing
@@ -140,6 +163,9 @@ public class HarmonicVoice {
         Arrays.fill(prevTable, 0.0);
         lpState = 0.0;
         breathCur = breath;
+        jit = 1.0;
+        shim = 1.0;
+        periodClock = 0.0;
         noise.reset(NOISE_SEED);
     }
 
@@ -147,6 +173,26 @@ public class HarmonicVoice {
     public void setBreath(double b) {
         if (Double.isNaN(b)) b = 0.0;
         breath = b < 0.0 ? 0.0 : (b > 1.0 ? 1.0 : b);
+    }
+
+    /**
+     * Scales the per-period pitch jitter / level shimmer. 1 (default) is a sung note; 0 makes the
+     * source perfectly periodic so a spectral measurement is not smeared by the jitter. Only the
+     * self test turns this off - a caller that wants a "robot" voice can too.
+     */
+    public void setHumanize(double scale) {
+        if (Double.isNaN(scale)) scale = 1.0;
+        humanize = scale < 0.0 ? 0.0 : (scale > 1.0 ? 1.0 : scale);
+    }
+
+    /**
+     * Aspiration mixed into the voiced part, 0..1. A pure harmonic stack has no aperiodic energy at
+     * all, which reads as a "dry"/"digital" tone; a small amount of noise under the harmonics is
+     * what a real sung vowel always carries. Values above 0.5 start to sound whispered.
+     */
+    public void setAiry(double a) {
+        if (Double.isNaN(a)) a = 0.0;
+        airy = a < 0.0 ? 0.0 : (a > 0.5 ? 0.5 : a);
     }
 
     /**
@@ -203,7 +249,18 @@ public class HarmonicVoice {
     public float sample() {
         if (!haveShape) return 0.0f;
 
-        double p = phase + f0 / sampleRate;
+        // Natural irregularity, applied once per period (not per sample): a real singer's periods
+        // are never identical - pitch wanders by a few tenths of a percent and the amplitude by a
+        // couple of percent. A perfectly periodic table is what makes a synth sound like a synth.
+        periodClock += f0 / sampleRate;
+        if (periodClock >= 1.0) {
+            periodClock -= Math.floor(periodClock);
+            double j = noise.nextGauss();
+            jit = 1.0 + j * JITTER * humanize;
+            shim = 1.0 + noise.nextGauss() * SHIMMER * humanize;
+        }
+
+        double p = phase + (f0 * jit) / sampleRate;
         if (p >= 1.0) p -= 1.0;
         else if (p < 0.0) p = 0.0;
         phase = p;
@@ -227,10 +284,13 @@ public class HarmonicVoice {
             breathCur += (breath - breathCur) * breathCoef;
             if (Math.abs(breath - breathCur) < 1e-4) breathCur = breath;
         }
-        if (breathCur > 1e-5) {
+        v *= shim;
+        if (breathCur > 1e-5 || airy > 1e-5) {
             double w = noise.nextGauss();
             lpState += (w - lpState) * lpCoef;
-            v += (w - lpState) * (BREATH_LEVEL * breathCur);
+            double hp = (w - lpState);          // high-passed noise: a hiss, not rumble
+            v += hp * (BREATH_LEVEL * breathCur);
+            if (airy > 1e-5) v += hp * (AIRY_LEVEL * airy) + w * (AIRY_LEVEL * 0.25 * airy);
         }
         return (float) v;
     }
@@ -347,10 +407,15 @@ public class HarmonicVoice {
         // magnitude spectrum untouched but stops the harmonics from piling up at one instant: the
         // crest factor drops by 2-3x, so the fixed RMS is actually reached (no peak limiter pulls
         // the level down) and the waveform's own sample-to-sample step stays small.
+        //
+        // The divisor used to be kMax, i.e. the phase of EVERY harmonic changed whenever one
+        // harmonic appeared or disappeared. A pitch change of 0.5 % shifts kMax, so the whole table
+        // re-phased and the cross-fade became a phase glitch instead of a morph. It is a constant
+        // now, so a rebuild keeps every existing harmonic where it was.
         for (int k = 1; k <= kMax; k++) {
             double a = amp[k];
             if (a <= 0.0) continue;
-            double phase = -Math.PI * k * (k - 1) / (double) kMax;
+            double phase = -Math.PI * k * (k - 1) / DISPERSION;
             double h = 0.5 * TABLE * a;
             double cr = h * Math.cos(phase), ci = h * Math.sin(phase);
             re[k] = cr;
