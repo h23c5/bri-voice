@@ -350,12 +350,30 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         super.onConfigurationChanged(cfg);
         // the manifest handles orientation changes itself, so the song stays in memory; only the
         // arrangement is rebuilt and the view state (cursor, selection, scroll) is restored
+        // the start screen is a full-screen dialog that measured itself for the previous
+        // orientation; reopening it after the rebuild is what keeps it from being clipped
+        boolean restartStart = startScreen != null && startScreen.isShowing();
+        if (restartStart) {
+            try { startScreen.dismiss(); } catch (Throwable ignored) { }
+            startScreen = null;
+        }
+        // the hierarchy is rebuilt from scratch, so capture what the old roll was looking at
+        // (zoom / horizontal scroll / top pitch) and hand it to the new one
+        float[] rollView = (roll != null) ? roll.viewState() : null;
         long cursor = startTick;
         setContentView(buildUi());
         refreshAll();
+        if (roll != null && rollView != null) {
+            roll.restoreViewState(rollView);
+            syncStripToRoll();
+            if (paramView != null) {
+                paramView.followHorizontal(roll.getPxPerTick(), roll.getScrollTick(), roll.keyWidth());
+            }
+        }
         if (cursor > 0) {
             syncCursor(cursor, true);
         }
+        if (restartStart) showStartScreen();
         status(isLandscape() ? "已切换为横屏布局" : "已切换为竖屏布局");
     }
 
@@ -385,7 +403,9 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 }
             }
         });
-        root.addView(railView, new LinearLayout.LayoutParams(dp(64), ViewGroup.LayoutParams.MATCH_PARENT));
+        // portrait phones are narrow: give the notes 8dp more room and keep the captions readable
+        root.addView(railView,
+                new LinearLayout.LayoutParams(dp(land ? 64 : 56), ViewGroup.LayoutParams.MATCH_PARENT));
 
         LinearLayout right = new LinearLayout(this);
         right.setOrientation(LinearLayout.VERTICAL);
@@ -459,13 +479,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         slp.setMargins(dp(6), dp(3), dp(6), dp(6));
         right.addView(statusText, slp);
 
-        // The weight axis follows the root orientation: in a VERTICAL layout the weight consumes
-        // leftover HEIGHT (width must be MATCH_PARENT), in a HORIZONTAL one it consumes WIDTH.
-        // Passing width=0 in portrait made the whole roll + parameter area zero pixels wide, which
-        // showed up as a black bottom half with working buttons.
-        root.addView(right, land
-                ? new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
-                : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        // root stays HORIZONTAL in both orientations (rail on the left), so the weight axis is
+        // WIDTH and the height must be MATCH_PARENT. Portrait used to pass height=0 with weight=1:
+        // a horizontal LinearLayout spends weight on width only, so the whole right column measured
+        // to zero height -- portrait showed a working rail next to a completely black editor.
+        root.addView(right,
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
         return root;
     }
 
@@ -541,7 +560,10 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         Window win = dlg.getWindow();
         if (win != null) {
             win.setBackgroundDrawable(Theme.card(this, Theme.PANEL));
-            win.setLayout((int) (getResources().getDisplayMetrics().widthPixels * 0.62f),
+            // 62% of the width reads well in landscape but leaves narrow buttons on a phone in
+            // portrait, where there is no side-by-side content competing for space
+            win.setLayout((int) (getResources().getDisplayMetrics().widthPixels
+                            * (isLandscape() ? 0.62f : 0.88f)),
                     ViewGroup.LayoutParams.WRAP_CONTENT);
         }
         dlg.show();
@@ -666,12 +688,17 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         LinearLayout clock = new LinearLayout(this);
         clock.setOrientation(LinearLayout.VERTICAL);
         clock.setGravity(Gravity.END);
+        // the two clock lines are stacked; in portrait the bar is narrower and tighter, so the
+        // type shrinks a notch and the block gets its own bottom padding (it used to be clipped
+        // by the arrangement strip below)
+        boolean portraitClock = !isLandscape();
         posText = new TextView(this);
         posText.setTextColor(Theme.TEXT);
-        posText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+        posText.setTextSize(TypedValue.COMPLEX_UNIT_SP, portraitClock ? 10f : 11f);
         totalText = new TextView(this);
         totalText.setTextColor(Theme.TEXT_DIM);
-        totalText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f);
+        totalText.setTextSize(TypedValue.COMPLEX_UNIT_SP, portraitClock ? 8f : 9f);
+        clock.setPadding(0, dp(1), dp(2), portraitClock ? dp(3) : 0);
         clock.addView(posText);
         clock.addView(totalText);
         bar.addView(clock);
@@ -1101,12 +1128,24 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private void updateCharacterOverlay() {
         if (charView == null) return;
         if (charBitmap == null) { charView.setVisibility(View.GONE); return; }
+        // a rotation rebuilds the hierarchy: the new ImageView has no drawable yet, so re-attach
+        // the bitmap that is still in memory (otherwise the art silently disappears until restart)
+        if (charView.getDrawable() == null) charView.setImageBitmap(charBitmap);
         charView.setAlpha(Math.max(0f, Math.min(1f, charAlpha / 255f)));
         int baseH = (rollFrame != null && rollFrame.getHeight() > 0) ? rollFrame.getHeight() : getResources().getDisplayMetrics().heightPixels;
         int h = (int) (baseH * charSize);
         h = Math.max(dp(60), Math.min(h, (int) (baseH * 0.92f)));
         float ratio = (charBitmap.getHeight() > 0) ? (float) charBitmap.getWidth() / charBitmap.getHeight() : 0.7f;
         int w = Math.max(dp(40), (int) (h * ratio));
+        // portrait: the roll is tall, so a height-driven size would blow the illustration up until
+        // it covered the notes; clamp by the roll's width instead (landscape keeps the old maths)
+        if (!isLandscape() && rollFrame != null && rollFrame.getWidth() > 0) {
+            int maxW = (int) (rollFrame.getWidth() * 0.36f);
+            if (w > maxW && maxW > dp(40)) {
+                w = maxW;
+                h = (int) (w / Math.max(0.05f, ratio));
+            }
+        }
         ViewGroup.LayoutParams lp = charView.getLayoutParams();
         if (lp != null && (lp.width != w || lp.height != h)) {
             lp.width = w;

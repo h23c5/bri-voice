@@ -214,7 +214,10 @@ public final class TutorialScreen {
         rail.setOrientation(LinearLayout.VERTICAL);
         rail.setBackground(Theme.card(a, Theme.PANEL_DK));
         rail.setPadding(dp(10), dp(10), dp(10), dp(8));
-        LinearLayout.LayoutParams railLp = new LinearLayout.LayoutParams(dp(280),
+        // portrait phones: a 280dp rail eats nearly half the width, so it narrows there
+        LinearLayout.LayoutParams railLp = new LinearLayout.LayoutParams(
+                dp(a.getResources().getConfiguration().orientation
+                        == android.content.res.Configuration.ORIENTATION_LANDSCAPE ? 280 : 190),
                 ViewGroup.LayoutParams.MATCH_PARENT);
         railLp.rightMargin = dp(10);
         body.addView(rail, railLp);

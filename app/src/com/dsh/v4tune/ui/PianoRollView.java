@@ -239,6 +239,26 @@ public class PianoRollView extends View {
      * an edit. This variant puts the view back afterwards, so dragging a clip or a note no longer
      * makes the timeline jump to the start.
      */
+    /**
+     * The view window (zoom, horizontal scroll, top pitch) as three floats. A rotation rebuilds the
+     * whole hierarchy, so the new roll starts at its defaults and drops the notes off-screen; the
+     * activity hands the old window back with {@link #restoreViewState(float[])}.
+     */
+    public float[] viewState() {
+        return new float[] { scrollTick, pxPerTick, topKey };
+    }
+
+    public void restoreViewState(float[] s) {
+        if (s == null || s.length < 3) return;
+        scrollTick = s[0];
+        pxPerTick = s[1];
+        topKey = s[2];
+        zoomInited = true;
+        vInited = true;
+        clampScroll();
+        invalidate();
+    }
+
     public void setSongKeepView(Song s) {
         float keepScroll = scrollTick, keepPx = pxPerTick, keepTop = topKey;
         setSong(s);
