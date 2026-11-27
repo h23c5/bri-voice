@@ -509,7 +509,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 L.t("toolbar.about"),
                 L.t("toolbar.demo"),
                 L.t("more.character"),
-                L.t("menu.tools")
+                L.t("menu.tools"),
+                L.t("menu.tools.orientation")
         };
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -547,7 +548,8 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         case 8: about(); break;
                         case 9: beginEdit(); song = Demo.twinkle(); commitEdit(); refreshAll(); scrollToContent(); status("已载入示例乐句"); break;
                         case 10: characterDialog(); break;
-                        default: toolsMenu(); break;
+                        case 11: toolsMenu(); break;
+                        default: toggleOrientation(); break;
                     }
                 }
             });
@@ -3223,10 +3225,16 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         });
     }
 
+    /**
+     * Flips between portrait and landscape. The SENSOR_* variants (instead of the plain
+     * PORTRAIT/LANDSCAPE ones) keep the opposite direction of the same axis usable, so turning the
+     * phone 180 degrees still works while editing. Reached from both 更多 and 工具 → 屏幕方向.
+     */
     private void toggleOrientation() {
         boolean land = isLandscape();
-        setRequestedOrientation(land ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+        setRequestedOrientation(land
+                ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         status(land ? "切换为竖屏" : "切换为横屏");
     }
 
@@ -4407,6 +4415,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             public void startSingers() { managePacks(); }
             public void startSettings() { settingsDialog(); }
             public void startTutorial() { showTutorial(); }
+            public void startOrientation() { toggleOrientation(); }
             public void startGitee() { openUrl("https://gitee.com/h23c5/bri-voice"); }
             public void startBilibili() { openUrl("https://space.bilibili.com/3461562746538484"); }
             public void startAbout() { about(); }

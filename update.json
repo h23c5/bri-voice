@@ -1,9 +1,9 @@
 {
-  "versionCode": 105,
-  "versionName": "26H1127V2",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v26H1127V2/BriVoice-26H1127V2.apk",
-  "sha256": "be627df09220a363055812cb89e067aea07961c20cef3613eaa0fe89fd03dfe1",
+  "versionCode": 106,
+  "versionName": "26H1127V2.1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v26H1127V2.1/BriVoice-26H1127V2.1.apk",
+  "sha256": "01dfe9bd08855d7a5580a5a56eb146ad737d20ffb86721cb91d860bfe836248c",
   "size": 838162,
-  "notes": "release 26H1127V2：竖屏适配——修掉竖屏编辑区整列算成 0 高（只剩图标栏、右边全黑）；竖屏下图标栏、时钟、角色立绘、参数区、教程章节栏、「更多」面板都按窄屏重排；旋转不再丢位置：卷帘缩放/横向位置/顶部音高和角色立绘都会还原，开始界面跟随朝向重排。",
-  "publishedAt": "2026-11-27 21:31:06"
+  "notes": "release 26H1127V2.1：「更多」里多了一项「手动切换横竖屏」，不用转动机器就能换方向；开始界面的「更多」页也有同一项，进工程之前就能选好朝向。",
+  "publishedAt": "2026-11-27 22:09:08"
 }

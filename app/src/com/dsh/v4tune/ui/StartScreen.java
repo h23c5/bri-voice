@@ -40,6 +40,7 @@ public final class StartScreen {
 
         void startSettings();
         void startTutorial();
+ void startOrientation();
         void startGitee();
         void startBilibili();
         void startAbout();
@@ -247,6 +248,10 @@ public final class StartScreen {
         }));
         page.addView(clickRow(L.t("start.tutorial"), L.t("start.tutorial.sub"), new View.OnClickListener() {
             public void onClick(View v) { host.startTutorial(); }
+        }));
+        // global UI preference, not "enter a project": stays on the title screen like settings
+        page.addView(clickRow(L.t("menu.tools.orientation"), "", new View.OnClickListener() {
+            public void onClick(View v) { host.startOrientation(); }
         }));
         page.addView(clickRow(L.t("start.gitee"), L.t("start.gitee.sub"), new View.OnClickListener() {
             public void onClick(View v) { host.startGitee(); }
