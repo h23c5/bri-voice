@@ -14,8 +14,10 @@ import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
 import android.util.TypedValue;
+import android.view.DisplayCutout;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowInsets;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.widget.Button;
@@ -491,7 +493,53 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         // to zero height -- portrait showed a working rail next to a completely black editor.
         root.addView(right,
                 new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        guardCutout(root);
         return root;
+    }
+
+    /**
+     * 横屏时挖孔/刘海常常正好压在屏幕左边缘：窗口铺满整屏后，最左边那一列图标栏会被挖孔盖住一截，
+     * 用户看到的就是「最左边显示不全」。这里按系统给出的挖孔安全边距把内容推开。
+     *
+     * <p>只在窗口确实压进挖孔时才加（系统已经让开时 loc 就在安全边界上，算出 0），所以不会出现
+     * 「系统让一次、代码再让一次」的双倍留白；没有挖孔的设备上这段是空操作。</p>
+     */
+    private void guardCutout(final View root) {
+        if (Build.VERSION.SDK_INT < 28) return;      // 挖孔/刘海屏从 Android 9 才有
+        root.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            public void onLayoutChange(View v, int l, int t, int r, int b,
+                                       int ol, int ot, int or, int ob) {
+                WindowInsets wi = v.getRootWindowInsets();
+                if (wi != null) padForCutout(v, wi);
+            }
+        });
+        root.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+            public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+                padForCutout(v, insets);
+                return insets;
+            }
+        });
+    }
+
+    private void padForCutout(View v, WindowInsets wi) {
+        DisplayCutout dc = wi.getDisplayCutout();
+        if (dc == null) {
+            if (v.getPaddingLeft() != 0 || v.getPaddingTop() != 0) v.setPadding(0, 0, 0, 0);
+            return;
+        }
+        // 判据只用「内容现在落在屏幕的哪个位置」：系统已经让开挖孔时 loc 就在安全边界上，
+        // 算出来是 0；窗口真的压进挖孔时 loc 是 0，才需要让。不要用 getInsets(displayCutout)：
+        // 那个是相对窗口外框的，窗口铺满屏幕时它恒等于挖孔宽度，会造成「系统让一次、代码再让一次」。
+        if (!v.isLaidOut()) return;
+        int[] loc = new int[2];
+        v.getLocationOnScreen(loc);
+        int padL = Math.max(0, dc.getSafeInsetLeft() - loc[0]);
+        int padT = Math.max(0, dc.getSafeInsetTop() - loc[1]);
+        if (padL == v.getPaddingLeft() && padT == v.getPaddingTop()) return;
+        v.setPadding(padL, padT, 0, 0);
+        android.util.Log.i("BriVoice", "cutout guard: loc=" + loc[0] + "," + loc[1]
+                + " safe=" + dc.getSafeInsetLeft() + "," + dc.getSafeInsetTop()
+                + " -> pad=" + padL + "," + padT);
     }
 
 

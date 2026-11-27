@@ -1,9 +1,9 @@
 {
-  "versionCode": 107,
-  "versionName": "26H1128V1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v26H1128V1/BriVoice-26H1128V1.apk",
-  "sha256": "723a2b0f6a7fd565dbdd4ade899f2f73e30681301c4c326561f6973c154b5784",
+  "versionCode": 108,
+  "versionName": "26H1128V1.1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v26H1128V1.1/BriVoice-26H1128V1.1.apk",
+  "sha256": "e18b09815662fd2d6f8aeb7daeb69406a486bbf2d52768290319ef7339e25830",
   "size": 1215060,
-  "notes": "release 26H1128V1：修掉导入工程后参数（控制曲线）和音节（音素）丢失——自动保存以前会按扩展名挑写出器，.ust / .ustx 的写出器没有曲线也没有音素，导入后一保存就把源文件改写成只剩音符的文本。现在自动保存只写原生 .vsqx，导入的源文件不再被改写；最近工程改成指向本地副本，从列表重开能拿到完整工程。",
-  "publishedAt": "2026-11-28 02:27:28"
+  "notes": "release 26H1128V1.1：修掉手机横屏时最左边图标栏显示不全。旧版左侧导轨把按钮步长锁死 38dp、顶部 logo 区固定 56dp，8 个按钮合计 360dp 起步；手机横屏可用高度常常只有 300~360dp，最下面几项（重做 / AI 调音 / 更多）被裁在屏幕外。现在导轨按实际高度收缩，308dp 高的横屏也能完整排下 8 项。",
+  "publishedAt": "2026-11-28 02:56:08"
 }

@@ -35,7 +35,7 @@ public class IconRail extends View {
     private final Path path = new Path();
 
     private float density;
-    private float btn, step, topPad, labelBaseline;
+    private float btn, step, topPad, labelBaseline, iconSz;
     private boolean playing;
     private int pressed = -1;
     private Listener listener;
@@ -111,13 +111,19 @@ public class IconRail extends View {
     @Override
     protected void onSizeChanged(int w, int h, int ow, int oh) {
         super.onSizeChanged(w, h, ow, oh);
-        btn = Math.min(dp(46f), w - dp(10f));
-        // fit all eight buttons plus the logo into whatever height the rail got; never clip
-        float avail = h - dp(56f) - dp(8f);
+        // 横屏手机上导轨只有 320~400dp 高：顶部 logo 区必须能收缩，按钮也要跟着变矮。
+        // 旧的写法把 step 锁在 38dp 下限、logo 区固定 56dp，8 个按钮加起来 360dp 起步，
+        // 在手机横屏上会超出导轨高度——最下面几个（重做 / AI 调音 / 更多）被直接裁掉，
+        // 看起来就是「最左边那一列显示不全」。
+        topPad = Math.min(dp(56f), Math.max(dp(30f), h * 0.16f));
+        float avail = Math.max(0f, h - topPad - dp(2f));
         step = Math.min(dp(58f), avail / COUNT);
-        if (step < dp(38f)) step = dp(38f);
-        topPad = dp(56f);
-        labelBaseline = 0f;
+        if (step < dp(22f)) step = dp(22f);          // 极矮屏也别让按钮挤成一条线
+        btn = Math.min(Math.min(dp(46f), w - dp(8f)), step - dp(4f));
+        if (btn < dp(16f)) btn = dp(16f);
+        iconSz = Math.min(dp(19f), btn * 0.56f);
+        labelP.setTextSize(Math.min(dp(9f), btn * 0.26f));
+        labelBaseline = btn * 0.5f - dp(2f);
     }
 
     @Override
@@ -128,16 +134,18 @@ public class IconRail extends View {
 
         // logo mark: the launcher icon itself, falling back to the initial if it cannot be loaded
         android.graphics.Bitmap mark = logoBitmap();
+        float logosz = Math.min(dp(26f), Math.max(dp(14f), topPad * 0.55f));
+        float logocy = topPad * 0.5f;
         if (mark != null) {
-            float sz = dp(26f);
-            r.set(w * 0.5f - sz * 0.5f, dp(22f), w * 0.5f + sz * 0.5f, dp(22f) + sz);
+            r.set(w * 0.5f - logosz * 0.5f, logocy - logosz * 0.5f,
+                    w * 0.5f + logosz * 0.5f, logocy + logosz * 0.5f);
             c.drawBitmap(mark, null, r, logoP);
         } else {
             logoP.setColor(Theme.ACCENT);
-            logoP.setTextSize(dp(19f));
+            logoP.setTextSize(Math.min(dp(19f), logosz));
             logoP.setTextAlign(Paint.Align.CENTER);
             logoP.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-            c.drawText("B", w * 0.5f, dp(36f), logoP);
+            c.drawText("B", w * 0.5f, logocy + logosz * 0.3f, logoP);
         }
 
         float cx = w * 0.5f;
@@ -155,14 +163,14 @@ public class IconRail extends View {
             iconP.setColor(on ? Theme.ON_PRIMARY : Theme.TEXT);
             drawIcon(c, i, cx, cy, on);
             labelP.setColor(on ? Theme.ACCENT : Theme.TEXT_DIM);
-            c.drawText(labels[i], cx, cy + btn * 0.5f - dp(4f), labelP);
+            c.drawText(labels[i], cx, cy + labelBaseline, labelP);
         }
     }
 
     private void drawIcon(Canvas c, int item, float cx, float cy, boolean on) {
-        float s = dp(19f) / 24f;              // icon box is 19 dp, drawn on a 24 unit grid
+        float s = iconSz / 24f;               // icon box scales with the button, drawn on a 24 unit grid
         c.save();
-        c.translate(cx - dp(9.5f), cy - dp(11.5f));
+        c.translate(cx - iconSz * 0.5f, cy - iconSz * 0.5f);
         c.scale(s, s);
         path.reset();
         switch (item) {
