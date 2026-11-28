@@ -88,6 +88,16 @@ def make_keystore():
          "-dname", "CN=V4Tune, OU=DSH, O=DSH, L=CN, S=CN, C=CN"])
 
 
+def manifest_version():
+    """single source of truth: read version from app/AndroidManifest.xml"""
+    src = open(os.path.join(APP, "AndroidManifest.xml"), encoding="utf-8").read()
+    code = re.search(r'android:versionCode="(\d+)"', src)
+    name = re.search(r'android:versionName="([^"]+)"', src)
+    if not code or not name:
+        sys.exit("AndroidManifest.xml has no versionCode/versionName")
+    return code.group(1), name.group(1)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--release", action="store_true", help="build release-signed apk")
@@ -96,6 +106,8 @@ def main():
     args = ap.parse_args()
 
     t0 = time.time()
+    vcode, vname = manifest_version()
+    print("[0/7] version %s (%s)" % (vname, vcode))
     print("[1/7] clean")
     for d in ("res", "gen", "classes", "dex"):
         shutil.rmtree(os.path.join(BUILD, d), ignore_errors=True)
@@ -119,7 +131,7 @@ def main():
             "--manifest", os.path.join(APP, "AndroidManifest.xml"),
             res_zip, "--java", gen,
             "--min-sdk-version", "21", "--target-sdk-version", "34",
-            "--version-code", "109", "--version-name", "26H1128V1.2",
+            "--version-code", vcode, "--version-name", vname,
             "--no-version-vectors"]
     if os.path.isdir(assets):
         link += ["-A", assets]

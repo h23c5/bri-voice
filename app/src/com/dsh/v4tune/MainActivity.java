@@ -485,12 +485,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
         statusText = new TextView(this);
         statusText.setTextColor(Theme.TEXT_DIM);
-        statusText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f);
-        statusText.setPadding(dp(12), dp(7), dp(12), dp(7));
+        statusText.setTextSize(TypedValue.COMPLEX_UNIT_SP, land ? 9f : 11.5f);
+        statusText.setPadding(dp(12), dp(land ? 0 : 7), dp(12), dp(land ? 0 : 7));
         statusText.setBackground(Theme.card(this, Theme.PANEL));
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        slp.setMargins(dp(6), dp(3), dp(6), dp(6));
+        slp.setMargins(dp(6), dp(land ? 0 : 3), dp(6), dp(land ? 0 : 6));
         right.addView(statusText, slp);
 
         // root stays HORIZONTAL in both orientations (rail on the left), so the weight axis is
@@ -643,11 +643,24 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         col.setOrientation(LinearLayout.VERTICAL);
         col.setBackgroundColor(Theme.PANEL);
 
+        // A phone in portrait is ~360dp wide but this row carries ~480dp of controls (+ / 修改 /
+        // 选择 / BPM / 吸附 / 拍号 / 混音 / 回开始 / 回末尾 / 时钟), so the rightmost ones used to be
+        // clipped. Portrait stacks them in two rows; landscape keeps one row.
+        final boolean twoRows = !isLandscape();
         LinearLayout bar = new LinearLayout(this);
-        bar.setOrientation(LinearLayout.HORIZONTAL);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(8), dp(3), dp(10), dp(3));
+        bar.setOrientation(LinearLayout.VERTICAL);
+        bar.setPadding(dp(8), dp(isLandscape() ? 0 : 2), dp(10), dp(isLandscape() ? 0 : 2));
         topBarRow = bar;
+
+        LinearLayout rowA = new LinearLayout(this);
+        rowA.setOrientation(LinearLayout.HORIZONTAL);
+        rowA.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout rowB = rowA;
+        if (twoRows) {
+            rowB = new LinearLayout(this);
+            rowB.setOrientation(LinearLayout.HORIZONTAL);
+            rowB.setGravity(Gravity.CENTER_VERTICAL);
+        }
 
         TextView add = new TextView(this);
         add.setText("＋");
@@ -659,7 +672,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         add.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { addTrackMenu(); }
         });
-        bar.addView(add, new LinearLayout.LayoutParams(dp(30), dp(30)));
+        rowA.addView(add, new LinearLayout.LayoutParams(dp(30), dp(30)));
 
         modeEditBtn = modeChip("修改");
         modeEditBtn.setOnClickListener(new View.OnClickListener() {
@@ -668,7 +681,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         elp.setMargins(dp(8), 0, 0, 0);
-        bar.addView(modeEditBtn, elp);
+        rowA.addView(modeEditBtn, elp);
 
         modeSelBtn = modeChip("选择");
         modeSelBtn.setOnClickListener(new View.OnClickListener() {
@@ -677,7 +690,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         slp.setMargins(dp(4), 0, 0, 0);
-        bar.addView(modeSelBtn, slp);
+        rowA.addView(modeSelBtn, slp);
 
         bpmText = new TextView(this);
         bpmText.setTextColor(Theme.TEXT);
@@ -690,12 +703,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         blp.setMargins(dp(6), 0, 0, 0);
-        bar.addView(bpmText, blp);
+        rowA.addView(bpmText, blp);
 
         View spacer = new View(this);
-        bar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+        rowA.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
 
-        // --- right side: snap (icon + value), time signature, mixer, go to start / end ---
+        // --- right group: snap (icon + value), time signature, mixer, go to start / end, clock ---
         LinearLayout snapBox2 = new LinearLayout(this);
         snapBox2.setOrientation(LinearLayout.HORIZONTAL);
         snapBox2.setGravity(Gravity.CENTER_VERTICAL);
@@ -720,7 +733,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         LinearLayout.LayoutParams snapBoxLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         snapBoxLp.setMargins(dp(6), 0, 0, 0);
-        bar.addView(snapBox2, snapBoxLp);
+        rowB.addView(snapBox2, snapBoxLp);
 
         meterBtn = new TextView(this);
         meterBtn.setTextColor(Theme.TEXT);
@@ -742,15 +755,15 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         LinearLayout.LayoutParams meterLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         meterLp.setMargins(dp(6), 0, 0, 0);
-        bar.addView(meterBtn, meterLp);
+        rowB.addView(meterBtn, meterLp);
 
-        toolIcon(bar, com.dsh.v4tune.ui.ToolIcon.MIXER, "混音器", new View.OnClickListener() {
+        toolIcon(rowB, com.dsh.v4tune.ui.ToolIcon.MIXER, "混音器", new View.OnClickListener() {
             public void onClick(View v) { showMixer(); }
         });
-        toolIcon(bar, com.dsh.v4tune.ui.ToolIcon.TO_START, "回到开始", new View.OnClickListener() {
+        toolIcon(rowB, com.dsh.v4tune.ui.ToolIcon.TO_START, "回到开始", new View.OnClickListener() {
             public void onClick(View v) { seekTo(0); }
         });
-        toolIcon(bar, com.dsh.v4tune.ui.ToolIcon.TO_END, "回到末尾", new View.OnClickListener() {
+        toolIcon(rowB, com.dsh.v4tune.ui.ToolIcon.TO_END, "回到末尾", new View.OnClickListener() {
             public void onClick(View v) { seekTo(song.maxTick()); }
         });
         flushTopBar();
@@ -771,7 +784,14 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         clock.setPadding(0, dp(1), dp(2), portraitClock ? dp(3) : 0);
         clock.addView(posText);
         clock.addView(totalText);
-        bar.addView(clock);
+        rowB.addView(clock);
+
+        bar.addView(rowA, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        if (rowB != rowA) {
+            bar.addView(rowB, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
         col.addView(bar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -888,44 +908,56 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     }
 
     /**
-     * Split the editor column by its real height instead of fixed dp numbers.
+     * Split the editor column by the window height with three hard floors instead of fixed dp
+     * numbers: the note grid keeps at least half the window, the tuning lane at least a fifth, and
+     * the arrangement strip at least one complete track row (ruler 18dp + row 38dp + 2dp). Heights
+     * are computed from the measured window, not from dp constants, so a 360dp-tall phone and a
+     * 640dp-tall phone both honour the same rules.
      *
-     * <p>Before this, the arrangement strip pinned itself to 18+38*rows dp (96dp for two tracks)
-     * and the tuning lane was a frozen 138dp (196dp portrait); the note grid merely took whatever
-     * was left. On a phone in landscape the window is only ~360dp tall, so after the 42dp bar and
-     * the status strip the roll got roughly a third of the screen — the reported “音符栏太小”.</p>
-     *
-     * <p>Now the tuning lane takes ~22% (64..160dp), the arrangement strip ~23% (38..150dp, never
-     * more than its rows need) and the note grid gets the rest, with a floor of 55% / 140dp; if the
-     * leftover is still short, the curve lane yields first and the strip second. Heights are only
-     * written when they actually change so the layout callback cannot ping-pong.</p>
+     * <p>When the three floors do not fit (a landscape phone is ~360dp tall after the bar and the
+     * status line), the strip yields first (it can scroll to the remaining tracks), then the tuning
+     * lane down to its 1/5 floor; the note grid keeps whatever is left and the log records
+     * ROLL_FLOOR_HIT so the shortfall is visible rather than silent.</p>
      */
     private void applyAdaptiveHeights(LinearLayout col, int h) {
         if (col == null || h <= 0 || trackScroll == null || paramView == null || statusText == null) return;
         int rows = Math.max(1, song == null ? 1 : song.tracks.size());
-        int key = h * 131 + rows;
-        if (key == lastAdaptiveKey) return;
         int barH = topBarRow != null && topBarRow.getHeight() > 0 ? topBarRow.getHeight() : dp(44);
         int statusH = statusText.getHeight() > 0 ? statusText.getHeight() : dp(30);
         int avail = h - barH - statusH;
+        int key = h * 131 + rows * 7 + barH * 3 + statusH;
+        if (key == lastAdaptiveKey) return;
         if (avail < dp(120)) return;
-        int stripMin = dp(38);
-        int paramMin = dp(64);
-        int stripNeed = Math.min(dp(18) + dp(38) * rows + dp(2), dp(150));
-        int stripH = Math.min(stripNeed, Math.max(stripMin, Math.round(avail * 0.23f)));
-        int paramH = Math.min(dp(160), Math.max(paramMin, Math.round(avail * 0.22f)));
-        int wantRoll = Math.max(dp(140), Math.round(avail * 0.55f));
-        int rollH = avail - stripH - paramH;
-        int take = Math.min(wantRoll - rollH, Math.max(0, paramH - paramMin));
-        if (take > 0) { paramH -= take; rollH += take; }
-        take = Math.min(wantRoll - rollH, Math.max(0, stripH - stripMin));
-        if (take > 0) { stripH -= take; rollH += take; }
+
+        int rollMin = Math.round(h * 0.50f);                    // 音符区 ≥ 窗口高度 1/2
+        int paramMin = Math.max(dp(56), Math.round(h * 0.20f)); // 调音区 ≥ 窗口高度 1/5
+        int stripOne = dp(16) + dp(38) + dp(2);                 // 标尺 + 一整行 + 间距 = 完整一条
+        int stripRows = dp(16) + dp(38) * rows + dp(2);
+        int stripMax = Math.max(stripOne, Math.round(h * 0.22f));
+        int stripH = Math.min(stripRows, stripMax);
+        int paramWant = Math.min(Math.max(paramMin, Math.round(avail * 0.22f)), Math.round(h * 0.26f));
+        int rollH = avail - stripH - paramWant;
+
+        if (rollH < rollMin) {                                  // 先让音轨条回到「一条」
+            stripH = stripOne;
+            rollH = avail - stripH - paramWant;
+        }
+        if (rollH < rollMin) {                                  // 再让调音区回到 1/5
+            paramWant = paramMin;
+            rollH = avail - stripH - paramWant;
+        }
+        boolean floor = rollH < rollMin;
+        if (rollH < dp(110)) rollH = dp(110);
+        int paramH = Math.max(paramMin, avail - stripH - rollH);
+
         lastAdaptiveKey = key;
         setViewHeight(trackScroll, stripH);
         setViewHeight(paramView, paramH);
-        android.util.Log.i("BriVoice", "layout adaptive: col=" + h + " bar=" + barH + " status=" + statusH
-                + " strip=" + stripH + "(need=" + stripNeed + ") param=" + paramH + " roll~=" + rollH
-                + " rows=" + rows);
+        android.util.Log.i("BriVoice", "layout v2: win=" + h + " bar=" + barH + " status=" + statusH
+                + " avail=" + avail + " roll=" + rollH + "(min=" + rollMin + ")"
+                + " param=" + paramH + "(min=" + paramMin + ")"
+                + " strip=" + stripH + "(one=" + stripOne + " need=" + stripRows + ")"
+                + " rows=" + rows + (floor ? " ROLL_FLOOR_HIT" : ""));
     }
 
     private void setViewHeight(View v, int hpx) {

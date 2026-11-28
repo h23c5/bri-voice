@@ -1,9 +1,9 @@
 {
-  "versionCode": 109,
-  "versionName": "26H1128V1.2",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v26H1128V1.2/BriVoice-26H1128V1.2.apk",
-  "sha256": "4d0481d56545b15ec1e49d26c14ab9331792b286457e7666ac59ad10baae0c8e",
-  "size": 1239636,
-  "notes": "release 26H1128V1.2：修掉「音符栏（钢琴卷帘）太小」。以前音轨条高度写死 18+38x轨数 dp、参数曲线区横屏固定 138dp，卷帘只能拿剩下的那块；手机横屏 300~360dp 高时常常只剩几十 dp。现在整列按真实可用高度分配（参数区 22%、音轨条 23%、卷帘保底 55%），480dpi 横屏卷帘 220px -> 444px，5 轨工程旧版挤到 0、现在仍有 444px。",
-  "publishedAt": "2026-11-28 13:20:34"
+  "versionCode": 110,
+  "versionName": "26H1128V2",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v26H1128V2/BriVoice-26H1128V2.apk",
+  "sha256": "d40c874e6fb91167c9a0e25a77c18a8ef1a8c207b27c3d4928c79f9af7d9feef",
+  "size": 1215060,
+  "notes": "release 26H1128V2: the editor column follows three hard floors from the measured window -- the note grid takes at least half the window height, the tuning lane at least a fifth, the arrangement strip at least one complete track row (ruler 16dp + row 38dp + 2dp = 56dp). When they do not fit, the strip yields first (it scrolls), then the tuning lane down to its floor, and the log says ROLL_FLOOR_HIT instead of shrinking silently. Measured at 480dpi on 1920x1080: landscape roll 508/1008 px (50.4 pct), tuning 202 px (20.0 pct), strip 168 px; portrait roll 1030/1848 px (55.7 pct); 280dpi roll 653/1038 px (62.9 pct). The top bar stacks into two rows in portrait, where about 480dp of controls did not fit 360dp and the rightmost buttons were clipped. The status line is 9sp single-line in landscape and the strip ruler went 18dp to 16dp, so the note grid gets it all back.",
+  "publishedAt": "2026-11-28 14:20:56"
 }

@@ -110,7 +110,7 @@ public class TrackStripView extends View {
     public TrackStripView(Context c) {
         super(c);
         density = c.getResources().getDisplayMetrics().density;
-        rulerH = dp(18f);
+        rulerH = dp(16f);   // v2: a shorter ruler buys the note grid 6 px on a 360dp phone
         rowH = dp(38f);
         headW = dp(16f);
         msW = dp(26f);
