@@ -369,7 +369,7 @@ public final class L {
         {"bank.bri.save.title", "导出模型备份", "Export model bundle", "モデルを書き出す"},
 
         // ------------------------------------------------ start screen (v12.3)
-        {"start.version", "v26H1128V2 · 歌声合成工作站", "v26H1128V2 · singing synthesizer", "v26H1128V2 · 歌声合成ワークステーション"},
+        {"start.version", "v26H1128V2.1 · 歌声合成工作站", "v26H1128V2.1 · singing synthesizer", "v26H1128V2.1 · 歌声合成ワークステーション"},
         {"start.subtitle", "先选一个开始方式。工程、声库和导出的 WAV 都在本机，不会上传。", "Pick how to start. Projects, voicebanks and exported WAVs stay on this device.", "始め方を選んでください。プロジェクト・声庫・書き出した WAV はこの端末内に留まります。"},
         {"start.new", "新建工程", "New project", "新規プロジェクト"},
         {"start.new.sub", "从空白的音轨开始", "Start from an empty track", "空のトラックから始める"},

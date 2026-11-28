@@ -84,7 +84,50 @@ public final class Dialogs {
 
     public static AlertDialog.Builder builder(Activity a) {
         int st = styleId(a);
-        return (st != 0) ? new AlertDialog.Builder(a, st) : new AlertDialog.Builder(a);
+        return (st != 0) ? new FitBuilder(a, st) : new FitBuilder(a);
+    }
+
+    /**
+     * AlertDialog.Builder that keeps every secondary screen inside the window.
+     *
+     * <p>Callers hand us one tall column; the stock builder measures it against an unbounded dialog
+     * window, so anything past the screen height was silently cut off. We swap that column (or the
+     * ScrollView a caller already wrapped it in) for a {@link FitScrollView}, which caps its own
+     * height and scrolls the rest. Simple single widgets (one EditText, one TextView) are left
+     * alone — wrapping those would only add a pointless scroll layer.</p>
+     */
+    static final class FitBuilder extends AlertDialog.Builder {
+        private final Activity act;
+
+        FitBuilder(Activity a) { super(a); act = a; }
+        FitBuilder(Activity a, int style) { super(a, style); act = a; }
+
+        @Override
+        public AlertDialog.Builder setView(View v) {
+            if (v == null) return super.setView(null);
+            if (v instanceof ScrollView) {
+                ScrollView old = (ScrollView) v;
+                if (old.getChildCount() == 1) {
+                    View child = old.getChildAt(0);
+                    old.removeViewAt(0);
+                    FitScrollView fit = new FitScrollView(act, 0.60f);
+                    fit.setBackgroundDrawable(old.getBackground());
+                    fit.setFillViewport(old.isFillViewport());
+                    fit.addView(child, new android.widget.FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                    return super.setView(fit);
+                }
+                return super.setView(v);
+            }
+            if (v instanceof TextView || v instanceof android.widget.ListView
+                    || v instanceof android.widget.GridView || v instanceof android.widget.HorizontalScrollView) {
+                return super.setView(v);
+            }
+            FitScrollView fit = new FitScrollView(act);
+            fit.addView(v, new android.widget.FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            return super.setView(fit);
+        }
     }
 
     /** a menu: header, then rows with badges and a tick on the active one */
@@ -121,9 +164,8 @@ public final class Dialogs {
         list.setPadding(dp(a, 8f), dp(a, 8f), dp(a, 8f), dp(a, 10f));
         for (Row r : rows) list.addView(rowView(a, r));
 
-        ScrollView sc = new ScrollView(a);
-        sc.addView(list, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        root.addView(sc, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
 
         final AlertDialog d = builder(a).setView(root).create();
         for (int i = 0; i < list.getChildCount(); i++) {
@@ -138,7 +180,6 @@ public final class Dialogs {
         if (w != null) {
             android.util.DisplayMetrics dm = a.getResources().getDisplayMetrics();
             w.setLayout((int) (dm.widthPixels * 0.86f), ViewGroup.LayoutParams.WRAP_CONTENT);
-            sc.getLayoutParams().height = (int) (dm.heightPixels * 0.62f);
         }
         return d;
     }

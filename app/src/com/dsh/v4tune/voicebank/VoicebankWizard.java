@@ -89,7 +89,7 @@ public final class VoicebankWizard {
         box.addView(types);
         box.addView(label(act, L.t("vb.bank.name")));
         box.addView(name);
-        new AlertDialog.Builder(act)
+        com.dsh.v4tune.ui.Dialogs.builder(act)
                 .setTitle(L.t("vb.title"))
                 .setView(box)
                 .setPositiveButton(L.t("vb.build"), new DialogInterface.OnClickListener() {
@@ -115,7 +115,7 @@ public final class VoicebankWizard {
         }
         if (dir.getParentFile() != null) { dirs.add(0, dir.getParentFile()); names.add(0, ".."); }
         final String[] items = names.toArray(new String[0]);
-        new AlertDialog.Builder(act)
+        com.dsh.v4tune.ui.Dialogs.builder(act)
                 .setTitle(dir.getAbsolutePath())
                 .setItems(items, new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface d, int w) { browseForFolder(act, dirs.get(w), target); }
@@ -241,7 +241,7 @@ public final class VoicebankWizard {
                             showFailure(act, "声库生成失败", d.toString(), fexc);
                             return;
                         }
-                        new AlertDialog.Builder(act)
+                        com.dsh.v4tune.ui.Dialogs.builder(act)
                                 .setTitle("声库已生成")
                                 .setMessage(inf)
                                 .setPositiveButton("好", null)
@@ -549,7 +549,7 @@ public final class VoicebankWizard {
         tv.setPadding(36, 24, 36, 24);
         android.widget.ScrollView sc = new android.widget.ScrollView(act);
         sc.addView(tv);
-        new AlertDialog.Builder(act)
+        com.dsh.v4tune.ui.Dialogs.builder(act)
                 .setTitle(title)
                 .setView(sc)
                 .setPositiveButton("复制日志", new DialogInterface.OnClickListener() {

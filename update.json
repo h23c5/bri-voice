@@ -1,9 +1,9 @@
 {
-  "versionCode": 110,
-  "versionName": "26H1128V2",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v26H1128V2/BriVoice-26H1128V2.apk",
-  "sha256": "d40c874e6fb91167c9a0e25a77c18a8ef1a8c207b27c3d4928c79f9af7d9feef",
-  "size": 1215060,
-  "notes": "release 26H1128V2: the editor column follows three hard floors from the measured window -- the note grid takes at least half the window height, the tuning lane at least a fifth, the arrangement strip at least one complete track row (ruler 16dp + row 38dp + 2dp = 56dp). When they do not fit, the strip yields first (it scrolls), then the tuning lane down to its floor, and the log says ROLL_FLOOR_HIT instead of shrinking silently. Measured at 480dpi on 1920x1080: landscape roll 508/1008 px (50.4 pct), tuning 202 px (20.0 pct), strip 168 px; portrait roll 1030/1848 px (55.7 pct); 280dpi roll 653/1038 px (62.9 pct). The top bar stacks into two rows in portrait, where about 480dp of controls did not fit 360dp and the rightmost buttons were clipped. The status line is 9sp single-line in landscape and the strip ruler went 18dp to 16dp, so the note grid gets it all back.",
-  "publishedAt": "2026-11-28 14:20:56"
+  "versionCode": 111,
+  "versionName": "26H1128V2.1",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v26H1128V2.1/BriVoice-26H1128V2.1.apk",
+  "sha256": "ce9783192e82fbdae22de8f322ff043caaafe66624718104ff65ab78e2e357b2",
+  "size": 1239636,
+  "notes": "release 26H1128V2.1: the left icon rail now caps its content at 46 pct of the rail height, so the bottom half stays empty (480dpi landscape: content ends at 457 of 1008 px, 54.7 pct blank; 560dpi: 451 of 996 px); captions drop to icon-only and the glyph grows when the column is too short. Secondary screens no longer get clipped: an AlertDialog measures its wrap_content window against an unbounded height, so the ScrollView inside wrapped to full content and the window ran off screen with no way to scroll. ui/FitScrollView caps its measured height to a share of the screen and Dialogs.builder now overrides setView with a FitBuilder, so every dialog and wizard inherits it: the more panel scrolls to 角色立绘 / 工具 / 手动切换横竖屏 (previously only 5 of 7 rows were drawn), settings scrolls to the character section with the button row pinned, and the track menu reaches 删除当前音轨.",
+  "publishedAt": "2026-11-28 15:13:45"
 }

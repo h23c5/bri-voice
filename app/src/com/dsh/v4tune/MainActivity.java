@@ -316,7 +316,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             getSharedPreferences("brivoice", MODE_PRIVATE).edit().putBoolean("rootAsked", true).apply();
             // no "all files access" yet: offer the one-time grant, everything still works through
             // the app's own external folder in the meantime
-            new AlertDialog.Builder(this)
+            com.dsh.v4tune.ui.Dialogs.builder(this)
                     .setTitle("让 BriVoice 使用 " + Storage.ROOT_NAME + " 文件夹")
                     .setMessage("工程、声库和导出的 WAV 会统一放在：\n\n"
                             + Storage.publicRoot().getAbsolutePath() + "\n\n"
@@ -625,7 +625,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             blp.setMargins(dp(4), dp(3), dp(4), dp(3));
             row.addView(b, blp);
         }
-        dlg.setContentView(box);
+        // 12 个按钮在手机横屏上比屏幕高，旧版直接把下半截裁掉（人物/工具/横竖屏三项看不到）。
+        // 套一层按屏幕高度封顶的滚动容器，条目全在、能滚到最后一行。
+        com.dsh.v4tune.ui.FitScrollView moreScroll = new com.dsh.v4tune.ui.FitScrollView(this, 0.80f);
+        moreScroll.addView(box, new android.widget.FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        dlg.setContentView(moreScroll);
         Window win = dlg.getWindow();
         if (win != null) {
             win.setBackgroundDrawable(Theme.card(this, Theme.PANEL));
@@ -908,16 +913,16 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     }
 
     /**
-     * Split the editor column by the window height with three hard floors instead of fixed dp
-     * numbers: the note grid keeps at least half the window, the tuning lane at least a fifth, and
-     * the arrangement strip at least one complete track row (ruler 18dp + row 38dp + 2dp). Heights
-     * are computed from the measured window, not from dp constants, so a 360dp-tall phone and a
-     * 640dp-tall phone both honour the same rules.
+     * Split the editor column by the window height. The note grid comes first: it always keeps at
+     * least half the window height, and the tuning lane and the arrangement strip are fitted into
+     * whatever remains.
      *
-     * <p>When the three floors do not fit (a landscape phone is ~360dp tall after the bar and the
-     * status line), the strip yields first (it can scroll to the remaining tracks), then the tuning
-     * lane down to its 1/5 floor; the note grid keeps whatever is left and the log records
-     * ROLL_FLOOR_HIT so the shortfall is visible rather than silent.</p>
+     * <p>Order of sacrifice on short screens (a landscape phone is ~360dp tall after the top bar and
+     * the status line): the arrangement strip shrinks first (ruler 16dp + one row 38dp + 2dp is the
+     * wanted size, the ruler alone is the floor and the other tracks scroll), then the tuning lane
+     * keeps a usable minimum, and only when even that does not fit does the tuning lane give way.
+     * The note grid never goes below half the window; the log records ROLL_FLOOR_HIT and
+     * PARAM_SQUEEZED so a shortfall is visible rather than silent.</p>
      */
     private void applyAdaptiveHeights(LinearLayout col, int h) {
         if (col == null || h <= 0 || trackScroll == null || paramView == null || statusText == null) return;
@@ -929,35 +934,38 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         if (key == lastAdaptiveKey) return;
         if (avail < dp(120)) return;
 
-        int rollMin = Math.round(h * 0.50f);                    // 音符区 ≥ 窗口高度 1/2
-        int paramMin = Math.max(dp(56), Math.round(h * 0.20f)); // 调音区 ≥ 窗口高度 1/5
-        int stripOne = dp(16) + dp(38) + dp(2);                 // 标尺 + 一整行 + 间距 = 完整一条
+        int rollMin = Math.round(h * 0.50f);                        // 音符区硬下限：屏高一半，先满足它
+        int stripOne = dp(16) + dp(38) + dp(2);                     // 标尺 + 一整行 + 间距 = 完整一条
         int stripRows = dp(16) + dp(38) * rows + dp(2);
-        int stripMax = Math.max(stripOne, Math.round(h * 0.22f));
-        int stripH = Math.min(stripRows, stripMax);
-        int paramWant = Math.min(Math.max(paramMin, Math.round(avail * 0.22f)), Math.round(h * 0.26f));
-        int rollH = avail - stripH - paramWant;
+        int stripMin = dp(18);                                      // 极端情况只留标尺，轨道靠滚动
+        // 参考图里调音区约占窗口高度 15%（不是固定的 56dp：密度一高，固定 dp 就会挤掉卷帘）。
+        int paramMin = Math.max(dp(48), Math.round(h * 0.145f));
+        int paramPref = Math.max(paramMin, Math.round(h * 0.17f));
+        int stripWant = Math.min(stripRows, Math.max(stripOne, Math.round(h * 0.22f)));
 
-        if (rollH < rollMin) {                                  // 先让音轨条回到「一条」
-            stripH = stripOne;
-            rollH = avail - stripH - paramWant;
-        }
-        if (rollH < rollMin) {                                  // 再让调音区回到 1/5
-            paramWant = paramMin;
-            rollH = avail - stripH - paramWant;
-        }
-        boolean floor = rollH < rollMin;
-        if (rollH < dp(110)) rollH = dp(110);
-        int paramH = Math.max(paramMin, avail - stripH - rollH);
+        // 理想：完整音轨条 + 1/5 调音区，剩下的全给卷帘；后两块的下限也必须放得下。
+        int rollH = avail - stripWant - paramPref;
+        int rollFit = avail - stripMin - paramMin;
+        if (rollFit < rollMin) rollFit = rollMin;                   // 挤不下时，卷帘仍然是第一个被满足的
+        rollH = Math.min(rollH, rollFit);
+        if (rollH < rollMin) rollH = rollMin;
+        if (rollH > avail) rollH = avail;
+        boolean rollFloor = rollH < rollMin;
+
+        int rest = Math.max(0, avail - rollH);
+        int stripH = Math.min(stripWant, Math.max(stripMin, rest - paramMin));
+        if (stripH > rest) stripH = rest;
+        int paramH = Math.max(0, rest - stripH);
+        boolean paramSqueezed = paramH < paramMin;
 
         lastAdaptiveKey = key;
         setViewHeight(trackScroll, stripH);
         setViewHeight(paramView, paramH);
-        android.util.Log.i("BriVoice", "layout v2: win=" + h + " bar=" + barH + " status=" + statusH
-                + " avail=" + avail + " roll=" + rollH + "(min=" + rollMin + ")"
-                + " param=" + paramH + "(min=" + paramMin + ")"
+        android.util.Log.i("BriVoice", "layout v3: win=" + h + " bar=" + barH + " status=" + statusH
+                + " avail=" + avail + " roll=" + (avail - stripH - paramH) + "(min=" + rollMin + ")"
+                + " param=" + paramH + "(min=" + paramMin + " pref=" + paramPref + ")"
                 + " strip=" + stripH + "(one=" + stripOne + " need=" + stripRows + ")"
-                + " rows=" + rows + (floor ? " ROLL_FLOOR_HIT" : ""));
+                + " rows=" + rows + (rollFloor ? " ROLL_FLOOR_HIT" : "") + (paramSqueezed ? " PARAM_SQUEEZED" : ""));
     }
 
     private void setViewHeight(View v, int hpx) {
@@ -1032,7 +1040,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     /** starts at the same place the old add button was: a menu instead of a guess */
     private void addTrackMenu() {
         final String[] items = {"新建歌声轨", "添加音频轨（WAV）"};
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle(L.t("track.add"))
                 .setItems(items, new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface d, int which) {
@@ -1223,7 +1231,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         if (idx < 0 || idx >= song.tracks.size()) return;
         final java.util.List<AudioClip> cs = clipsFor(idx);
         if (cs.isEmpty()) { status("这一轨没有音频片段"); return; }
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle("删除音频")
                 .setMessage("删掉「" + trackLabel(idx) + "」上的 " + cs.size() + " 个音频片段？\n音轨会保留，之后可以用撤销找回。")
                 .setPositiveButton("删除", new DialogInterface.OnClickListener() {
@@ -1245,7 +1253,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private void trackActionsDialog(final int idx) {
         if (idx < 0 || idx >= song.tracks.size()) return;
         final com.dsh.v4tune.model.Track t = song.tracks.get(idx);
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle(t.name)
                 .setItems(new String[]{"更改", "删除"}, new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface d, int which) {
@@ -1264,7 +1272,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 "上移",
                 "下移"
         };
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle("更改 · " + t.name)
                 .setItems(items, new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface d, int which) {
@@ -1295,7 +1303,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         final EditText et = new EditText(this);
         et.setInputType(InputType.TYPE_CLASS_NUMBER);
         et.setText(String.valueOf(contentStart(idx) / 1920L + 1));
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle("起始小节（第几小节开始）")
                 .setView(et)
                 .setPositiveButton(L.t("dlg.ok"), new DialogInterface.OnClickListener() {
@@ -1333,7 +1341,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private void confirmDeleteTrack(final int idx) {
         if (song.tracks.size() <= 1) { status("至少要保留一条音轨"); return; }
         final com.dsh.v4tune.model.Track t = song.tracks.get(idx);
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle("删除音轨")
                 .setMessage("确定删除「" + t.name + "」及其内容？可以撤销。")
                 .setPositiveButton("删除", new DialogInterface.OnClickListener() {
@@ -1400,7 +1408,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         box.addView(size);
         pick.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { pickCharacter(); } });
         clear.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { clearCharacter(); } });
-        new AlertDialog.Builder(this).setTitle("角色立绘").setView(box)
+        com.dsh.v4tune.ui.Dialogs.builder(this).setTitle("角色立绘").setView(box)
                 .setPositiveButton(L.t("dlg.ok"), null).setNegativeButton(L.t("dlg.cancel"), null).show();
     }
 
@@ -2511,7 +2519,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             status(L.t("status.packs.loading"));
             return false;
         }
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle(L.t("dlg.no.voice.title"))
                 .setMessage(L.t("dlg.no.voice.msg"))
                 .setPositiveButton("去导入", new DialogInterface.OnClickListener() {
@@ -2561,7 +2569,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 ? "这是神经声库，请先训练 BriNeting 基座"
                 : L.t("status.singer", singerName(v)));
         if (Renderer.webSynth) {
-            new AlertDialog.Builder(MainActivity.this)
+            com.dsh.v4tune.ui.Dialogs.builder(MainActivity.this)
                     .setTitle("当前是网页快速合成")
                     .setMessage("网页快速模式不用逐帧实测谐波，只保留声库的平均频谱色彩；细节会比「声库谐波」少，但不同声库仍会有区别。\n\n想听完整细节，请切换到「声库谐波」。")
                     .setPositiveButton("切回声库谐波", new DialogInterface.OnClickListener() {
@@ -3054,7 +3062,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                             com.dsh.v4tune.io.PcmFile.delete(pcm);
                             String why = (fi == null) ? "?" : fi.error;
                             status(L.t("status.wav.fail", why));
-                            new AlertDialog.Builder(MainActivity.this).setTitle(L.t("dlg.wav.fail.title"))
+                            com.dsh.v4tune.ui.Dialogs.builder(MainActivity.this).setTitle(L.t("dlg.wav.fail.title"))
                                     .setMessage(why).setPositiveButton(L.t("dlg.ok"), null).show();
                             return;
                         }
@@ -3093,7 +3101,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
     /** Menu entry: explains the analysis, then picks a dry vocal take. */
     private void audioTuneMenu() {
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle("从音频分析表情")
                 .setMessage("选一段和当前轨道对齐的干声演唱（WAV，最多 3 分钟）。\n"
                         + "本机用 YIN 追音高、RMS 追力度，把音准偏差、句首滑音、句尾释放和长音颤音写回 PIT / DYN / VIB。\n"
@@ -3155,7 +3163,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                             toast(m);
                             return;
                         }
-                        new AlertDialog.Builder(MainActivity.this)
+                        com.dsh.v4tune.ui.Dialogs.builder(MainActivity.this)
                                 .setTitle("音频分析完成")
                                 .setMessage(r.summary + "\n\n把这些表情写进当前轨道吗？（可撤销）")
                                 .setPositiveButton("写入调音", new DialogInterface.OnClickListener() {
@@ -3203,7 +3211,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         }
         menu(L.t("dlg.clips.title"), null, items, -1, new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface d, final int which) {
-                new AlertDialog.Builder(MainActivity.this)
+                com.dsh.v4tune.ui.Dialogs.builder(MainActivity.this)
                         .setTitle(list.get(which).name)
                         .setMessage(L.t("clip.remove"))
                         .setPositiveButton(L.t("clip.remove"), new DialogInterface.OnClickListener() {
@@ -3324,7 +3332,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
         hs.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(400)));
-        final AlertDialog dlg = new AlertDialog.Builder(this)
+        final AlertDialog dlg = com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle(L.t("dlg.mixer.title"))
                 .setView(hs)
                 .setPositiveButton(L.t("dlg.ok"), null)
@@ -3498,7 +3506,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         col.addView(panel);
 
         sc.addView(col);
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle(L.t("dlg.plugin.title"))
                 .setView(sc)
                 .setPositiveButton(L.t("dlg.ok"), null)
@@ -3598,7 +3606,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     private void renameTrack() {
         final android.widget.EditText e = new android.widget.EditText(this);
         e.setText(song.tracks.get(trackIndex).name);
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle("重命名音轨")
                 .setView(e)
                 .setPositiveButton("确定", new DialogInterface.OnClickListener() {
@@ -3878,7 +3886,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         + "授权后就会用 " + Storage.publicRoot().getAbsolutePath() + "。\n\n"
                         + "说明：Android 不允许应用给「软件本体的安装目录」改名，"
                         + "安装位置由系统管理；这个文件夹是 BriVoice 在存储根目录下自己的根目录。");
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle(Storage.ROOT_NAME)
                 .setMessage(msg)
                 .setPositiveButton(ok ? "好" : "去授权", ok ? null : new DialogInterface.OnClickListener() {
@@ -3910,7 +3918,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         menu(L.t("dlg.pack.delete.title"), null, names, -1, new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface d, int which) {
                         final VoiceModel m = mine.get(which);
-                        new AlertDialog.Builder(MainActivity.this)
+                        com.dsh.v4tune.ui.Dialogs.builder(MainActivity.this)
                                 .setTitle(L.t("dlg.pack.del.confirm.title"))
                                 .setMessage(L.t("dlg.pack.del.confirm.msg", singerName(m)))
                                 .setPositiveButton(L.t("dlg.delete"), new DialogInterface.OnClickListener() {
@@ -3934,7 +3942,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     }
 
     private void packHelp() {
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle(L.t("dlg.pack.help.title"))
                 .setMessage(L.t("dlg.pack.help.msg"))
                 .setPositiveButton(L.t("dlg.ok"), null)
@@ -4248,7 +4256,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         final EditText et = new EditText(this);
         et.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         et.setText(String.format(java.util.Locale.US, "%.2f", song.tempoAt(0)));
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle("速度 (BPM)")
                 .setView(et)
                 .setPositiveButton("确定", new DialogInterface.OnClickListener() {
@@ -4644,14 +4652,14 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             toast("已保存到 " + Storage.ROOT_NAME + "/projects");
         } catch (Exception e) {
             status("保存失败: " + e.getMessage());
-            new AlertDialog.Builder(this).setTitle("保存失败")
+            com.dsh.v4tune.ui.Dialogs.builder(this).setTitle("保存失败")
                     .setMessage(String.valueOf(e.getMessage())).setPositiveButton("好", null).show();
         }
     }
 
     /** start from an empty project (one track, one part) */
     private void newProject() {
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle(L.t("dlg.new.title"))
                 .setMessage(L.t("dlg.new.msg"))
                 .setPositiveButton(L.t("dlg.new.ok"), new DialogInterface.OnClickListener() {
@@ -4761,7 +4769,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         }
         col.addView(e);
 
-        AlertDialog.Builder b = new AlertDialog.Builder(this)
+        AlertDialog.Builder b = com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle(L.t("dlg.lyrics.title"))
                 .setView(col)
                 .setPositiveButton(L.t("dlg.lyrics.ok"), new DialogInterface.OnClickListener() {
@@ -4928,7 +4936,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < is.size() && i < 8; i++) sb.append("· ").append(is.get(i).describe()).append("\n");
         if (is.size() > 8) sb.append("… 共 ").append(is.size()).append(" 处\n");
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle(L.t("dlg.overlap.title", is.size()))
                 .setMessage(sb + "\n重叠会让两个音同时发声（歌手只有一个）。\n"
                         + L.t("dlg.overlap.why"))
@@ -4962,7 +4970,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < is.size() && i < 6; i++) sb.append("· ").append(is.get(i).describe()).append("\n");
         if (is.size() > 6) sb.append("… 共 ").append(is.size()).append(" 处\n");
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle(L.t("dlg.overlap.scan", is.size()))
                 .setMessage(sb)
                 .setPositiveButton(L.t("dlg.overlap.fixplay"), new DialogInterface.OnClickListener() {
@@ -5198,7 +5206,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             if (as) {
                 final android.widget.EditText e = new android.widget.EditText(this);
                 e.setText(ProjectIO.sanitize(projectName));
-                new AlertDialog.Builder(this)
+                com.dsh.v4tune.ui.Dialogs.builder(this)
                         .setTitle("另存为（保存到 " + Storage.ROOT_NAME + "/projects）")
                         .setView(e)
                         .setPositiveButton("保存", new DialogInterface.OnClickListener() {
@@ -5303,7 +5311,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             final boolean canAskAllFiles = android.os.Build.VERSION.SDK_INT >= 30
                     && uri != null && "file".equals(uri.getScheme())
                     && !android.os.Environment.isExternalStorageManager();
-            new AlertDialog.Builder(this)
+            com.dsh.v4tune.ui.Dialogs.builder(this)
                     .setTitle("无法打开这个文件")
                     .setMessage(String.valueOf(e.getMessage()) + "\n\n支持：.vsqx / .vsq / .svip3 工程、.mid 导入、.v4voice / .v4neural 声库")
                     .setPositiveButton(canAskAllFiles ? "授予文件访问权限" : "好",
@@ -5434,7 +5442,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         String m = "文件夹导入完成：成功 " + ok + " 个" + (bad > 0 ? ("，失败 " + bad + " 个") : "");
                         status(m);
                         if (bad > 0) {
-                            new AlertDialog.Builder(MainActivity.this)
+                            com.dsh.v4tune.ui.Dialogs.builder(MainActivity.this)
                                     .setTitle("部分声库导入失败").setMessage(m + "\n\n" + res[2])
                                     .setPositiveButton("好", null).show();
                         } else {
@@ -5595,7 +5603,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         tv.setPadding(dp(16), dp(8), dp(16), dp(8));
         android.widget.ScrollView sc = new android.widget.ScrollView(this);
         sc.addView(tv);
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle("声库导入失败")
                 .setView(sc)
                 .setPositiveButton("复制日志", new DialogInterface.OnClickListener() {
@@ -5692,7 +5700,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                     ui.post(new Runnable() {
                         public void run() {
                             status("已导出 " + f.getAbsolutePath());
-                            new AlertDialog.Builder(MainActivity.this)
+                            com.dsh.v4tune.ui.Dialogs.builder(MainActivity.this)
                                     .setTitle("导出成功")
                                     .setMessage("文件: " + f.getAbsolutePath() + "\n\n时长 " +
                                             String.format(java.util.Locale.US, "%.1f", r.left.length / (double) r.sampleRate) + " 秒" +
@@ -6102,7 +6110,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
             aiDialog();
             return;
         }
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle("从云端读取")
                 .setMessage("会替换当前工程（可以先撤销）。继续？")
                 .setPositiveButton("读取", new DialogInterface.OnClickListener() {
@@ -6482,7 +6490,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
         ScrollView sc = new ScrollView(this);
         sc.addView(box);
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle("本地模型调音 · " + p.notes.size() + " 音符")
                 .setView(sc)
                 .setPositiveButton("开始调音", new DialogInterface.OnClickListener() {
@@ -6700,7 +6708,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         });
         importRow.addView(importModel);
         box.addView(importRow);
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle("本地调音模型 BriTune-Net")
                 .setView(box)
                 .setPositiveButton("下载更新", new DialogInterface.OnClickListener() {
@@ -7307,7 +7315,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         actions.addView(start);
         box.addView(actions);
 
-        final AlertDialog dlg = new AlertDialog.Builder(this)
+        final AlertDialog dlg = com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle("多声库融合（BriNeting）")
                 .setView(box)
                 .create();
@@ -7614,7 +7622,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
         ScrollView sc = new ScrollView(this);
         sc.addView(box);
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle("自制声库（v12.2）")
                 .setView(sc)
                 .setPositiveButton("开始训练", new DialogInterface.OnClickListener() {
@@ -7971,7 +7979,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                         if (fv.characterPng != null) applyPackCharacter(fv.characterPng);
                         toast("自制声库完成：" + fd);
                         status("已安装自制声库 " + fv.name + " · " + fd);
-                        AlertDialog.Builder fin = new AlertDialog.Builder(MainActivity.this)
+                        AlertDialog.Builder fin = com.dsh.v4tune.ui.Dialogs.builder(MainActivity.this)
                                 .setTitle("自制声库已生成")
                                 .setMessage(fd + "\n\n已包含：立绘" + (fv.characterPng != null ? "✓" : "—")
                                         + " · 采样 " + fv.sampleWavs.size() + " 个 · 包内神经参数"
@@ -8266,7 +8274,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         });
 
         refreshNeuralWidgets();
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle("BriNeting 神经声学模型（v11.0）")
                 .setView(box)
                 .setNegativeButton("关闭", null)
@@ -8325,7 +8333,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
 
         android.widget.ScrollView sc = new android.widget.ScrollView(this);
         sc.addView(box);
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle("声线参数 · " + singerName(vm))
                 .setView(sc)
                 .setPositiveButton("保存并应用", new DialogInterface.OnClickListener() {
@@ -8411,7 +8419,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 .getBoolean("latencyGuideTold", false)) return;
         getSharedPreferences("brivoice", MODE_PRIVATE).edit()
                 .putBoolean("latencyGuideTold", true).apply();
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle("音频延迟校准")
                 .setMessage("这台设备没有提供可用的音频时间戳，暂时无法自动测量。\n\n"
                         + "可以点「播放」听示例，然后在设置里拖动「指针延迟补偿」，"
@@ -8959,7 +8967,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
                 final String cu = cloudUrl.getText().toString().trim();
                 final String ct = cloudToken.getText().toString().trim();
                 aiCfg.cloudUrl = cu; aiCfg.cloudToken = ct; aiCfg.save(MainActivity.this);
-                new AlertDialog.Builder(MainActivity.this)
+                com.dsh.v4tune.ui.Dialogs.builder(MainActivity.this)
                         .setTitle("从云端读取")
                         .setMessage("会替换当前工程（可以先撤销）。继续？")
                         .setPositiveButton("读取", new DialogInterface.OnClickListener() {
@@ -9145,7 +9153,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         sb.append("\n").append(L.t("about.line.license")).append("\n");
         sb.append("\n").append(L.t("about.line.author")).append("\n");
         sb.append("\n").append(L.t("about.line.disclaimer")).append("\n");
-        new AlertDialog.Builder(this)
+        com.dsh.v4tune.ui.Dialogs.builder(this)
                 .setTitle(L.t("dlg.about.title"))
                 .setMessage(sb.toString())
                 .setPositiveButton(L.t("dlg.ok"), null)

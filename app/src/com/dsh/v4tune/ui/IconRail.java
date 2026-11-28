@@ -37,6 +37,8 @@ public class IconRail extends View {
     private float density;
     private float btn, step, topPad, labelBaseline, iconSz;
     private boolean playing;
+    /** 挤的时候只画图标不画文字，保证 8 个按钮都落在上半屏 */
+    private boolean showLabel = true;
     private int pressed = -1;
     private Listener listener;
 
@@ -111,19 +113,28 @@ public class IconRail extends View {
     @Override
     protected void onSizeChanged(int w, int h, int ow, int oh) {
         super.onSizeChanged(w, h, ow, oh);
-        // 横屏手机上导轨只有 320~400dp 高：顶部 logo 区必须能收缩，按钮也要跟着变矮。
-        // 旧的写法把 step 锁在 38dp 下限、logo 区固定 56dp，8 个按钮加起来 360dp 起步，
-        // 在手机横屏上会超出导轨高度——最下面几个（重做 / AI 调音 / 更多）被直接裁掉，
-        // 看起来就是「最左边那一列显示不全」。
-        topPad = Math.min(dp(56f), Math.max(dp(30f), h * 0.16f));
-        float avail = Math.max(0f, h - topPad - dp(2f));
+        // v3（用户要求）：整条导轨的按钮只能占**上半屏**，下半屏至少留 1/2 空白（这里取 46%，空白 54%）。
+        // 之前是按整条高度均分（step = avail / COUNT），横屏手机上按钮会一路排到底，
+        // 看起来像「左边一列塞满」。现在把可用高度硬压到 h * 0.5，按钮和字号跟着缩，
+        // 挤到放不下文字时就退化成纯图标（图标本身再放大一点，保证还能点）。
+        float contentMax = h * 0.46f;                      // 上半屏再抬高一点，留出 >1/2 的空白
+        topPad = Math.min(dp(40f), Math.max(dp(10f), h * 0.06f));
+        if (topPad > contentMax * 0.32f) topPad = contentMax * 0.32f;
+        float avail = Math.max(0f, contentMax - topPad - dp(2f));
         step = Math.min(dp(58f), avail / COUNT);
-        if (step < dp(22f)) step = dp(22f);          // 极矮屏也别让按钮挤成一条线
-        btn = Math.min(Math.min(dp(46f), w - dp(8f)), step - dp(4f));
-        if (btn < dp(16f)) btn = dp(16f);
-        iconSz = Math.min(dp(19f), btn * 0.56f);
+        if (step < dp(10f)) step = dp(10f);                // 不让按钮缩成一条线
+        if (topPad + step * COUNT > contentMax) {          // 下限把内容顶出上半屏时反算
+            step = Math.max(dp(7f), (contentMax - topPad) / COUNT);
+        }
+        btn = Math.min(Math.min(dp(46f), w - dp(8f)), step - dp(2f));
+        if (btn < dp(8f)) btn = dp(8f);
+        showLabel = step >= dp(30f) && btn >= dp(24f);
+        iconSz = Math.min(dp(19f), btn * (showLabel ? 0.62f : 0.74f));
         labelP.setTextSize(Math.min(dp(9f), btn * 0.26f));
         labelBaseline = btn * 0.5f - dp(2f);
+        android.util.Log.i("BriVoice", "rail v3: h=" + h + " half=" + (int) contentMax
+                + " top=" + (int) topPad + " step=" + (int) step + " btn=" + (int) btn
+                + " bottom=" + (int) (topPad + step * COUNT) + " label=" + showLabel);
     }
 
     @Override
@@ -162,8 +173,10 @@ public class IconRail extends View {
             }
             iconP.setColor(on ? Theme.ON_PRIMARY : Theme.TEXT);
             drawIcon(c, i, cx, cy, on);
-            labelP.setColor(on ? Theme.ACCENT : Theme.TEXT_DIM);
-            c.drawText(labels[i], cx, cy + labelBaseline, labelP);
+            if (showLabel) {
+                labelP.setColor(on ? Theme.ACCENT : Theme.TEXT_DIM);
+                c.drawText(labels[i], cx, cy + labelBaseline, labelP);
+            }
         }
     }
 

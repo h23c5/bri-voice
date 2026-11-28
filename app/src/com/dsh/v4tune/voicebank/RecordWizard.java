@@ -81,7 +81,7 @@ public final class RecordWizard {
         root.addView(page);
         ScrollView sc = new ScrollView(act);
         sc.addView(root);
-        dlg = new AlertDialog.Builder(act)
+        dlg = com.dsh.v4tune.ui.Dialogs.builder(act)
                 .setTitle("录音向导（v12.2）")
                 .setView(sc)
                 .setNegativeButton("关闭", new DialogInterface.OnClickListener() {
