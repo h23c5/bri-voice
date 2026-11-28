@@ -119,7 +119,7 @@ def main():
             "--manifest", os.path.join(APP, "AndroidManifest.xml"),
             res_zip, "--java", gen,
             "--min-sdk-version", "21", "--target-sdk-version", "34",
-            "--version-code", "108", "--version-name", "26H1128V1.1",
+            "--version-code", "109", "--version-name", "26H1128V1.2",
             "--no-version-vectors"]
     if os.path.isdir(assets):
         link += ["-A", assets]

@@ -182,6 +182,12 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
     /** false = 选择模式: the strip only picks lanes and reorders them by dragging */
     private boolean stripEditMode = true;
     private ScrollView trackScroll;
+    /** adaptive layout: the bar row and the status strip keep their measured heights and the
+     *  space between them is split by the real screen height (short landscape phones used to get
+     *  a piano roll sliver because the strip/curve heights were fixed dp constants) */
+    private View topBarRow;
+    private LinearLayout rightColumn;
+    private int lastAdaptiveKey = -1;
     private TextView bpmText, totalText;
     private Button playBtn;
     private Button newBtn, openBtn, exportBtn, packBtn, toolsBtn;
@@ -493,6 +499,13 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         // to zero height -- portrait showed a working rail next to a completely black editor.
         root.addView(right,
                 new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        rightColumn = right;
+        lastAdaptiveKey = -1;
+        right.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            public void onLayoutChange(View v, int l, int t, int rt, int b, int ol, int ot, int orr, int ob) {
+                applyAdaptiveHeights(right, b - t);
+            }
+        });
         guardCutout(root);
         return root;
     }
@@ -634,6 +647,7 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER_VERTICAL);
         bar.setPadding(dp(8), dp(3), dp(10), dp(3));
+        topBarRow = bar;
 
         TextView add = new TextView(this);
         add.setText("＋");
@@ -862,15 +876,64 @@ public class MainActivity extends Activity implements PianoRollView.Listener {
         trackStripView.setLanes(lanes, trackIndex);
         syncStripToRoll();
 
-        int rows = Math.max(1, song.tracks.size());
-        int h = dp(18) + dp(38) * rows + dp(2);
-        int maxH = dp(150);
-        if (trackScroll != null) {
-            ViewGroup.LayoutParams lp = trackScroll.getLayoutParams();
-            if (lp != null && lp.height != Math.min(h, maxH)) {
-                lp.height = Math.min(h, maxH);
-                trackScroll.setLayoutParams(lp);
-            }
+        // the strip height is owned by the adaptive splitter: it knows the real column height and
+        // the row count. Pinning it to 18+38*rows dp here used to overwrite the adaptive value and
+        // squeeze the piano roll on short screens.
+        reflowAdaptive();
+    }
+
+    /** hand the column's measured height to the adaptive splitter (no-op before layout) */
+    private void reflowAdaptive() {
+        if (rightColumn != null) applyAdaptiveHeights(rightColumn, rightColumn.getHeight());
+    }
+
+    /**
+     * Split the editor column by its real height instead of fixed dp numbers.
+     *
+     * <p>Before this, the arrangement strip pinned itself to 18+38*rows dp (96dp for two tracks)
+     * and the tuning lane was a frozen 138dp (196dp portrait); the note grid merely took whatever
+     * was left. On a phone in landscape the window is only ~360dp tall, so after the 42dp bar and
+     * the status strip the roll got roughly a third of the screen — the reported “音符栏太小”.</p>
+     *
+     * <p>Now the tuning lane takes ~22% (64..160dp), the arrangement strip ~23% (38..150dp, never
+     * more than its rows need) and the note grid gets the rest, with a floor of 55% / 140dp; if the
+     * leftover is still short, the curve lane yields first and the strip second. Heights are only
+     * written when they actually change so the layout callback cannot ping-pong.</p>
+     */
+    private void applyAdaptiveHeights(LinearLayout col, int h) {
+        if (col == null || h <= 0 || trackScroll == null || paramView == null || statusText == null) return;
+        int rows = Math.max(1, song == null ? 1 : song.tracks.size());
+        int key = h * 131 + rows;
+        if (key == lastAdaptiveKey) return;
+        int barH = topBarRow != null && topBarRow.getHeight() > 0 ? topBarRow.getHeight() : dp(44);
+        int statusH = statusText.getHeight() > 0 ? statusText.getHeight() : dp(30);
+        int avail = h - barH - statusH;
+        if (avail < dp(120)) return;
+        int stripMin = dp(38);
+        int paramMin = dp(64);
+        int stripNeed = Math.min(dp(18) + dp(38) * rows + dp(2), dp(150));
+        int stripH = Math.min(stripNeed, Math.max(stripMin, Math.round(avail * 0.23f)));
+        int paramH = Math.min(dp(160), Math.max(paramMin, Math.round(avail * 0.22f)));
+        int wantRoll = Math.max(dp(140), Math.round(avail * 0.55f));
+        int rollH = avail - stripH - paramH;
+        int take = Math.min(wantRoll - rollH, Math.max(0, paramH - paramMin));
+        if (take > 0) { paramH -= take; rollH += take; }
+        take = Math.min(wantRoll - rollH, Math.max(0, stripH - stripMin));
+        if (take > 0) { stripH -= take; rollH += take; }
+        lastAdaptiveKey = key;
+        setViewHeight(trackScroll, stripH);
+        setViewHeight(paramView, paramH);
+        android.util.Log.i("BriVoice", "layout adaptive: col=" + h + " bar=" + barH + " status=" + statusH
+                + " strip=" + stripH + "(need=" + stripNeed + ") param=" + paramH + " roll~=" + rollH
+                + " rows=" + rows);
+    }
+
+    private void setViewHeight(View v, int hpx) {
+        if (v == null) return;
+        ViewGroup.LayoutParams lp = v.getLayoutParams();
+        if (lp != null && lp.height != hpx) {
+            lp.height = hpx;
+            v.setLayoutParams(lp);
         }
     }
 

@@ -1,9 +1,9 @@
 {
-  "versionCode": 108,
-  "versionName": "26H1128V1.1",
-  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v26H1128V1.1/BriVoice-26H1128V1.1.apk",
-  "sha256": "e18b09815662fd2d6f8aeb7daeb69406a486bbf2d52768290319ef7339e25830",
-  "size": 1215060,
-  "notes": "release 26H1128V1.1：修掉手机横屏时最左边图标栏显示不全。旧版左侧导轨把按钮步长锁死 38dp、顶部 logo 区固定 56dp，8 个按钮合计 360dp 起步；手机横屏可用高度常常只有 300~360dp，最下面几项（重做 / AI 调音 / 更多）被裁在屏幕外。现在导轨按实际高度收缩，308dp 高的横屏也能完整排下 8 项。",
-  "publishedAt": "2026-11-28 02:56:08"
+  "versionCode": 109,
+  "versionName": "26H1128V1.2",
+  "apkUrl": "https://gitee.com/h23c5/bri-voice/releases/download/v26H1128V1.2/BriVoice-26H1128V1.2.apk",
+  "sha256": "4d0481d56545b15ec1e49d26c14ab9331792b286457e7666ac59ad10baae0c8e",
+  "size": 1239636,
+  "notes": "release 26H1128V1.2：修掉「音符栏（钢琴卷帘）太小」。以前音轨条高度写死 18+38x轨数 dp、参数曲线区横屏固定 138dp，卷帘只能拿剩下的那块；手机横屏 300~360dp 高时常常只剩几十 dp。现在整列按真实可用高度分配（参数区 22%、音轨条 23%、卷帘保底 55%），480dpi 横屏卷帘 220px -> 444px，5 轨工程旧版挤到 0、现在仍有 444px。",
+  "publishedAt": "2026-11-28 13:20:34"
 }
